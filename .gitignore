@@ -3,25 +3,51 @@ logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
 *.local
 
-# Editor directories and files
+# Python / Django
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite3
+*.sqlite3-journal
+*.db
+**/venv/
+**/.venv/
+
+# Scraped / Dynamic Media Assets (Optional: Un-comment to prevent repo bloat)
+frontend/public/products/
+
+# Environment Files
+.env
+.env.*
+!.env.example
+
+# IDE / System
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+*.swp
+*.swo
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
 
+# Misc
 .config/
-!.env
+
+# Next.js specific
+*.tsbuildinfo
+next-env.d.ts
+**/.vercel/
+
+# Testing
+**/coverage/
+
+# Misc
+*.pem
