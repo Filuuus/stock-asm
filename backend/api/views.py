@@ -1,3 +1,7 @@
-from django.shortcuts import render
+from django.http import JsonResponse
+from .models import Product
 
-# Create your views here.
+def api_products(request):
+    # Consultamos la base de datos y convertimos los registros a una lista de diccionarios
+    products = list(Product.objects.values('id', 'name', 'sku', 'price', 'stock'))
+    return JsonResponse(products, safe=False)

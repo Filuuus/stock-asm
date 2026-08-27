@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import CatalogHeader from "@/components/catalog/CatalogHeader";
 import CatalogFilters from "@/components/catalog/CatalogFilters";
@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Category, products } from "@/data/products";
+import { Category} from "@/data/products";
 
 type SortOption = "relevancia" | "precio-asc" | "precio-desc" | "nombre";
 
@@ -30,6 +30,8 @@ const sortLabels: Record<SortOption, string> = {
 };
 
 export default function Index() {
+  const [products, setProducts] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<Category | "">("");
   const [activeBrands, setActiveBrands] = useState<string[]>([]);
@@ -38,6 +40,19 @@ export default function Index() {
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState<SortOption>("relevancia");
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/api/products")
+      .then((res) => res.json())
+      .then((data) => {
+        setProducts(data);
+        setIsLoading(false);
+      })
+      .catch((error) => {
+        console.error("Error al conectar con la base de datos:", error);
+        setIsLoading(false);
+      });
+  }, []);
 
   const toggleBrand = (brand: string) => {
     setActiveBrands((prev) =>
@@ -148,7 +163,11 @@ export default function Index() {
             </div>
           </div>
 
-          {filteredProducts.length > 0 ? (
+          {isLoading ? (
+            <div className="flex w-full justify-center py-16">
+              <p className="text-gray-500">Cargando inventario...</p>
+            </div>
+          ) : filteredProducts.length > 0 ? (
             <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredProducts.map((product) => (
                 <ProductCard key={product.id} product={product} />

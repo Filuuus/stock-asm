@@ -127,7 +127,7 @@ export const products: Product[] = [
     category: "Nutrición",
     name: "Vitamina ADE Inyectable Ganado 250ml",
     sku: "BN-2024-032",
-    price: 650,
+    price: 300,
     stock: 4,
   },
 ];
