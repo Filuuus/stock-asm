@@ -21,4 +21,5 @@ from api import views
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/products', views.api_products),
+    path('api/movement/', views.register_movement),
 ]

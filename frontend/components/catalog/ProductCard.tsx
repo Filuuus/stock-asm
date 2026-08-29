@@ -1,5 +1,6 @@
 import { brandBadgeStyles, formatPrice, LOW_STOCK_THRESHOLD, Product } from "@/data/products";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 function ProductImagePlaceholder() {
   return (
@@ -43,9 +44,51 @@ function ProductImagePlaceholder() {
 }
 
 export default function ProductCard({ product }: { product: Product }) {
-  const lowStock = product.stock <= LOW_STOCK_THRESHOLD;
+  const [stockActual, setStockActual] = useState(product.stock);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  return (
+  const lowStock = stockActual <= LOW_STOCK_THRESHOLD;
+
+  const registrerOut = async () => {
+    setIsProcessing(true);
+    try{
+      const response = await fetch ("http://127.0.0.1:8000/api/movement/",{
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sku: product.sku,
+          movement_type: "SALIDA",
+          quantity: 1,
+          reason: "Consumo Operativo",
+        }),
+       });
+      
+       const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+          const htmlError = await response.text();
+          console.error("Django devolvió HTML en lugar de JSON. Error real:", htmlError);
+          alert("Error de servidor. Revisa la consola (F12) para ver el detalle de Django.");
+          setIsProcessing(false);
+          return;
+      }
+
+       const data = await response.json();
+
+       if(data.status === "success") {
+        setStockActual(data.new_stock);
+       }else{
+        console.error("Error del servidor:", data.message);
+       }
+      }catch(error){
+        console.error("Error de conexión:", error);
+      }finally{
+        setIsProcessing(false);
+      }
+    };
+    
+    return (
     <div className="flex flex-col items-start rounded-xl border border-gray-200 bg-white transition-shadow hover:shadow-md">
       <div className="flex h-40 w-full items-center justify-center border-b border-gray-100 bg-gray-50">
         <ProductImagePlaceholder />
@@ -76,8 +119,16 @@ export default function ProductCard({ product }: { product: Product }) {
               : "bg-green-50 text-green-700",
           )}
         >
-          {lowStock ? `Bajo stock: ${product.stock}` : `En stock: ${product.stock}`}
+          {lowStock ? `Bajo stock: ${stockActual}` : `En stock: ${stockActual}`}
         </span>
+
+        <button
+          onClick={registrerOut}
+          disabled={isProcessing || stockActual <= 0}
+          className="mt-3 w-full rounded-md bg-gray-900 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {isProcessing ? "Registrando..." : "Consumir"}
+        </button>
       </div>
     </div>
   );
