@@ -6,7 +6,7 @@ class InventoryRepository:
     @staticmethod
     def fetch_inventory():
         return list(
-            AdmProductos.objects.values(
+            AdmProductos.objects.exclude(CIDPRODUCTO=0).values(
                 'CIDPRODUCTO',
                 'CCODIGOPRODUCTO',
                 'CNOMBREPRODUCTO',
