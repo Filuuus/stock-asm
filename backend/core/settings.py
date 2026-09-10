@@ -81,7 +81,15 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
+    # App-owned data (ProductImage, auth, sessions, etc). Never the ERP.
     'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    },
+    # Contpaqi ERP, accessed with read-only credentials. Only AdmProductos
+    # and AdmExistenciaCosto (both managed=False) are ever routed here —
+    # see api.routers.ERPRouter. No migrations are ever run against it.
+    'erp': {
         'ENGINE': 'mssql',
         'NAME': os.getenv('DB_NAME'),
         'USER': os.getenv('DB_USER'),
@@ -92,8 +100,10 @@ DATABASES = {
             'driver': 'ODBC Driver 17 for SQL Server',
             'extra_params': 'TrustServerCertificate=yes',
         },
-    }
+    },
 }
+
+DATABASE_ROUTERS = ['api.routers.ERPRouter']
 
 
 # Password validation
