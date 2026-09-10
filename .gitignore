@@ -25,6 +25,9 @@ pnpm-debug.log*
 # Scraped / Dynamic Media Assets (Optional: Un-comment to prevent repo bloat)
 frontend/public/products/
 
+# Generated data dumps from one-off catalog scripts (not code, not the pipeline itself)
+backend/scripts/
+
 # Environment Files
 .env
 .env.*
