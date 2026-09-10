@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "backend/venv/bin/python",
+      "runtimeArgs": ["backend/manage.py", "runserver", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd frontend && node_modules/.bin/next dev -p 3000"],
+      "port": 3000
+    }
+  ]
+}
