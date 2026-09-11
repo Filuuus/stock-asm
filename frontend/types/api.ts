@@ -9,5 +9,6 @@ export interface Product {
   CNOMBREPRODUCTO: string;
   CPRECIO1: number;
   CTEXTOEXTRA1: string | null;
+  brand: string | null;
   images: ProductImage[];
 }

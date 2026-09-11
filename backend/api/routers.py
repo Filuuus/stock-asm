@@ -1,9 +1,9 @@
 class ERPRouter:
-    """Routes the two Contpaqi ERP tables to the read-only 'erp' connection.
+    """Routes the read-only Contpaqi ERP tables to the 'erp' connection.
     Everything else (ProductImage, auth, sessions, ...) stays on 'default'.
     """
 
-    erp_models = {"admproductos", "admexistenciacosto"}
+    erp_models = {"admproductos", "admexistenciacosto", "admclasificacionesvalores"}
 
     def db_for_read(self, model, **hints):
         if model._meta.app_label == "api" and model._meta.model_name in self.erp_models:

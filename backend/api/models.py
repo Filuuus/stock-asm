@@ -6,10 +6,22 @@ class AdmProductos(models.Model):
     CNOMBREPRODUCTO = models.CharField(max_length=60, db_column='CNOMBREPRODUCTO')
     CPRECIO1 = models.FloatField(db_column='CPRECIO1')
     CTEXTOEXTRA1 = models.CharField(max_length=50, db_column='CTEXTOEXTRA1', null=True)
+    # Classification slot 1 holds the product's supplier (used here as "brand").
+    CIDVALORCLASIFICACION1 = models.IntegerField(db_column='CIDVALORCLASIFICACION1', null=True)
 
     class Meta:
         managed = False
         db_table = 'admProductos'
+
+
+class AdmClasificacionesValores(models.Model):
+    CIDVALORCLASIFICACION = models.AutoField(primary_key=True, db_column='CIDVALORCLASIFICACION')
+    CVALORCLASIFICACION = models.CharField(max_length=60, db_column='CVALORCLASIFICACION')
+    CIDCLASIFICACION = models.IntegerField(db_column='CIDCLASIFICACION')
+
+    class Meta:
+        managed = False
+        db_table = 'admClasificacionesValores'
 
 
 class AdmExistenciaCosto(models.Model):
