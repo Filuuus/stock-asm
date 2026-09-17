@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'api',
     'catalog',
+    'commissions',
 ]
 
 MIDDLEWARE = [
