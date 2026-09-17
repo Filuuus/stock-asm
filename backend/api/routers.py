@@ -3,7 +3,10 @@ class ERPRouter:
     Everything else (ProductImage, auth, sessions, ...) stays on 'default'.
     """
 
-    erp_models = {"admproductos", "admexistenciacosto", "admclasificacionesvalores"}
+    erp_models = {
+        "admproductos", "admexistenciacosto", "admclasificacionesvalores",
+        "admagentes", "admconceptos", "admdocumentos", "admmovimientos",
+    }
 
     def db_for_read(self, model, **hints):
         if model._meta.app_label == "api" and model._meta.model_name in self.erp_models:
