@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { User, Settings, ShoppingCart } from "lucide-react";
 import { SearchQueryProvider } from "@/hooks/use-search-query";
@@ -36,6 +37,12 @@ export default function RootLayout({
             <div className="text-lg font-bold">Agropecuaria Santa María</div>
             <SearchBar />
             <div className="flex items-center space-x-4">
+              <Link
+                href="/comisiones"
+                className="text-sm font-medium text-slate-200 hover:text-white"
+              >
+                Comisiones
+              </Link>
               <button aria-label="Cuenta" className="p-2 hover:bg-slate-800 rounded-full">
                 <User className="w-5 h-5" />
               </button>
