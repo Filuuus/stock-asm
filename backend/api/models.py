@@ -8,12 +8,25 @@ class AdmProductos(models.Model):
     CTEXTOEXTRA1 = models.CharField(max_length=50, db_column='CTEXTOEXTRA1', null=True)
     # Classification slot 1 holds the product's supplier (used here as "brand").
     CIDVALORCLASIFICACION1 = models.IntegerField(db_column='CIDVALORCLASIFICACION1', null=True)
+    # Classification slot 2 holds a finer product-line description (e.g.
+    # "DETERGENTES SURGE" vs "REFACCIONES VARIAS NACIONALES") - used to
+    # detect the chemicals commission exception.
+    CIDVALORCLASIFICACION2 = models.IntegerField(db_column='CIDVALORCLASIFICACION2', null=True)
     # 1 = physical product, 3 = service (confirmed against real data, 9 rows all year).
     CTIPOPRODUCTO = models.IntegerField(db_column='CTIPOPRODUCTO', null=True)
 
     class Meta:
         managed = False
         db_table = 'admProductos'
+
+
+class AdmClientes(models.Model):
+    CIDCLIENTEPROVEEDOR = models.AutoField(primary_key=True, db_column='CIDCLIENTEPROVEEDOR')
+    CRAZONSOCIAL = models.CharField(max_length=200, db_column='CRAZONSOCIAL', null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'admClientes'
 
 
 class AdmAgentes(models.Model):
@@ -69,7 +82,15 @@ class AdmMovimientos(models.Model):
     CIDDOCUMENTODE = models.IntegerField(db_column='CIDDOCUMENTODE')
     CIDPRODUCTO = models.IntegerField(db_column='CIDPRODUCTO')
     CUNIDADES = models.FloatField(db_column='CUNIDADES')
+    # CNETO is the line's amount BEFORE its own discount is applied - confirmed
+    # against real data 2026-09-19 (CTOTAL = CNETO - discounts + tax exactly).
+    # Never use CNETO alone as a commission base without subtracting these.
     CNETO = models.FloatField(db_column='CNETO')
+    CDESCUENTO1 = models.FloatField(db_column='CDESCUENTO1', default=0)
+    CDESCUENTO2 = models.FloatField(db_column='CDESCUENTO2', default=0)
+    CDESCUENTO3 = models.FloatField(db_column='CDESCUENTO3', default=0)
+    CDESCUENTO4 = models.FloatField(db_column='CDESCUENTO4', default=0)
+    CDESCUENTO5 = models.FloatField(db_column='CDESCUENTO5', default=0)
     CTOTAL = models.FloatField(db_column='CTOTAL')
 
     class Meta:

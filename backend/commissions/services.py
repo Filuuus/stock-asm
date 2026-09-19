@@ -21,7 +21,7 @@ from django.utils import timezone as dj_timezone
 
 from api.models import AdmAgentes, AdmClasificacionesValores, AdmConceptos, AdmDocumentos, AdmMovimientos, AdmProductos
 
-from .models import CommissionCategoryRate, ZeroCommissionProduct
+from .models import CommissionCategoryRate, PuntoVentaClientZone, ZeroCommissionProduct
 
 FACTURA_DOC_TYPE = 4
 DEVOLUCION_DOC_TYPE = 5  # Devolucion sobre Venta - a return/credit note against a Factura, not a real sale.
@@ -43,6 +43,33 @@ LEDGER_PAGO_CONCEPTO = 'PAGO DEL CLIENTE'
 # same-client/same-amount fallback match below (see _find_credit_noted_invoices).
 DEVOLUCION_FALLBACK_WINDOW_DAYS = 10
 BIONAT_SUPPLIER_NAME = 'BIONAT-SANO, SA DE CV'
+# Rate exceptions confirmed by management 2026-09-19, while reconciling
+# against their real commission tracking (see project memory for the full
+# investigation) - all are Refacciones by product type but start at 4%,
+# not R's usual 6%. None of these fully explain that reconciliation's
+# larger, still-open rate gap on their own; each closes a real slice of it.
+#
+# Mats/matting hardware: two genuinely different product families both
+# read as "mats" - the North West Rubber supplier's own line (CCODIGOPRODUCTO
+# like 3000xxx), AND a second family under the 4999-1115- code prefix
+# (mats, installation strips, and the mat-fixing bolts/nails, e.g.
+# "CLAVO ESPECIAL 212 2½\" (PERNO DE EXPANSION)") whose supplier is
+# recorded as GEA FARM TECHNOLOGIES or PROVEEDORES VARIOS, NOT North West
+# Rubber - checking supplier alone missed 14 of these 19 products. The user
+# explicitly asked for the bolts to be grouped with the mats, so both
+# families share one rate code.
+NORTHWEST_RUBBER_SUPPLIER_NAME = 'NORTH WEST RUBBER'
+NORTHWEST_RUBBER_CODE_PREFIX = '4999-1115-'
+# Chemicals (LUXSAN, LUXTEK, OXYCIDE, TRI-PFAN, LAC ACIDO, THERATRATE, ...):
+# span multiple suppliers (mostly GEA FARM TECHNOLOGIES, same as ordinary
+# spare parts) so supplier can't detect them - classification slot 2 (a
+# finer product-line field) cleanly does, with no other chemical-sounding
+# values found in that slot's full taxonomy.
+CHEMICAL_CLASSIFICATIONS = {'DETERGENTES NACIONALES', 'DETERGENTES SURGE'}
+# Fans: span multiple suppliers AND multiple classification-2 values, so
+# neither field detects them - the product name is the only consistent
+# signal.
+FAN_NAME_MARKER = 'VENTILADOR'
 SERVICE_PRODUCT_TYPE = 3
 
 # Zones in scope for v1 (confirmed by management, 2026-09-15): BIONAT and
@@ -56,6 +83,13 @@ ZONE_SCOPE = {
     'SERVICIOS': 5,
     'PUNTOVENTA': 9,
 }
+# PUNTOVENTA is only a real, standalone commission-earning zone in
+# ZONE_SCOPE above for querying purposes (its Facturas still need to be
+# fetched) - per management, every one of its invoices actually belongs to
+# a ZONA1/ZONA2 salesperson (see PuntoVentaClientZone) at this flat rate,
+# never PUNTOVENTA itself.
+PUNTOVENTA_ZONE_NAME = 'PUNTOVENTA'
+PUNTOVENTA_RATE_CODE = 'PUNTOVENTA'
 
 # How far before date_from to look for still-open invoices that might get
 # paid off (and therefore become commission-eligible) within the requested
@@ -174,7 +208,10 @@ class CommissionRepository:
             AdmMovimientos.objects.filter(
                 CIDDOCUMENTO__in=invoice_ids,
                 CIDDOCUMENTODE=FACTURA_DOC_TYPE,
-            ).values('CIDDOCUMENTO', 'CIDPRODUCTO', 'CNETO', 'CUNIDADES')
+            ).values(
+                'CIDDOCUMENTO', 'CIDPRODUCTO', 'CNETO', 'CUNIDADES',
+                'CDESCUENTO1', 'CDESCUENTO2', 'CDESCUENTO3', 'CDESCUENTO4', 'CDESCUENTO5',
+            )
         )
 
     @staticmethod
@@ -183,7 +220,8 @@ class CommissionRepository:
             return []
         return list(
             AdmProductos.objects.filter(CIDPRODUCTO__in=product_ids).values(
-                'CIDPRODUCTO', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CTIPOPRODUCTO', 'CIDVALORCLASIFICACION1',
+                'CIDPRODUCTO', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CTIPOPRODUCTO',
+                'CIDVALORCLASIFICACION1', 'CIDVALORCLASIFICACION2',
             )
         )
 
@@ -194,6 +232,12 @@ class CommissionRepository:
     @staticmethod
     def fetch_agent_codes():
         return dict(AdmAgentes.objects.values_list('CIDAGENTE', 'CCODIGOAGENTE'))
+
+    @staticmethod
+    def fetch_puntoventa_client_zones():
+        return dict(
+            PuntoVentaClientZone.objects.filter(active=True).values_list('cliente_id', 'zone')
+        )
 
 
 def _resolve_payment_dates(facturas, payment_docs):
@@ -404,6 +448,13 @@ def _classify_line(producto, brand_names, zero_codes):
         return 'B'
     if producto['CTIPOPRODUCTO'] == SERVICE_PRODUCT_TYPE:
         return 'S'
+    if brand_names.get(producto['CIDVALORCLASIFICACION1']) == NORTHWEST_RUBBER_SUPPLIER_NAME or \
+            producto['CCODIGOPRODUCTO'].startswith(NORTHWEST_RUBBER_CODE_PREFIX):
+        return 'R_NW'
+    if brand_names.get(producto['CIDVALORCLASIFICACION2']) in CHEMICAL_CLASSIFICATIONS:
+        return 'R_CHEM'
+    if FAN_NAME_MARKER in (producto['CNOMBREPRODUCTO'] or '').upper():
+        return 'R_FAN'
     # Default/fallback: covers R itself, EQ (no automatic detection rule
     # exists yet - deferred by management until there's a draft to look at),
     # and the rare tail codes management said not to worry about.
@@ -461,6 +512,35 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     credit_noted = [f for f in all_facturas if f['CIDDOCUMENTO'] in credit_noted_ids]
     facturas = [f for f in all_facturas if f['CIDDOCUMENTO'] not in credit_noted_ids]
 
+    # Punto de Venta invoices are subdistributor clients, not office walk-ins
+    # (confirmed by management 2026-09-19) - their commission belongs to
+    # whichever route salesperson (ZONA1/ZONA2) is responsible for that
+    # client, at the flat PUNTOVENTA rate, not the usual per-category one.
+    # Nothing in the ERP records that assignment (checked admClientes.
+    # CIDAGENTEVENTA/CIDAGENTECOBRO - 99.8% of these clients are just
+    # "PUNTOVENTA" there too), so it's app-owned config
+    # (PuntoVentaClientZone). Invoices whose client isn't in that mapping
+    # yet are pulled out here, before payment-date resolution, same as
+    # credit-noted ones - a missing zone assignment is a different problem
+    # from a missing payment date and shouldn't get lumped into that bucket.
+    agent_codes = CommissionRepository.fetch_agent_codes()
+    puntoventa_client_zones = CommissionRepository.fetch_puntoventa_client_zones()
+    puntoventa_zone_override = {}
+    puntoventa_unassigned = []
+    _facturas = []
+    for f in facturas:
+        origin_zone = agent_codes.get(f['CIDAGENTE'])
+        if origin_zone == PUNTOVENTA_ZONE_NAME:
+            reassigned_zone = puntoventa_client_zones.get(f['CIDCLIENTEPROVEEDOR'])
+            if reassigned_zone:
+                puntoventa_zone_override[f['CIDDOCUMENTO']] = reassigned_zone
+                _facturas.append(f)
+            else:
+                puntoventa_unassigned.append(f)
+        else:
+            _facturas.append(f)
+    facturas = _facturas
+
     payment_docs = CommissionRepository.fetch_payment_docs(floor_date)
     paid_dates_fallback = _resolve_payment_dates(facturas, payment_docs)
 
@@ -483,7 +563,6 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     product_ids = {m['CIDPRODUCTO'] for m in movimientos}
     productos_by_id = {p['CIDPRODUCTO']: p for p in CommissionRepository.fetch_productos(product_ids)}
     brand_names = CommissionRepository.fetch_brand_names()
-    agent_codes = CommissionRepository.fetch_agent_codes()
 
     zero_codes = set(ZeroCommissionProduct.objects.filter(active=True).values_list('producto_codigo', flat=True))
     rates_by_code = {r.code: r for r in CommissionCategoryRate.objects.filter(active=True)}
@@ -497,9 +576,17 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         if producto is None:
             continue
 
-        zone_code = agent_codes.get(factura['CIDAGENTE'])
         category = _classify_line(producto, brand_names, zero_codes)
-        rate_code = _rate_code_for(category, zone_code)
+        reassigned_zone = puntoventa_zone_override.get(m['CIDDOCUMENTO'])
+        if reassigned_zone:
+            # Flat Punto de Venta rate overrides the usual per-category one
+            # regardless of what the product is - category is still shown
+            # in the drilldown for transparency, just not used for the rate.
+            zone_code = reassigned_zone
+            rate_code = None if category == 'ZERO' else PUNTOVENTA_RATE_CODE
+        else:
+            zone_code = agent_codes.get(factura['CIDAGENTE'])
+            rate_code = _rate_code_for(category, zone_code)
         rate_row = rates_by_code.get(rate_code) if rate_code else None
 
         paid_date = paid_dates[m['CIDDOCUMENTO']]
@@ -507,7 +594,15 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         days_late = (paid_date - due_date).days if due_date else 0
 
         rate = _effective_rate(rate_row, days_late)
-        net_amount = Decimal(str(m['CNETO']))
+        # CNETO is pre-discount (verified against real data 2026-09-19: a
+        # $64,192 line with an 8% discount posts CNETO=64192, CTOTAL=59,056.64
+        # - commission was being computed on the undiscounted price, real
+        # money on ~11% of lines that carry any discount). Subtract the
+        # line's own discounts to get the actual, pre-tax amount the client
+        # was charged - matches CTOTAL - tax exactly, confirmed against
+        # taxed+discounted lines too.
+        discount = sum(Decimal(str(m[f'CDESCUENTO{i}'] or 0)) for i in range(1, 6))
+        net_amount = Decimal(str(m['CNETO'])) - discount
         commission = net_amount * rate
         quantity = Decimal(str(m['CUNIDADES']))
         unit_amount = net_amount / quantity if quantity else None
@@ -552,6 +647,15 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
                 'Facturas settled by a Devolucion sobre Venta (credit note), not a real payment - '
                 'confirmed by management these do not earn commission. Excluded entirely, not counted '
                 'as needing manual review.'
+            ),
+        },
+        'puntoventa_unassigned': {
+            'count': len(puntoventa_unassigned),
+            'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in puntoventa_unassigned), Decimal('0')),
+            'note': (
+                'Punto de Venta invoices (subdistributor clients) whose responsible salesperson '
+                '(ZONA1/ZONA2) is not yet configured - add them in the admin (PuntoVentaClientZone) '
+                'to include their commission.'
             ),
         },
     }

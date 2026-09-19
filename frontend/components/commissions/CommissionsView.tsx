@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Info, Loader2, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,9 @@ const ZONE_LABELS: Record<Zone, string> = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   R: "Refacciones",
+  R_NW: "Refacciones (Tapetes y pernos)",
+  R_CHEM: "Refacciones (Químicos)",
+  R_FAN: "Refacciones (Ventiladores)",
   B: "Bionat",
   S: "Servicios",
   ZERO: "Sin comisión",
@@ -38,6 +41,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const CATEGORY_BADGE: Record<string, string> = {
   R: "bg-blue-100 text-blue-800 border-blue-200",
+  R_NW: "bg-sky-100 text-sky-800 border-sky-200",
+  R_CHEM: "bg-cyan-100 text-cyan-800 border-cyan-200",
+  R_FAN: "bg-indigo-100 text-indigo-800 border-indigo-200",
   B: "bg-green-100 text-green-800 border-green-200",
   S: "bg-purple-100 text-purple-800 border-purple-200",
   ZERO: "bg-gray-100 text-gray-600 border-gray-200",
@@ -124,7 +130,19 @@ export default function CommissionsView() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
 
+  const requestIdRef = useRef(0);
+
   const fetchSummary = async (targetMonth: string) => {
+    // The native <input type="month"> can fire onChange with an incomplete
+    // value while being typed into (e.g. "2026-0" before the second digit
+    // lands) - fetching on that crashes the backend's date parser and, since
+    // nothing here previously guarded against overlapping requests, could
+    // leave the spinner stuck if an older request resolved after a newer
+    // one. Found live during a demo (2026-09-17): a 500 from a malformed
+    // date, likely combined with an out-of-order response.
+    if (!/^\d{4}-\d{2}$/.test(targetMonth)) return;
+
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -134,13 +152,16 @@ export default function CommissionsView() {
         { cache: "no-store" },
       );
       if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
-      setData(await res.json());
+      const json = await res.json();
+      if (requestId !== requestIdRef.current) return;
+      setData(json);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setError(
         err instanceof Error ? err.message : "No se pudo cargar la información",
       );
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   };
 
