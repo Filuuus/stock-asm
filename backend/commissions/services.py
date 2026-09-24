@@ -21,7 +21,7 @@ from django.utils import timezone as dj_timezone
 
 from api.models import AdmAgentes, AdmClasificacionesValores, AdmConceptos, AdmDocumentos, AdmMovimientos, AdmProductos
 
-from .models import CommissionCategoryRate, PuntoVentaClientZone, ZeroCommissionProduct
+from .models import CommissionCategoryRate, InvoiceCommissionOverride, PuntoVentaClientZone, ZeroCommissionProduct
 
 FACTURA_DOC_TYPE = 4
 DEVOLUCION_DOC_TYPE = 5  # Devolucion sobre Venta - a return/credit note against a Factura, not a real sale.
@@ -238,6 +238,28 @@ class CommissionRepository:
         return dict(
             PuntoVentaClientZone.objects.filter(active=True).values_list('cliente_id', 'zone')
         )
+
+    @staticmethod
+    def search_facturas(folio):
+        """Used by the management-only invoice-search endpoint (the "Add"
+        override picker) - real Facturas matching a folio number, not
+        restricted to any zone scope or date window since management may be
+        looking for something outside the normal report (per the EQ/COWSCOUT
+        gap documented in the project memory). Cancelled invoices excluded.
+        """
+        return list(
+            AdmDocumentos.objects.filter(
+                CIDDOCUMENTODE=FACTURA_DOC_TYPE,
+                CCANCELADO=0,
+                CFOLIO=folio,
+            ).values(
+                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CTOTAL',
+            )[:20]
+        )
+
+    @staticmethod
+    def fetch_overrides():
+        return {o.invoice_id: o for o in InvoiceCommissionOverride.objects.all()}
 
 
 def _resolve_payment_dates(facturas, payment_docs):
@@ -487,6 +509,97 @@ def _effective_rate(rate_row, days_late):
     return max(decayed, Decimal('0'))
 
 
+def _manual_line(base, override):
+    """Synthetic single line representing a management manual-amount
+    override, replacing whatever the automatic calculation produced (or,
+    for an invoice outside the normally-computed set, standing in for it
+    entirely). `base` supplies invoice_id/folio/cliente/paid_date/due_date/
+    days_late - either a real computed line or the minimal dict built for
+    an invoice found only via the search endpoint.
+    """
+    return {
+        'invoice_id': base['invoice_id'],
+        'folio': base['folio'],
+        'cliente': base['cliente'],
+        'zone': override.zone or base['zone'],
+        'producto_codigo': None,
+        'producto_nombre': override.note or 'Monto manual',
+        'category': None,
+        'rate_code': None,
+        'quantity': None,
+        'unit_amount': None,
+        'net_amount': override.override_amount,
+        'rate': None,
+        'days_late': base.get('days_late', 0),
+        'paid_date': base.get('paid_date'),
+        'due_date': base.get('due_date'),
+        'commission': override.override_amount,
+        'manual': True,
+    }
+
+
+def _apply_overrides(lines, zone_totals, overrides):
+    """Applies management's manual corrections (see InvoiceCommissionOverride)
+    on top of the automatically-computed lines/zone_totals. Two independent
+    modes per invoice: excluded (zero it out, keep visible) or
+    override_amount (replace its commission with a flat manual figure).
+    Invoices found only via the search endpoint (not naturally present in
+    `lines` at all) are added as a single synthetic line, using the zone
+    recorded on the override itself - the API layer requires that zone be
+    set whenever override_amount is used, so this should always resolve.
+    """
+    lines_by_invoice = defaultdict(list)
+    for line in lines:
+        lines_by_invoice[line['invoice_id']].append(line)
+
+    result_lines = []
+    for invoice_id, invoice_lines in lines_by_invoice.items():
+        override = overrides.get(invoice_id)
+        if override is None:
+            result_lines.extend(invoice_lines)
+            continue
+
+        zone_code = invoice_lines[0]['zone']
+        previous_total = sum((l['commission'] for l in invoice_lines), Decimal('0'))
+        if override.excluded:
+            zone_totals[zone_code] -= previous_total
+            result_lines.extend({**l, 'commission': Decimal('0'), 'excluded': True} for l in invoice_lines)
+        elif override.override_amount is not None:
+            zone_totals[zone_code] -= previous_total
+            zone_totals[override.zone or zone_code] += override.override_amount
+            result_lines.append(_manual_line(invoice_lines[0], override))
+        else:
+            result_lines.extend(invoice_lines)
+
+    present_ids = set(lines_by_invoice.keys())
+    added = [
+        (invoice_id, o) for invoice_id, o in overrides.items()
+        if invoice_id not in present_ids and not o.excluded and o.override_amount is not None
+    ]
+    if added:
+        facturas = {
+            f['CIDDOCUMENTO']: f for f in AdmDocumentos.objects.filter(
+                CIDDOCUMENTO__in=[invoice_id for invoice_id, _ in added]
+            ).values('CIDDOCUMENTO', 'CFOLIO', 'CRAZONSOCIAL', 'CFECHA')
+        }
+        for invoice_id, override in added:
+            factura = facturas.get(invoice_id)
+            if factura is None or not override.zone:
+                continue
+            zone_totals[override.zone] += override.override_amount
+            result_lines.append(_manual_line({
+                'invoice_id': invoice_id,
+                'folio': factura['CFOLIO'],
+                'cliente': factura['CRAZONSOCIAL'],
+                'zone': override.zone,
+                'paid_date': factura['CFECHA'],
+                'due_date': None,
+                'days_late': 0,
+            }, override))
+
+    return result_lines
+
+
 def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAYS):
     """Commission calc for Facturas that became fully paid within
     [date_from, date_to] (both `datetime.date`) - not invoices merely dated
@@ -626,6 +739,10 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             'due_date': due_date,
             'commission': commission,
         })
+
+    overrides = CommissionRepository.fetch_overrides()
+    if overrides:
+        lines = _apply_overrides(lines, zone_totals, overrides)
 
     return {
         'date_from': date_from,

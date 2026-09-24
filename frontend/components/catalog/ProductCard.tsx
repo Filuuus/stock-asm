@@ -55,9 +55,15 @@ export default function ProductCard({ product }: { product: Product }) {
           {product.CNOMBREPRODUCTO}
         </h3>
         <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
-        <span className="mt-2 text-lg font-bold text-gray-900">
-          ${product.CPRECIO1.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
-        </span>
+        {product.price_visible && product.CPRECIO1 !== null ? (
+          <span className="mt-2 text-lg font-bold text-gray-900">
+            ${product.CPRECIO1.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+          </span>
+        ) : (
+          <span className="mt-2 text-xs font-medium text-gray-400">
+            Precio disponible para personal
+          </span>
+        )}
       </div>
     </div>
   );

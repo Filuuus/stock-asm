@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 
 
@@ -73,3 +74,56 @@ class PuntoVentaClientZone(models.Model):
 
     def __str__(self):
         return f'Cliente {self.cliente_id} -> {self.zone}'
+
+
+class InvoiceCommissionOverride(models.Model):
+    """Management-only manual correction to one invoice's commission -
+    the "Add"/"Exclude" tool on the Comisiones dashboard. Requested
+    2026-09-19 (see sales-commissions-feature memory) for cases the
+    automatic per-line calculation gets wrong that aren't worth a general
+    rule (e.g. a genuine one-off management judgment call, or a rare
+    category like Equipo with no automatic detection rule yet).
+
+    Two independent modes, both keyed by invoice_id:
+    - excluded=True: the invoice's computed commission is zeroed out and
+      excluded from zone_totals, but its row stays visible (grayed/struck
+      through), not deleted from the response - management wants to see
+      *what* was excluded, not just a smaller number.
+    - override_amount set: replaces the invoice's commission with this flat
+      amount (not additive) - covers "the automatic calculation used the
+      wrong rate/category" rather than "this shouldn't count at all".
+
+    zone is only needed when the invoice isn't naturally present in the
+    computed set at all (found via the invoice-search endpoint - outside
+    the normal lookback window, a different classification, etc.) - when it
+    resolves naturally its real zone from the ERP is used instead.
+
+    Same PII rule as PuntoVentaClientZone: never store the client name here,
+    only the ERP invoice id - resolved live from AdmDocumentos for display.
+    """
+
+    ZONE_CHOICES = [
+        ('ZONA1', 'Zona 1'), ('ZONA2', 'Zona 2'), ('OFICINA', 'Oficina'),
+        ('SERVICIOS', 'Servicios'), ('PUNTOVENTA', 'Punto de Venta'),
+    ]
+
+    # Not a real ForeignKey: mirrors AdmDocumentos.CIDDOCUMENTO in the ERP
+    # (a separate, read-only database) rather than referencing it.
+    invoice_id = models.IntegerField(unique=True)
+    excluded = models.BooleanField(default=False)
+    override_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    zone = models.CharField(max_length=10, choices=ZONE_CHOICES, blank=True)
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        if self.excluded:
+            return f'Factura {self.invoice_id}: excluida'
+        return f'Factura {self.invoice_id}: monto manual {self.override_amount}'

@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'accounts',
     'api',
     'catalog',
     'commissions',
@@ -148,10 +149,26 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+# Needed for the frontend's session cookie (login) to be sent/received on
+# cross-origin requests during local dev (Next.js on :3000, Django on :8000).
+CORS_ALLOW_CREDENTIALS = True
+# Django's CSRF middleware checks the request's Origin header against the
+# target host for any unsafe method once a session exists (not just for
+# login itself - also logout, and the commission override POST/DELETE) -
+# without this, every one of those gets a 403 "Origin checking failed" in
+# dev, since the frontend (localhost:3000) and backend (localhost:8000) are
+# different origins even though they share a hostname.
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
     ],
 }
 
