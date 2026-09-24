@@ -7,18 +7,32 @@ export interface CommissionLine {
   folio: number;
   cliente: string;
   zone: Zone;
-  producto_codigo: string;
+  producto_codigo: string | null;
   producto_nombre: string;
-  category: Category;
+  category: Category | null;
   rate_code: string | null;
-  quantity: number;
+  quantity: number | null;
   unit_amount: number | null;
   net_amount: number;
-  rate: number;
+  rate: number | null;
   days_late: number;
   paid_date: string;
   due_date: string | null;
   commission: number;
+  // Management-only manual correction flags (see InvoiceCommissionOverride) -
+  // excluded rows are zeroed but stay visible; manual rows replace the
+  // computed line with a flat management-entered amount.
+  excluded?: boolean;
+  manual?: boolean;
+}
+
+export interface InvoiceSearchResult {
+  invoice_id: number;
+  folio: number;
+  cliente: string;
+  fecha: string;
+  total: number;
+  zone: Zone | null;
 }
 
 export interface UnresolvedPaymentDate {

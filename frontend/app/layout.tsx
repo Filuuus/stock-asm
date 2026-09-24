@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
-import { User, Settings, ShoppingCart } from "lucide-react";
+import { Settings, ShoppingCart } from "lucide-react";
 import { SearchQueryProvider } from "@/hooks/use-search-query";
+import { AuthProvider } from "@/hooks/use-auth";
 import SearchBar from "@/components/search-bar";
+import HeaderNav from "@/components/header-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -32,30 +33,24 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-screen flex flex-col bg-gray-50">
-        <SearchQueryProvider>
-          <header className="bg-slate-900 px-6 py-3 flex items-center justify-between text-white border-b border-slate-800">
-            <div className="text-lg font-bold">Agropecuaria Santa María</div>
-            <SearchBar />
-            <div className="flex items-center space-x-4">
-              <Link
-                href="/comisiones"
-                className="text-sm font-medium text-slate-200 hover:text-white"
-              >
-                Comisiones
-              </Link>
-              <button aria-label="Cuenta" className="p-2 hover:bg-slate-800 rounded-full">
-                <User className="w-5 h-5" />
-              </button>
-              <button aria-label="Configuración" className="p-2 hover:bg-slate-800 rounded-full">
-                <Settings className="w-5 h-5" />
-              </button>
-              <button aria-label="Carrito" className="p-2 hover:bg-slate-800 rounded-full">
-                <ShoppingCart className="w-5 h-5" />
-              </button>
-            </div>
-          </header>
-          <div className="flex-1 flex flex-col">{children}</div>
-        </SearchQueryProvider>
+        <AuthProvider>
+          <SearchQueryProvider>
+            <header className="bg-slate-900 px-6 py-3 flex items-center justify-between text-white border-b border-slate-800">
+              <div className="text-lg font-bold">Agropecuaria Santa María</div>
+              <SearchBar />
+              <div className="flex items-center space-x-4">
+                <HeaderNav />
+                <button aria-label="Configuración" className="p-2 hover:bg-slate-800 rounded-full">
+                  <Settings className="w-5 h-5" />
+                </button>
+                <button aria-label="Carrito" className="p-2 hover:bg-slate-800 rounded-full">
+                  <ShoppingCart className="w-5 h-5" />
+                </button>
+              </div>
+            </header>
+            <div className="flex-1 flex flex-col">{children}</div>
+          </SearchQueryProvider>
+        </AuthProvider>
       </body>
     </html>
   );

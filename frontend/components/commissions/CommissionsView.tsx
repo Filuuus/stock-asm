@@ -1,8 +1,20 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, Info, Loader2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Loader2,
+  Plus,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -10,6 +22,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -19,7 +37,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { CommissionLine, CommissionsSummary, Zone } from "@/types/commissions";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { CommissionLine, CommissionsSummary, InvoiceSearchResult, Zone } from "@/types/commissions";
 
 const ZONE_LABELS: Record<Zone, string> = {
   ZONA1: "Zona 1 (Juan Jose Franco)",
@@ -58,6 +78,8 @@ interface InvoiceGroup {
   days_late: number;
   net_total: number;
   commission_total: number;
+  excluded: boolean;
+  manual: boolean;
   lines: CommissionLine[];
 }
 
@@ -110,18 +132,23 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
         days_late: line.days_late,
         net_total: 0,
         commission_total: 0,
+        excluded: false,
+        manual: false,
         lines: [],
       };
       groups.set(line.invoice_id, group);
     }
     group.net_total += line.net_amount;
     group.commission_total += line.commission;
+    if (line.excluded) group.excluded = true;
+    if (line.manual) group.manual = true;
     group.lines.push(line);
   }
   return [...groups.values()].sort((a, b) => b.commission_total - a.commission_total);
 }
 
 export default function CommissionsView() {
+  const { loading: authLoading, isWorker, isManagement } = useAuth();
   const [month, setMonth] = useState(currentMonth());
   const [data, setData] = useState<CommissionsSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -129,6 +156,18 @@ export default function CommissionsView() {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [searchFolio, setSearchFolio] = useState("");
+  const [searchResults, setSearchResults] = useState<InvoiceSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceSearchResult | null>(null);
+  const [overrideAmount, setOverrideAmount] = useState("");
+  const [overrideZone, setOverrideZone] = useState<Zone | "">("");
+  const [overrideNote, setOverrideNote] = useState("");
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -147,8 +186,8 @@ export default function CommissionsView() {
     setError(null);
     try {
       const { from, to } = monthRange(targetMonth);
-      const res = await fetch(
-        `http://127.0.0.1:8000/api/commissions/summary/?date_from=${from}&date_to=${to}`,
+      const res = await apiFetch(
+        `/api/commissions/summary/?date_from=${from}&date_to=${to}`,
         { cache: "no-store" },
       );
       if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
@@ -166,13 +205,14 @@ export default function CommissionsView() {
   };
 
   useEffect(() => {
+    if (!isWorker) return;
     // fetchSummary sets loading/error state synchronously before its first
     // await - standard fetch-on-mount pattern, safe to disable here.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSummary(month);
-    // Intentionally run once on mount only - handleMonthChange covers refetches.
+    // Intentionally run once auth resolves - handleMonthChange covers refetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isWorker]);
 
   const handleMonthChange = (value: string) => {
     setMonth(value);
@@ -190,6 +230,92 @@ export default function CommissionsView() {
       else next.add(invoiceId);
       return next;
     });
+  };
+
+  const openAddDialog = () => {
+    setSearchFolio("");
+    setSearchResults([]);
+    setSearchError(null);
+    setSelectedInvoice(null);
+    setOverrideAmount("");
+    setOverrideZone("");
+    setOverrideNote("");
+    setOverrideError(null);
+    setAddOpen(true);
+  };
+
+  const handleSearch = async () => {
+    if (!searchFolio.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res = await apiFetch(`/api/commissions/invoices/search/?folio=${encodeURIComponent(searchFolio.trim())}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudo buscar la factura.");
+      setSearchResults(json);
+      if (json.length === 0) setSearchError("Sin resultados para ese folio.");
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "No se pudo buscar la factura.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSelectInvoice = (invoice: InvoiceSearchResult) => {
+    setSelectedInvoice(invoice);
+    setOverrideZone(invoice.zone ?? "");
+  };
+
+  const submitOverride = async (body: Record<string, unknown>) => {
+    const res = await apiFetch("/api/commissions/overrides/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "No se pudo guardar el ajuste.");
+    return json;
+  };
+
+  const handleSubmitAdd = async () => {
+    if (!selectedInvoice) return;
+    if (!overrideAmount || !overrideZone) {
+      setOverrideError("Indique el monto y la zona.");
+      return;
+    }
+    setOverrideSubmitting(true);
+    setOverrideError(null);
+    try {
+      await submitOverride({
+        invoice_id: selectedInvoice.invoice_id,
+        override_amount: overrideAmount,
+        zone: overrideZone,
+        note: overrideNote,
+      });
+      setAddOpen(false);
+      fetchSummary(month);
+    } catch (err) {
+      setOverrideError(err instanceof Error ? err.message : "No se pudo guardar el ajuste.");
+    } finally {
+      setOverrideSubmitting(false);
+    }
+  };
+
+  const handleToggleExclude = async (group: InvoiceGroup) => {
+    try {
+      // A manual-amount override also needs "Restaurar" to fully clear it
+      // (not flip it to excluded=true) - otherwise there'd be no way back
+      // to the automatic calculation from the dashboard, only via the
+      // Django admin.
+      if (group.excluded || group.manual) {
+        const res = await apiFetch(`/api/commissions/overrides/${group.invoice_id}/`, { method: "DELETE" });
+        if (!res.ok) throw new Error("No se pudo restaurar la factura.");
+      } else {
+        await submitOverride({ invoice_id: group.invoice_id, excluded: true });
+      }
+      fetchSummary(month);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo actualizar la factura.");
+    }
   };
 
   const totalCommission = useMemo(() => {
@@ -212,10 +338,25 @@ export default function CommissionsView() {
       (g) =>
         `${g.cliente} ${g.folio}`.toLowerCase().includes(q) ||
         g.lines.some((l) =>
-          `${l.producto_nombre} ${l.producto_codigo}`.toLowerCase().includes(q),
+          `${l.producto_nombre} ${l.producto_codigo ?? ""}`.toLowerCase().includes(q),
         ),
     );
   }, [data, filter, selectedZone]);
+
+  if (!authLoading && !isWorker) {
+    return (
+      <main className="max-w-7xl mx-auto w-full p-6">
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
+          <p className="text-sm font-medium text-gray-700">
+            Debe iniciar sesión para ver las comisiones.
+          </p>
+          <a href="/login" className="text-sm font-medium text-slate-900 underline">
+            Iniciar sesión
+          </a>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="max-w-7xl mx-auto w-full p-6 flex flex-col gap-6">
@@ -239,7 +380,7 @@ export default function CommissionsView() {
             className="w-40"
           />
         </div>
-        {loading && (
+        {(loading || authLoading) && (
           <Loader2 className="w-4 h-4 mb-2 animate-spin text-gray-400" />
         )}
       </div>
@@ -327,12 +468,20 @@ export default function CommissionsView() {
                   </button>
                 )}
               </div>
-              <Input
-                placeholder="Buscar cliente, producto o folio..."
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="w-72"
-              />
+              <div className="flex items-center gap-2">
+                {isManagement && (
+                  <Button size="sm" variant="outline" onClick={openAddDialog}>
+                    <Plus className="w-4 h-4" />
+                    Agregar factura
+                  </Button>
+                )}
+                <Input
+                  placeholder="Buscar cliente, producto o folio..."
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="w-72"
+                />
+              </div>
             </div>
 
             <div className="rounded-lg border bg-white">
@@ -347,6 +496,7 @@ export default function CommissionsView() {
                     <TableHead className="text-right">Días tarde</TableHead>
                     <TableHead className="text-right">Items</TableHead>
                     <TableHead className="text-right">Comisión</TableHead>
+                    {isManagement && <TableHead className="w-28" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -355,7 +505,11 @@ export default function CommissionsView() {
                     return (
                       <Fragment key={group.invoice_id}>
                         <TableRow
-                          className="cursor-pointer"
+                          className={cn(
+                            "cursor-pointer",
+                            group.excluded && "opacity-50",
+                            group.manual && "bg-amber-50",
+                          )}
                           onClick={() => toggleExpanded(group.invoice_id)}
                         >
                           <TableCell>
@@ -365,10 +519,10 @@ export default function CommissionsView() {
                               <ChevronRight className="w-4 h-4 text-gray-400" />
                             )}
                           </TableCell>
-                          <TableCell className="font-mono text-xs">
+                          <TableCell className={cn("font-mono text-xs", group.excluded && "line-through")}>
                             {group.folio}
                           </TableCell>
-                          <TableCell className="max-w-56 truncate">
+                          <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
                             {group.cliente}
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
@@ -385,11 +539,38 @@ export default function CommissionsView() {
                           </TableCell>
                           <TableCell className="text-right font-mono font-medium">
                             {currency(group.commission_total)}
+                            {group.manual && (
+                              <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-100 text-amber-800">
+                                Manual
+                              </Badge>
+                            )}
                           </TableCell>
+                          {isManagement && (
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-xs"
+                                onClick={() => handleToggleExclude(group)}
+                              >
+                                {group.excluded || group.manual ? (
+                                  <>
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    Restaurar
+                                  </>
+                                ) : (
+                                  <>
+                                    <Ban className="w-3.5 h-3.5" />
+                                    Excluir
+                                  </>
+                                )}
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                         {isOpen && (
                           <TableRow key={`${group.invoice_id}-detail`}>
-                            <TableCell colSpan={8} className="bg-gray-50 p-0">
+                            <TableCell colSpan={isManagement ? 9 : 8} className="bg-gray-50 p-0">
                               <Table>
                                 <TableHeader>
                                   <TableRow className="hover:bg-transparent">
@@ -420,16 +601,18 @@ export default function CommissionsView() {
                                         {line.producto_nombre}
                                       </TableCell>
                                       <TableCell>
-                                        <Badge
-                                          variant="outline"
-                                          className={CATEGORY_BADGE[line.category]}
-                                        >
-                                          {CATEGORY_LABELS[line.category] ??
-                                            line.category}
-                                        </Badge>
+                                        {line.category && (
+                                          <Badge
+                                            variant="outline"
+                                            className={CATEGORY_BADGE[line.category]}
+                                          >
+                                            {CATEGORY_LABELS[line.category] ??
+                                              line.category}
+                                          </Badge>
+                                        )}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
-                                        {quantity(line.quantity)}
+                                        {line.quantity != null ? quantity(line.quantity) : "-"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
                                         {line.unit_amount != null
@@ -440,7 +623,7 @@ export default function CommissionsView() {
                                         {currency(line.net_amount)}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
-                                        {(line.rate * 100).toFixed(2)}%
+                                        {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-sm pr-8">
                                         {currency(line.commission)}
@@ -458,7 +641,7 @@ export default function CommissionsView() {
                   {invoiceGroups.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={isManagement ? 9 : 8}
                         className="text-center text-sm text-gray-500 py-8"
                       >
                         Sin resultados para este período.
@@ -471,6 +654,102 @@ export default function CommissionsView() {
           </div>
         </>
       )}
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Agregar factura con monto manual</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 flex flex-col gap-1.5">
+                <Label htmlFor="search-folio">Folio de factura</Label>
+                <Input
+                  id="search-folio"
+                  value={searchFolio}
+                  onChange={(e) => setSearchFolio(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  placeholder="Ej. 20512"
+                />
+              </div>
+              <Button onClick={handleSearch} disabled={searching}>
+                {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
+              </Button>
+            </div>
+
+            {searchError && <p className="text-sm text-red-600">{searchError}</p>}
+
+            {searchResults.length > 0 && (
+              <div className="flex flex-col gap-1 max-h-48 overflow-y-auto rounded-md border">
+                {searchResults.map((invoice) => (
+                  <button
+                    key={invoice.invoice_id}
+                    onClick={() => handleSelectInvoice(invoice)}
+                    className={cn(
+                      "flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50",
+                      selectedInvoice?.invoice_id === invoice.invoice_id && "bg-slate-100",
+                    )}
+                  >
+                    <span className="truncate">{invoice.cliente}</span>
+                    <span className="ml-2 shrink-0 font-mono text-xs text-gray-500">
+                      {currency(invoice.total)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {selectedInvoice && (
+              <div className="flex flex-col gap-3 rounded-md border p-3">
+                <p className="text-sm text-gray-700">
+                  Factura {selectedInvoice.folio} - {selectedInvoice.cliente}
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="override-amount">Monto de comisión</Label>
+                    <Input
+                      id="override-amount"
+                      type="number"
+                      step="0.01"
+                      value={overrideAmount}
+                      onChange={(e) => setOverrideAmount(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="override-zone">Zona</Label>
+                    <select
+                      id="override-zone"
+                      value={overrideZone}
+                      onChange={(e) => setOverrideZone(e.target.value as Zone)}
+                      className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
+                        <option key={zone} value={zone}>
+                          {ZONE_LABELS[zone]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="override-note">Nota</Label>
+                  <Input
+                    id="override-note"
+                    value={overrideNote}
+                    onChange={(e) => setOverrideNote(e.target.value)}
+                    placeholder="Motivo del ajuste manual"
+                  />
+                </div>
+                {overrideError && <p className="text-sm text-red-600">{overrideError}</p>}
+                <Button onClick={handleSubmitAdd} disabled={overrideSubmitting}>
+                  {overrideSubmitting ? "Guardando..." : "Guardar"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

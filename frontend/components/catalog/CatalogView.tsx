@@ -55,8 +55,13 @@ export default function CatalogView({ products }: { products: Product[] }) {
       if (selectedBrands.size > 0 && (!product.brand || !selectedBrands.has(product.brand))) {
         return false;
       }
-      if (min !== null && product.CPRECIO1 < min) return false;
-      if (max !== null && product.CPRECIO1 > max) return false;
+      if (min !== null || max !== null) {
+        // A hidden price can't be verified to fall in range - exclude it
+        // rather than guessing, only when a range filter is actually set.
+        if (product.CPRECIO1 === null) return false;
+        if (min !== null && product.CPRECIO1 < min) return false;
+        if (max !== null && product.CPRECIO1 > max) return false;
+      }
       if (normalizedQuery) {
         const haystack = normalize(`${product.CNOMBREPRODUCTO} ${product.CCODIGOPRODUCTO}`);
         if (!haystack.includes(normalizedQuery)) return false;
@@ -64,10 +69,15 @@ export default function CatalogView({ products }: { products: Product[] }) {
       return true;
     });
 
-    if (sortMode === "price-asc") {
-      result = [...result].sort((a, b) => a.CPRECIO1 - b.CPRECIO1);
-    } else if (sortMode === "price-desc") {
-      result = [...result].sort((a, b) => b.CPRECIO1 - a.CPRECIO1);
+    if (sortMode === "price-asc" || sortMode === "price-desc") {
+      // Hidden prices (null) always sort last, regardless of direction -
+      // there's no real value to compare them by.
+      const direction = sortMode === "price-asc" ? 1 : -1;
+      result = [...result].sort((a, b) => {
+        if (a.CPRECIO1 === null) return b.CPRECIO1 === null ? 0 : 1;
+        if (b.CPRECIO1 === null) return -1;
+        return (a.CPRECIO1 - b.CPRECIO1) * direction;
+      });
     } else if (normalizedQuery) {
       // Relevance: exact code match, then name starting with the query, then the rest.
       const rank = (product: Product) => {

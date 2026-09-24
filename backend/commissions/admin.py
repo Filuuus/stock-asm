@@ -2,7 +2,9 @@ from django.contrib import admin
 
 from api.models import AdmClientes
 
-from .models import CommissionCategoryRate, PuntoVentaClientZone, ZeroCommissionProduct
+from .models import (
+    CommissionCategoryRate, InvoiceCommissionOverride, PuntoVentaClientZone, ZeroCommissionProduct,
+)
 
 
 @admin.register(CommissionCategoryRate)
@@ -33,3 +35,11 @@ class PuntoVentaClientZoneAdmin(admin.ModelAdmin):
             .first()
             or '(no encontrado en ERP)'
         )
+
+
+@admin.register(InvoiceCommissionOverride)
+class InvoiceCommissionOverrideAdmin(admin.ModelAdmin):
+    list_display = ['invoice_id', 'excluded', 'override_amount', 'zone', 'note', 'created_by', 'updated_at']
+    list_editable = ['excluded', 'override_amount', 'zone', 'note']
+    search_fields = ['invoice_id']
+    readonly_fields = ['created_by', 'created_at', 'updated_at']
