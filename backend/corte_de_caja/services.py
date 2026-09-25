@@ -142,6 +142,7 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
     poliza_bank = _poliza_bank_accounts(ledger_lines, bank_accounts)
 
     by_reference = defaultdict(list)
+    poliza_ref_accounts = defaultdict(set)  # accounts on each poliza's invoice-referenced lines (client + IVA)
     for id_poliza, referencia, fecha, concepto, importe, tipo_movto, id_cuenta in ledger_lines:
         if not referencia:
             continue
@@ -149,6 +150,7 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
             fecha = dj_timezone.make_aware(fecha, dt_timezone.utc)
         signed_amount = importe if tipo_movto else -importe
         by_reference[referencia.upper()].append((fecha, _normalize_name(concepto), signed_amount, id_poliza))
+        poliza_ref_accounts[id_poliza].add(id_cuenta)
 
     # Series+folio pairs shared by more than one candidate Factura - only
     # those need the client-name check to tell them apart. Enforcing it on
@@ -311,8 +313,21 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
                     'approximate': False,
                     'suggested_method': suggested_method,
                     'bank': bank_name,
+                    'account_ids': sorted({a for p in polizas for a in poliza_ref_accounts.get(p, ())}),
                 })
     return events, covered_invoice_ids
+
+
+def _client_account_label(account_ids, client_account_codes):
+    """The client's Contabilidad account as the accountant writes it in the
+    CUENTA column (103-107-408): the payment poliza's referenced lines touch
+    the client's account plus the IVA accounts, so keep only the '103' one.
+    """
+    for account_id in account_ids:
+        code = client_account_codes.get(account_id)
+        if code and code.isdigit() and len(code) == 9:
+            return f'{code[0:3]}-{code[3:6]}-{code[6:9]}'
+    return None
 
 
 def _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_from, date_to):
@@ -357,6 +372,7 @@ def _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_fr
                 # invoices the ledger didn't cover in this window at all.
                 'suggested_method': None,
                 'bank': None,
+                'account_ids': [],
             })
     return events
 
@@ -410,6 +426,7 @@ def calculate_corte_de_caja(date_from, date_to):
     all_events = ledger_events + fallback_events
 
     agent_codes = CommissionRepository.fetch_agent_codes()
+    client_account_codes = CommissionRepository.fetch_client_account_codes()
     categories = _dominant_categories(list({e['invoice_id'] for e in all_events}))
     adjustments = {
         (a.invoice_id, a.event_date): a for a in CorteDeCajaAdjustment.objects.filter(
@@ -464,6 +481,7 @@ def calculate_corte_de_caja(date_from, date_to):
             'approximate': event['approximate'],
             'excluded': excluded,
             'bank': event['bank'],
+            'cuenta': _client_account_label(event['account_ids'], client_account_codes),
             'payment_method': payment_method,
             'payment_method_confirmed': confirmed,
             'reviewed': bool(adjustment and adjustment.reviewed),

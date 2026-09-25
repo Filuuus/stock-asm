@@ -4,21 +4,23 @@ written to a shared folder so she can keep opening it the same way she
 always has instead of using the web dashboard directly (requested
 2026-09-24, see the corte-de-caja-dashboard project memory).
 
-Structure mirrors the real "Corte de caja 2026.xlsx" as closely as the
-automatically-derived data supports: one sheet per business day that had at
-least one payment, same header row/column order (CUENTA, NOMBRE DEL
-CLIENTE, No. FACTURA, DEBE, HABER, ENTREGA, RECIBE, VENCIMIENTO, COMISION,
-EQ-R-S, OBSERVACIONES), plus two new trailing columns (FORMA DE PAGO,
-BANCO) for the payment-method suggestion the web dashboard now tracks.
-CUENTA/ENTREGA/RECIBE are left blank - their meaning was never decoded (see
-that memory) and guessing would be worse than an honestly empty cell.
-
-Two deliberate differences from the original, both already decided with
-the user when the web dashboard was built:
-- No per-salesperson "who collected it" block/subtotal grouping - not
-  derivable from the ERP. Zone subtotal rows stand in for it.
-- OBSERVACIONES holds only the accountant's own note; the payment method
-  goes in its own new column instead of being folded into free text.
+Layout follows the real "Corte de caja 2026.xlsx" day sheets (reworked
+2026-09-25 to match them closely, keeping everything the automatic version
+adds): Arial 8, thin borders, merged title/long-format date, the same 11
+columns (CUENTA ... OBSERVACIONES, with OBSERVACIONES merged across K:O),
+then our two extra columns (FORMA DE PAGO, BANCO). Rows are grouped in
+blocks with a bold header row and a bold =SUM subtotal, but by ZONE (named
+from the ERP's own agent names, optionally overridden with a salesperson's
+name via CORTE_DE_CAJA_ZONE_LABELS) because who physically collected the
+cash isn't derivable. Like the original, transfers sit in a trailing
+section outside TOTAL CORTE, and the bottom block reads TOTAL EFECTIVO
+(= corte - terminal - cheques), TOTAL TERMINAL, TOTAL CHEQUES, TOTAL CORTE
+(= sum of the block subtotals) - here computed with live formulas. Added on
+top: TOTAL TRANSFERENCIAS, the day's grand total, per-zone totals across all
+payment methods, and a section for rows excluded in the dashboard.
+OBSERVACIONES is filled the way the accountant writes it (TRANSFERENCIA
+BBVA, TERMINAL, the cheque note; blank means cash), with "(SUG.)" on
+payment methods that are only the automatic suggestion.
 
 Like the web dashboard, this only ever reads from the ERP + this app's own
 CorteDeCajaAdjustment table - the old spreadsheet is never read as an input.
@@ -30,10 +32,10 @@ from pathlib import Path
 
 from django.conf import settings
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
-from api.models import AdmConceptos, AdmDocumentos
+from api.models import AdmAgentes, AdmConceptos, AdmDocumentos
 from corte_de_caja.models import CorteDeCajaAdjustment
 from corte_de_caja.services import calculate_corte_de_caja
 
@@ -44,16 +46,22 @@ EARLIEST_EXPORT_MONTH = date(2026, 9, 1)
 
 HEADERS = [
     'CUENTA', 'NOMBRE DEL CLIENTE', 'No. FACTURA', 'DEBE', 'HABER', 'ENTREGA', 'RECIBE',
-    'VENCIMIENTO', 'COMISION', 'EQ-R-S', 'OBSERVACIONES', 'FORMA DE PAGO', 'BANCO',
+    'VENCIMIENTO', 'COMISION', 'EQ-R-S', 'OBSERVACIONES',
 ]
+COL_FORMA_PAGO, COL_BANCO = 16, 17  # after OBSERVACIONES (K:O merged)
+LAST_COL = COL_BANCO
+HEADER_ROW = 5
 
 ZONE_SHEET_CODES = {
     'ZONA1': 'Z-1', 'ZONA2': 'Z-2', 'OFICINA': 'O', 'SERVICIOS': 'S', 'PUNTOVENTA': 'PV',
 }
+ZONE_ORDER = ['ZONA1', 'ZONA2', 'OFICINA', 'SERVICIOS', 'PUNTOVENTA']
 CATEGORY_SHEET_CODES = {
     'R': 'R', 'R_NW': 'R', 'R_CHEM': 'R', 'R_FAN': 'R', 'B': 'B', 'S': 'S',
 }
 PAYMENT_METHOD_LABELS = dict(CorteDeCajaAdjustment.PAYMENT_METHOD_CHOICES)
+# How the accountant abbreviates the receiving bank in OBSERVACIONES.
+BANK_ABBREVIATIONS = (('BBVA', 'BBVA'), ('HSBC', 'HSBC'), ('BANAMEX', 'BMX'), ('BANORTE', 'BTE'))
 
 # Spanish month abbreviations, matching the real sheet's own tab naming
 # (e.g. "22.Sep", "15.Ago") - built explicitly rather than via
@@ -64,9 +72,21 @@ SPANISH_MONTH_ABBR = [
     'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
 ]
 
-HEADER_FILL = PatternFill(start_color='DDDDDD', end_color='DDDDDD', fill_type='solid')
-HEADER_FONT = Font(bold=True)
-TOTAL_FONT = Font(bold=True)
+# Formats copied from the real sheet, with a currency symbol added to money.
+MONEY_FORMAT = '_-"$"* #,##0.00_-;\\-"$"* #,##0.00_-;_-"$"* "-"??_-;_-@_-'
+DUE_DATE_FORMAT = 'd\\-mmm\\-yy'
+LONG_DATE_FORMAT = '[$-F800]dddd", "mmmm\\ dd", "yyyy'
+
+FONT = Font(name='Arial', size=8)
+FONT_BOLD = Font(name='Arial', size=8, bold=True)
+FONT_TITLE = Font(name='Arial', size=10, bold=True)
+FONT_EXCLUDED = Font(name='Arial', size=8, color='808080', strike=True)
+THIN = Side(style='thin')
+BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+COLUMN_WIDTHS = {
+    1: 12, 2: 33, 3: 10.7, 4: 7, 5: 15, 6: 7.3, 7: 6.3, 8: 11.4, 9: 8.7, 10: 6.1,
+    11: 9, 12: 9, 13: 9, 14: 9, 15: 9, COL_FORMA_PAGO: 24, COL_BANCO: 26,
+}
 
 
 def _month_bounds(year, month):
@@ -100,64 +120,214 @@ def _folio_prefixes(invoice_ids):
     }
 
 
-def _write_day_sheet(wb, day, rows, folio_prefixes):
-    sheet_name = f'{day.day:02d}.{SPANISH_MONTH_ABBR[day.month - 1]}'
-    ws = wb.create_sheet(sheet_name[:31])
+def _zone_labels():
+    """Block header per zone: the ERP's own agent name (ZONA 1, OFICINA...),
+    unless CORTE_DE_CAJA_ZONE_LABELS overrides it (e.g. with the salesperson
+    who runs that route)."""
+    labels = dict(AdmAgentes.objects.values_list('CCODIGOAGENTE', 'CNOMBREAGENTE'))
+    labels.update(settings.CORTE_DE_CAJA_ZONE_LABELS)
+    return labels
 
-    ws['A1'] = 'CORTE DE CAJA COBRANZA GENERAL'
-    ws['A1'].font = Font(bold=True, size=12)
-    ws['C2'] = day
-    ws['C2'].number_format = 'dd/mm/yyyy'
 
-    header_row = 4
-    for col, title in enumerate(HEADERS, start=1):
-        cell = ws.cell(row=header_row, column=col, value=title)
-        cell.font = HEADER_FONT
-        cell.fill = HEADER_FILL
+def _bank_abbreviation(bank):
+    name = (bank or '').upper()
+    for needle, abbreviation in BANK_ABBREVIATIONS:
+        if needle in name:
+            return abbreviation
+    return None
 
-    zone_totals = {}
-    r = header_row + 1
-    for row in sorted(rows, key=lambda x: (x['zone'] or '', x['cliente'])):
-        folio_display = f"{folio_prefixes.get(row['invoice_id'], 'F')} {int(row['folio'])}"
-        ws.cell(row=r, column=1, value=None)  # CUENTA - not decoded, left blank
-        ws.cell(row=r, column=2, value=row['cliente'])
-        ws.cell(row=r, column=3, value=folio_display)
-        ws.cell(row=r, column=4, value='A' if row['abono'] else None)
-        ws.cell(row=r, column=5, value=float(row['amount']))
-        ws.cell(row=r, column=6, value=None)  # ENTREGA - meaning never decoded
-        ws.cell(row=r, column=7, value=None)  # RECIBE - meaning never decoded
-        if row['due_date']:
-            due_cell = ws.cell(row=r, column=8, value=row['due_date'].date())
-            due_cell.number_format = 'dd/mm/yyyy'
-        ws.cell(row=r, column=9, value=ZONE_SHEET_CODES.get(row['zone'], row['zone']))
-        ws.cell(row=r, column=10, value=CATEGORY_SHEET_CODES.get(row['category'], row['category']))
-        ws.cell(row=r, column=11, value=row['note'] or None)
+
+def _observaciones(row):
+    """OBSERVACIONES the way the accountant writes it: transfers name the
+    bank, terminal says TERMINAL, cheques carry their note, and cash is left
+    blank. A payment method that is only the automatic suggestion gets
+    '(SUG.)' so it isn't read as confirmed."""
+    method = row['payment_method']
+    note = row['note'] or ''
+    if method == CorteDeCajaAdjustment.PAYMENT_METHOD_TRANSFERENCIA:
+        text = ' '.join(filter(None, ['TRANSFERENCIA', _bank_abbreviation(row['bank'])]))
+    elif method == CorteDeCajaAdjustment.PAYMENT_METHOD_TERMINAL:
+        text = 'TERMINAL'
+    elif method == CorteDeCajaAdjustment.PAYMENT_METHOD_CHEQUE:
+        text = note or 'CHEQUE'
+        note = ''
+    else:
+        text = ''
+    if text and not row['payment_method_confirmed']:
+        text += ' (SUG.)'
+    return ' - '.join(filter(None, [text, note])) or None
+
+
+class _DaySheet:
+    """Writes one day sheet, tracking the current row."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.r = HEADER_ROW + 1
+
+    def cell(self, col, value=None, *, bold=False, fmt=None, align='left', font=None, border=True):
+        cell = self.ws.cell(row=self.r, column=col, value=value)
+        cell.font = font or (FONT_BOLD if bold else FONT)
+        cell.alignment = Alignment(horizontal=align, vertical='center')
+        if fmt:
+            cell.number_format = fmt
+        if border:
+            cell.border = BORDER
+        return cell
+
+    def blank_table_row(self):
+        for col in range(1, LAST_COL + 1):
+            self.cell(col)
+        self.ws.merge_cells(start_row=self.r, start_column=11, end_row=self.r, end_column=15)
+        self.ws.row_dimensions[self.r].height = 13.5
+
+    def label_row(self, text):
+        self.blank_table_row()
+        self.cell(2, text, bold=True, align='center')
+        self.r += 1
+
+    def subtotal_row(self, first, last):
+        self.blank_table_row()
+        self.cell(5, f'=SUM(E{first}:E{last})', bold=True, fmt=MONEY_FORMAT, align='right')
+        row = self.r
+        self.r += 1
+        return row
+
+    def payment_row(self, row, folio_prefixes, excluded=False):
+        self.blank_table_row()
+        font = FONT_EXCLUDED if excluded else None
+        folio = f"{folio_prefixes.get(row['invoice_id'], 'F')} {int(row['folio'])}"
+        self.cell(1, row['cuenta'], font=font)
+        self.cell(2, row['cliente'], font=font)
+        self.cell(3, folio, font=font)
+        self.cell(4, 'A' if row['abono'] else None, font=font, align='center')
+        self.cell(5, float(row['amount']), fmt=MONEY_FORMAT, align='right', font=font)
+        self.cell(8, row['due_date'].date() if row['due_date'] else None, fmt=DUE_DATE_FORMAT, align='center', font=font)
+        self.cell(9, ZONE_SHEET_CODES.get(row['zone'], row['zone']), align='center', font=font)
+        self.cell(10, CATEGORY_SHEET_CODES.get(row['category'], row['category']), align='center', font=font)
+        self.cell(11, _observaciones(row), font=font)
         method_label = PAYMENT_METHOD_LABELS.get(row['payment_method'], '')
         if row['payment_method'] and not row['payment_method_confirmed']:
             method_label += ' (sugerido)'
-        ws.cell(row=r, column=12, value=method_label or None)
-        ws.cell(row=r, column=13, value=row['bank'] or None)
+        self.cell(COL_FORMA_PAGO, method_label or None, font=font)
+        self.cell(COL_BANCO, row['bank'] or None, font=font)
+        self.r += 1
 
-        if not row['excluded']:
-            zone_totals[row['zone']] = zone_totals.get(row['zone'], 0) + float(row['amount'])
-        r += 1
 
-    r += 1
-    # Sort by an explicit string key rather than the raw tuple - zone
-    # should never actually be None given the upstream zone-scope filter,
-    # but sorted() comparing None to a str raises, and this is a cheap
-    # guard against that if that assumption ever breaks.
-    for zone, total in sorted(zone_totals.items(), key=lambda kv: kv[0] or ''):
-        ws.cell(row=r, column=2, value=f'TOTAL {ZONE_SHEET_CODES.get(zone, zone)}').font = TOTAL_FONT
-        ws.cell(row=r, column=5, value=total).font = TOTAL_FONT
-        r += 1
-    ws.cell(row=r, column=2, value='TOTAL CORTE').font = TOTAL_FONT
-    ws.cell(row=r, column=5, value=sum(zone_totals.values())).font = TOTAL_FONT
+def _zone_sort_key(zone):
+    return (ZONE_ORDER.index(zone) if zone in ZONE_ORDER else len(ZONE_ORDER), zone or '')
 
-    widths = [14, 32, 12, 8, 12, 10, 10, 12, 10, 8, 28, 20, 24]
-    for col, width in enumerate(widths, start=1):
+
+def _write_day_sheet(wb, day, rows, folio_prefixes, zone_labels):
+    ws = wb.create_sheet(f'{day.day:02d}.{SPANISH_MONTH_ABBR[day.month - 1]}'[:31])
+    sheet = _DaySheet(ws)
+
+    # Title, long-format date, source note - same cells as the original.
+    ws.merge_cells('A1:Q1')
+    ws['A1'] = 'CORTE DE CAJA COBRANZA GENERAL'
+    ws['A1'].font = FONT_TITLE
+    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    for col in range(1, LAST_COL + 1):
+        ws.cell(row=1, column=col).border = BORDER
+    ws.merge_cells('C2:F2')
+    ws['C2'] = day
+    ws['C2'].number_format = LONG_DATE_FORMAT
+    ws['C2'].font = FONT_BOLD
+    ws['C2'].alignment = Alignment(horizontal='center', vertical='center')
+    for col in range(3, 7):
+        ws.cell(row=2, column=col).border = Border(bottom=THIN)
+    ws['A3'] = 'CAPTURA CONTPAQ COMERCIAL'
+    ws['A3'].font = FONT_BOLD
+    for r in (1, 2, 3, 4):
+        ws.row_dimensions[r].height = 12.75
+
+    sheet.r = HEADER_ROW
+    sheet.blank_table_row()
+    for col, title in enumerate(HEADERS, start=1):
+        sheet.cell(col, title, bold=True, align='center')
+    sheet.cell(COL_FORMA_PAGO, 'FORMA DE PAGO', bold=True, align='center')
+    sheet.cell(COL_BANCO, 'BANCO', bold=True, align='center')
+    sheet.r += 1
+
+    def order(row):
+        return (_zone_sort_key(row['zone']), row['cliente'], row['folio'])
+
+    counted = [r for r in rows if not r['excluded']]
+    excluded = [r for r in rows if r['excluded']]
+    physical = [r for r in counted if r['payment_method'] != CorteDeCajaAdjustment.PAYMENT_METHOD_TRANSFERENCIA]
+    transfers = [r for r in counted if r['payment_method'] == CorteDeCajaAdjustment.PAYMENT_METHOD_TRANSFERENCIA]
+
+    # Efectivo / terminal / cheque, in one block per zone (their per-salesperson blocks).
+    corte_subtotals = []
+    for zone in sorted({r['zone'] for r in physical}, key=_zone_sort_key):
+        sheet.label_row(zone_labels.get(zone, zone))
+        first = sheet.r
+        for row in sorted((r for r in physical if r['zone'] == zone), key=order):
+            sheet.payment_row(row, folio_prefixes)
+        corte_subtotals.append(sheet.subtotal_row(first, sheet.r - 1))
+
+    # Transfers: trailing section, outside TOTAL CORTE - same as the original.
+    transfer_subtotal = None
+    if transfers:
+        sheet.label_row('TRANSFERENCIAS')
+        first = sheet.r
+        for row in sorted(transfers, key=order):
+            sheet.payment_row(row, folio_prefixes)
+        transfer_subtotal = sheet.subtotal_row(first, sheet.r - 1)
+    data_end = sheet.r - 1
+
+    if excluded:
+        sheet.label_row('EXCLUIDOS DEL CORTE (no se suman)')
+        for row in sorted(excluded, key=order):
+            sheet.payment_row(row, folio_prefixes, excluded=True)
+
+    # Totals block - labels in B, values in D:E, like the original.
+    def total_line(label, formula):
+        sheet.r += 0
+        row = sheet.r
+        ws.cell(row=row, column=2, value=label).font = FONT_BOLD
+        ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=5)
+        value = ws.cell(row=row, column=4, value=formula)
+        value.font = FONT_BOLD
+        value.number_format = MONEY_FORMAT
+        value.alignment = Alignment(horizontal='right')
+        ws.row_dimensions[row].height = 12.75
+        sheet.r += 1
+        return row
+
+    forma = get_column_letter(COL_FORMA_PAGO)
+    rng = lambda col: f'${col}${HEADER_ROW + 1}:${col}${data_end}'
+    sheet.r += 1
+    r_efectivo = sheet.r
+    r_terminal, r_cheques, r_corte = r_efectivo + 1, r_efectivo + 2, r_efectivo + 3
+    total_line('TOTAL EFECTIVO', f'=D{r_corte}-D{r_terminal}-D{r_cheques}')
+    total_line('TOTAL TERMINAL', f'=SUMIF({rng(forma)},"Terminal*",{rng("E")})')
+    total_line('TOTAL CHEQUES', f'=SUMIF({rng(forma)},"Cheque*",{rng("E")})')
+    total_line('TOTAL CORTE', '=SUM(' + ','.join(f'E{r}' for r in corte_subtotals) + ')' if corte_subtotals else 0)
+    r_transf = total_line('TOTAL TRANSFERENCIAS', f'=E{transfer_subtotal}' if transfer_subtotal else 0)
+    total_line('TOTAL COBRADO DEL DIA', f'=D{r_corte}+D{r_transf}')
+    unclassified = [r for r in physical if not r['payment_method']]
+    if unclassified:
+        total_line('(incluye sin forma de pago, contado como efectivo)',
+                   f'=SUMPRODUCT(({rng("C")}<>"")*({rng(forma)}="")*{rng("E")})')
+
+    sheet.r += 1
+    ws.cell(row=sheet.r, column=2, value='TOTALES POR ZONA (todas las formas de pago)').font = FONT_BOLD
+    sheet.r += 1
+    zone_col = get_column_letter(9)
+    for zone in sorted({r['zone'] for r in counted}, key=_zone_sort_key):
+        code = ZONE_SHEET_CODES.get(zone, zone)
+        total_line(f'TOTAL {code}', f'=SUMIF({rng(zone_col)},"{code}",{rng("E")})')
+
+    for col, width in COLUMN_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col)].width = width
-    ws.freeze_panes = f'A{header_row + 1}'
+    ws.freeze_panes = f'A{HEADER_ROW + 1}'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.paperSize = 1
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f'{HEADER_ROW}:{HEADER_ROW}'
 
 
 def build_month_workbook(year, month):
@@ -178,11 +348,12 @@ def build_month_workbook(year, month):
 
     invoice_ids = {row['invoice_id'] for row in result['rows']}
     folio_prefixes = _folio_prefixes(invoice_ids)
+    zone_labels = _zone_labels()
 
     wb = Workbook()
     wb.remove(wb.active)  # openpyxl creates a default blank sheet - unused, this workbook is all named day sheets
     for day in sorted(rows_by_day):
-        _write_day_sheet(wb, day, rows_by_day[day], folio_prefixes)
+        _write_day_sheet(wb, day, rows_by_day[day], folio_prefixes, zone_labels)
 
     if not wb.sheetnames:
         # No payments at all this month (e.g. exporting the current month

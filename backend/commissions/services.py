@@ -266,6 +266,16 @@ class CommissionRepository:
             return cursor.fetchall()
 
     @staticmethod
+    def fetch_client_account_codes():
+        """Contabilidad's per-client accounts (chart-of-accounts prefix '103',
+        "Clientes") keyed by id - the accountant's sheet has a CUENTA column
+        holding exactly this code (e.g. 103-107-408) for each client.
+        """
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(f"SELECT Id, Codigo FROM {LEDGER_DATABASE}.dbo.Cuentas WHERE Codigo LIKE '103%'")
+            return {id_: (codigo or '').strip() for id_, codigo in cursor.fetchall()}
+
+    @staticmethod
     def fetch_bank_accounts():
         """Real bank/cash accounts (Cuentas.Codigo under the 'Circulante'
         chart-of-accounts group, prefix '1001') - used to label which

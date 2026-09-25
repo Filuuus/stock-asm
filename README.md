@@ -81,6 +81,8 @@ python manage.py export_corte_de_caja                    # current month
 python manage.py export_corte_de_caja --year 2026 --month 9
 ```
 
+Each day's sheet follows the accountant's own layout (same columns, fonts, borders, merged title and date, `TOTAL EFECTIVO`/`TERMINAL`/`CHEQUES`/`CORTE` block with live formulas), with rows grouped in blocks by zone, a transfers section outside `TOTAL CORTE`, and extra columns/totals the automatic version adds. Block headers use the ERP's own zone names (ZONA 1, OFICINA...); to show the salesperson's name instead, set `CORTE_DE_CAJA_ZONE_LABELS` in `backend/.env`, e.g. `CORTE_DE_CAJA_ZONE_LABELS="ZONA1=Nombre Apellido;ZONA2=Nombre Apellido"` (kept out of the code so real names never reach the repo).
+
 Set `CORTE_DE_CAJA_EXPORT_DIR` in `backend/.env` to wherever this should land — defaults to a local `backend/exports/corte_de_caja/` folder, which is fine for dev but not what the accountant should actually open. In production it should point at a real folder on the (Windows) server that's shared out over SMB, so opening the file is exactly as before, just without the manual build step:
 
 1. Pick/create a folder on the server and share it over SMB the normal Windows way (Properties → Sharing) — this is a one-time server/IT step, not something the app does.
