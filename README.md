@@ -39,6 +39,12 @@ DB_USER=
 DB_PASSWORD=
 ```
 
+The SQL Server ODBC driver defaults to `ODBC Driver 18 for SQL Server`. If the machine has a different version installed (e.g. 17), set `DB_DRIVER` in `.env` to match its exact name instead of installing another one (`odbcinst -q -d` lists installed drivers on macOS/Linux; on Windows check ODBC Data Sources → Drivers):
+
+```
+DB_DRIVER=ODBC Driver 17 for SQL Server
+```
+
 Then run migrations (against the local SQLite database only) and start the server:
 
 ```bash
