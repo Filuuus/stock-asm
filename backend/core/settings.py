@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'api',
     'catalog',
     'commissions',
+    'corte_de_caja',
 ]
 
 MIDDLEWARE = [
@@ -178,5 +179,13 @@ CACHES = {
         'LOCATION': 'redis://127.0.0.1:6379/0',
     }
 }
+
+# Where `manage.py export_corte_de_caja` writes the monthly Corte de Caja
+# workbook (see corte_de_caja/exports.py). Defaults to a local folder for
+# dev - in production this should point at a path that's shared out over
+# SMB on the office server, so the accountant/manager can open it directly
+# without any manual export step. Setting up the actual SMB share is a
+# server/IT configuration task, not something this app does.
+CORTE_DE_CAJA_EXPORT_DIR = os.getenv('CORTE_DE_CAJA_EXPORT_DIR', str(BASE_DIR / 'exports' / 'corte_de_caja'))
 
 

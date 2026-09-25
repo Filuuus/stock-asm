@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 
 export default function HeaderNav() {
   const router = useRouter();
-  const { user, loading, isManagement, logout } = useAuth();
+  const { user, loading, isAccounting, isManagement, logout } = useAuth();
 
   const handleLogout = async () => {
     await logout();
@@ -22,6 +22,14 @@ export default function HeaderNav() {
       >
         Comisiones
       </Link>
+      {(isAccounting || isManagement) && (
+        <Link
+          href="/corte-de-caja"
+          className="text-sm font-medium text-slate-200 hover:text-white"
+        >
+          Corte de Caja
+        </Link>
+      )}
       {isManagement && (
         <Link
           href="/usuarios"

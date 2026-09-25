@@ -38,6 +38,7 @@ import { Zone } from "@/types/commissions";
 
 const ROLE_OPTIONS: { value: Role; label: string }[] = [
   { value: "SALESPERSON", label: "Vendedor" },
+  { value: "ACCOUNTING", label: "Contabilidad" },
   { value: "MANAGEMENT", label: "Gerencia" },
 ];
 

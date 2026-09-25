@@ -14,9 +14,11 @@ class Profile(models.Model):
     """
 
     ROLE_SALESPERSON = 'SALESPERSON'
+    ROLE_ACCOUNTING = 'ACCOUNTING'
     ROLE_MANAGEMENT = 'MANAGEMENT'
     ROLE_CHOICES = [
         (ROLE_SALESPERSON, 'Vendedor'),
+        (ROLE_ACCOUNTING, 'Contabilidad'),
         (ROLE_MANAGEMENT, 'Gerencia'),
     ]
 
