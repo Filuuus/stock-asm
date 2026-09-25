@@ -75,22 +75,27 @@ def _month_bounds(year, month):
 
 
 def _folio_prefixes(invoice_ids):
-    """No. FACTURA on the real sheet is a display prefix (e.g. 'F', 'B',
-    'A' - one admConceptos row per tax series) plus the bare folio number -
-    see erp_schema_reference. Reconstructed here from AdmConceptos rather
-    than carried through calculate_corte_de_caja, since Corte de Caja's own
-    report doesn't otherwise need the display prefix.
+    """No. FACTURA on the real sheet is the tax series ('A', 'B', or 'F' for
+    the default 16% series) plus the bare folio number. The series lives in
+    AdmConceptos.CSERIEPOROMISION - CPREFIJOCONCEPTO is 'F' for every
+    concept, so using it renders every B/A invoice as 'F' (verified against
+    the accountant's Sep 2026 sheet: 272/273 rows match this way).
     """
     concepto_by_invoice = dict(
         AdmDocumentos.objects.filter(CIDDOCUMENTO__in=invoice_ids).values_list(
             'CIDDOCUMENTO', 'CIDCONCEPTODOCUMENTO',
         )
     )
-    prefix_by_concepto = dict(
-        AdmConceptos.objects.values_list('CIDCONCEPTODOCUMENTO', 'CPREFIJOCONCEPTO')
+    serie_by_concepto = dict(
+        AdmConceptos.objects.values_list('CIDCONCEPTODOCUMENTO', 'CSERIEPOROMISION')
     )
+
+    def display(concepto_id):
+        serie = (serie_by_concepto.get(concepto_id) or '').strip().upper()
+        return serie if serie in ('A', 'B') else 'F'
+
     return {
-        invoice_id: (prefix_by_concepto.get(concepto_id) or 'F').strip()
+        invoice_id: display(concepto_id)
         for invoice_id, concepto_id in concepto_by_invoice.items()
     }
 

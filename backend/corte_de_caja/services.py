@@ -126,9 +126,9 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
     keeping every step instead of only the one that clears the balance.
 
     Also resolves each event's bank (see _poliza_bank_accounts) and derives
-    a suggested payment_method from it - only when every ledger line netted
-    into that date came from the SAME poliza, so a single event never mixes
-    two different Polizas' banks.
+    a suggested payment_method from it - only when every poliza netted into
+    that date resolves to the SAME bank account, so a single event never
+    mixes two different banks.
 
     Returns (events, covered_invoice_ids) - covered_invoice_ids lists which
     Facturas got at least one event from the ledger IN THIS WINDOW, so the
@@ -147,26 +147,47 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
 
     events = []
     covered_invoice_ids = set()
+    # Series+folio pairs shared by more than one candidate Factura - only
+    # those need the client-name check to tell them apart. Enforcing it on
+    # unique pairs silently dropped real payments whenever the ledger spelled
+    # the client differently (truncated, typo'd, or the actual buyer on a
+    # "Ventas Publico en General" invoice): found 2026-09-25 on F 20933,
+    # where a 9,000 payment was reported as 1,241.38.
+    reference_counts = defaultdict(int)
+    for f in facturas:
+        reference_counts[(concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F'), int(f['CFOLIO']))] += 1
+
     for f in facturas:
         serie = concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F')
         folio = int(f['CFOLIO'])
         client_name = _normalize_name(f['CRAZONSOCIAL'])
         total = f['CTOTAL'] or 0
+        ambiguous = reference_counts[(serie, folio)] > 1
 
-        by_date = defaultdict(float)
-        polizas_by_date = defaultdict(set)
+        entries_by_date = defaultdict(list)
         for referencia in (f'{serie}-{folio}'.upper(), f'{serie} {folio}'.upper()):
             for fecha, ledger_client_name, signed_amount, id_poliza in by_reference.get(referencia, []):
-                if client_name and client_name not in ledger_client_name:
+                if ambiguous and client_name and client_name not in ledger_client_name:
                     continue
-                by_date[fecha.date()] += signed_amount
-                polizas_by_date[fecha.date()].add(id_poliza)
-        if not by_date:
+                entries_by_date[fecha.date()].append((id_poliza, signed_amount))
+        if not entries_by_date:
             continue
 
         cumulative = 0.0
-        for event_date in sorted(by_date):
-            amount = by_date[event_date]
+        for event_date in sorted(entries_by_date):
+            entries = entries_by_date[event_date]
+            # The ledger sometimes holds the same payment twice (found
+            # 2026-09-25: two identical Polizas for one 35,060 payment, which
+            # Contpaqi Comercial records once). Only when a day's entries
+            # would push the invoice past its own total AND several are the
+            # exact same amount, drop the extra copies - a lone overpayment
+            # (e.g. 1,830 received on a 1,744.01 invoice) is real cash and
+            # must stay as recorded.
+            if total and len(entries) > 1 and len({amt for _, amt in entries}) == 1 and entries[0][1] > 0:
+                while len(entries) > 1 and cumulative + sum(a for _, a in entries) > total + LEDGER_FULL_PAYMENT_TOLERANCE:
+                    entries = entries[:-1]
+            amount = sum(a for _, a in entries)
+            polizas = {p for p, _ in entries}
             cumulative += amount
             # Netted entries carry the same few-cents rounding noise
             # LEDGER_FULL_PAYMENT_TOLERANCE already accounts for elsewhere
@@ -177,10 +198,8 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
                 continue
             if date_from <= event_date <= date_to:
                 covered_invoice_ids.add(f['CIDDOCUMENTO'])
-                account_id = None
-                polizas = polizas_by_date[event_date]
-                if len(polizas) == 1:
-                    account_id = poliza_bank.get(next(iter(polizas)))
+                accounts = {poliza_bank.get(p) for p in polizas}
+                account_id = accounts.pop() if len(accounts) == 1 else None
                 suggested_method, bank_name = _suggest_payment_method(account_id, bank_accounts)
                 events.append({
                     'invoice_id': f['CIDDOCUMENTO'],

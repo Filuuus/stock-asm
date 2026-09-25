@@ -38,6 +38,7 @@ PAGO_DOC_TYPES = (9, 10, 12)
 # against real data: raised the September resolution rate from 84% to 96%.
 LEDGER_DATABASE = 'ctAGROPECUARIA_SANTA_MARIA_SA_DE_CV'
 LEDGER_PAGO_CONCEPTO = 'PAGO DEL CLIENTE'
+LEDGER_INGRESOS_TIPOPOL = 1  # TiposPolizas.Id 1 = "Ingresos"
 
 # How close a Devolucion's date can be to a Factura's own date for the
 # same-client/same-amount fallback match below (see _find_credit_noted_invoices).
@@ -236,8 +237,11 @@ class CommissionRepository:
 
     @staticmethod
     def fetch_ledger_payment_lines(floor_date):
-        """Every MovimientosPoliza line for PAGO DEL CLIENTE polizas in the
-        window - unlike fetch_ledger_payments above, this does NOT filter
+        """Every MovimientosPoliza line for payment polizas in the window
+        (PAGO DEL CLIENTE, plus any other Ingresos poliza - a few dozen a
+        year are typed with the client's name as their concept instead, e.g.
+        F 20933's Aug 6 and Aug 31 payments, and would otherwise be missed) -
+        unlike fetch_ledger_payments above, this does NOT filter
         out blank-Referencia lines. Those are the OTHER side of the same
         journal entry: the one that debits the real bank account the money
         landed in (see corte_de_caja/services.py, which is the only
@@ -255,9 +259,9 @@ class CommissionRepository:
                        mp.Importe, mp.TipoMovto, mp.IdCuenta
                 FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
                 JOIN {LEDGER_DATABASE}.dbo.Polizas p ON p.Id = mp.IdPoliza
-                WHERE p.Concepto = %s AND mp.Fecha >= %s AND mp.Fecha <= %s
+                WHERE (p.Concepto = %s OR p.TipoPol = %s) AND mp.Fecha >= %s AND mp.Fecha <= %s
                 """,
-                [LEDGER_PAGO_CONCEPTO, floor_date, date.today()],
+                [LEDGER_PAGO_CONCEPTO, LEDGER_INGRESOS_TIPOPOL, floor_date, date.today()],
             )
             return cursor.fetchall()
 
