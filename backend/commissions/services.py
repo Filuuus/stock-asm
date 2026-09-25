@@ -161,7 +161,7 @@ class CommissionRepository:
                 CFECHA__date__gte=floor_date,
                 CFECHA__date__lte=date_to,
             ).values(
-                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO', 'CTOTAL',
+                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO', 'CTOTAL', 'CPENDIENTE',
                 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CIDCONCEPTODOCUMENTO',
             )
         )
