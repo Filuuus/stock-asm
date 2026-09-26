@@ -54,6 +54,12 @@ class CorteDeCajaAdjustment(models.Model):
     event_date = models.DateField()
 
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True)
+    # Bare ERP client id and normalized bank of the payment, stored next to a
+    # confirmed payment_method so the suggestion engine can learn each
+    # client's habits from confirmed tags without recomputing history from the
+    # ERP (ids only - same PII rule as invoice_id, never the client's name).
+    client_id = models.IntegerField(null=True, blank=True)
+    bank_code = models.CharField(max_length=10, blank=True)
     reviewed = models.BooleanField(default=False)
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,

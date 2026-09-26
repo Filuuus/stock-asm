@@ -5,9 +5,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.permissions import IsAccountingOrManagement
+from api.models import AdmDocumentos
 
 from .models import CorteDeCajaAdjustment
-from .services import calculate_corte_de_caja
+from .services import BANK_CODES, CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENCE_MEDIUM, calculate_corte_de_caja
 
 
 def _parse_date(value, default=None):
@@ -62,6 +63,14 @@ def adjustment_upsert(request):
         if payment_method and payment_method not in valid_methods:
             return Response({'error': 'Forma de pago inválida.'}, status=400)
         defaults['payment_method'] = payment_method
+        if payment_method:
+            # Remember who paid and where, so the suggestion engine can learn
+            # this client's habits (bare ERP id only - never the name).
+            defaults['client_id'] = AdmDocumentos.objects.filter(pk=invoice_id).values_list(
+                'CIDCLIENTEPROVEEDOR', flat=True,
+            ).first()
+            bank_code = data.get('bank_code') or ''
+            defaults['bank_code'] = bank_code if bank_code in BANK_CODES else ''
     if 'excluded' in data:
         defaults['excluded'] = bool(data['excluded'])
     if 'note' in data:
@@ -90,3 +99,43 @@ def adjustment_delete(request, invoice_id, event_date):
         return Response({'error': 'event_date debe tener formato YYYY-MM-DD.'}, status=400)
     CorteDeCajaAdjustment.objects.filter(invoice_id=invoice_id, event_date=parsed_date).delete()
     return Response(status=204)
+
+
+@api_view(['POST'])
+@permission_classes([IsAccountingOrManagement])
+def confirm_suggestions(request):
+    """Confirms, in one click, the suggested payment methods in a date range
+    that the server itself rates at the requested confidence tier (default:
+    only 'alta'). The server decides which rows qualify - the client only says
+    which range and how far down the tiers to go - and only unconfirmed,
+    non-excluded rows are touched."""
+    try:
+        date_from = _parse_date(request.data.get('date_from'))
+        date_to = _parse_date(request.data.get('date_to'))
+    except ValueError:
+        return Response({'error': 'date_from/date_to deben tener formato YYYY-MM-DD.'}, status=400)
+    if not date_from or not date_to:
+        return Response({'error': 'date_from y date_to son requeridos.'}, status=400)
+    tiers = request.data.get('tiers') or [CONFIDENCE_HIGH]
+    if not isinstance(tiers, list) or not set(tiers) <= {CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_LOW}:
+        return Response({'error': 'tiers inválido.'}, status=400)
+
+    confirmed = 0
+    total_amount = 0
+    for row in calculate_corte_de_caja(date_from, date_to)['rows']:
+        if row['excluded'] or row['payment_method_confirmed'] or not row['payment_method']:
+            continue
+        if row['suggestion_confidence'] not in tiers:
+            continue
+        adjustment, _ = CorteDeCajaAdjustment.objects.get_or_create(
+            invoice_id=row['invoice_id'], event_date=row['event_date'], defaults={'created_by': request.user},
+        )
+        if adjustment.payment_method:
+            continue
+        adjustment.payment_method = row['payment_method']
+        adjustment.client_id = row['client_id']
+        adjustment.bank_code = row['bank_code']
+        adjustment.save()
+        confirmed += 1
+        total_amount += float(row['amount'])
+    return Response({'confirmed': confirmed, 'total_amount': total_amount})

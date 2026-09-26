@@ -2,6 +2,12 @@ import type { Zone } from "@/types/commissions";
 
 export type PaymentMethod = "EFECTIVO" | "TERMINAL" | "CHEQUE" | "TRANSFERENCIA";
 
+// How much to trust an unconfirmed suggested payment method: "alta" comes from
+// the client's own confirmed history at the same bank, "media" from the
+// client's history at any bank, "baja" only from the receiving bank (a person
+// should choose).
+export type SuggestionConfidence = "alta" | "media" | "baja";
+
 export interface CorteDeCajaRow {
   invoice_id: number;
   event_date: string;
@@ -29,6 +35,12 @@ export interface CorteDeCajaRow {
   // Chica case -> Efectivo). payment_method_confirmed tells you which.
   payment_method: PaymentMethod | "";
   payment_method_confirmed: boolean;
+  suggestion_confidence: SuggestionConfidence | null;
+  suggestion_reason: string;
+  // Normalized bank key and bare client id - sent back with a confirmed tag so
+  // the server can learn each client's habits.
+  bank_code: string;
+  client_id: number;
   reviewed: boolean;
   reviewed_by: string | null;
   note: string;
@@ -38,6 +50,11 @@ export interface UnclassifiedInfo {
   count: number;
   total_amount: number;
   note: string;
+}
+
+export interface SuggestionTier {
+  count: number;
+  total_amount: number;
 }
 
 export interface UnconfirmedInfo {
@@ -59,6 +76,7 @@ export interface CorteDeCajaSummary {
   cash_drawer_total: number;
   rows: CorteDeCajaRow[];
   unclassified: UnclassifiedInfo;
+  suggestions: Record<SuggestionConfidence, SuggestionTier>;
   unconfirmed: UnconfirmedInfo;
   approximate: ApproximateInfo;
 }

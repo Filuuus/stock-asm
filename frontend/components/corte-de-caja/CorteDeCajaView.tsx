@@ -202,6 +202,7 @@ export default function CorteDeCajaView() {
   const [editingRow, setEditingRow] = useState<CorteDeCajaRow | null>(null);
   const [editNote, setEditNote] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
@@ -268,10 +269,27 @@ export default function CorteDeCajaView() {
 
   const handleMethodChange = async (row: CorteDeCajaRow, method: string) => {
     try {
-      await patchAdjustment(row, { payment_method: method });
+      await patchAdjustment(row, { payment_method: method, bank_code: row.bank_code });
       fetchSummary(dateFrom, dateTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo actualizar la forma de pago.");
+    }
+  };
+
+  const handleConfirmHighConfidence = async () => {
+    setConfirmingBulk(true);
+    try {
+      const res = await apiFetch("/api/corte-de-caja/confirm-suggestions/", {
+        method: "POST",
+        body: JSON.stringify({ date_from: dateFrom, date_to: dateTo, tiers: ["alta"] }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudieron confirmar las sugerencias.");
+      fetchSummary(dateFrom, dateTo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron confirmar las sugerencias.");
+    } finally {
+      setConfirmingBulk(false);
     }
   };
 
@@ -344,8 +362,9 @@ export default function CorteDeCajaView() {
         <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
         <p className="text-sm text-gray-500">
           Cobranza diaria calculada automáticamente desde el ERP - un renglón por cada
-          pago identificado (incluye abonos parciales). La forma de pago se sugiere según
-          el banco que recibió el dinero - confirme o corrija cada una.
+          pago identificado (incluye abonos parciales). La forma de pago se sugiere
+          según el historial confirmado de cada cliente - confirme las de confianza alta con un clic
+          y elija las demás.
         </p>
       </div>
 
@@ -430,15 +449,41 @@ export default function CorteDeCajaView() {
           )}
 
           {data.unconfirmed.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+            <div className="flex flex-wrap items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
               <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 min-w-64">
                 <p className="font-medium">
-                  {data.unconfirmed.count} pagos con forma de pago sugerida sin confirmar (
+                  {data.unconfirmed.count} pagos con forma de pago sin confirmar (
                   {currency(data.unconfirmed.total_amount)})
                 </p>
                 <p className="text-sky-700">{data.unconfirmed.note}</p>
+                <p className="mt-1 flex flex-wrap gap-x-4 text-xs text-sky-700">
+                  <span>
+                    <b>{data.suggestions.alta.count}</b> confianza alta
+                  </span>
+                  <span>
+                    <b>{data.suggestions.media.count}</b> confianza media
+                  </span>
+                  <span>
+                    <b>{data.suggestions.baja.count}</b> por elegir (sin historial suficiente)
+                  </span>
+                </p>
               </div>
+              {data.suggestions.alta.count > 0 && (
+                <Button
+                  size="sm"
+                  onClick={handleConfirmHighConfidence}
+                  disabled={confirmingBulk}
+                  title="Confirma solo las sugerencias de confianza alta de este rango de fechas"
+                >
+                  {confirmingBulk ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                  ) : (
+                    <Check className="w-4 h-4 mr-1" />
+                  )}
+                  Confirmar las {data.suggestions.alta.count} de confianza alta
+                </Button>
+              )}
             </div>
           )}
 
@@ -552,11 +597,15 @@ export default function CorteDeCajaView() {
                               "h-8 rounded-md border px-2 text-xs",
                               row.payment_method_confirmed
                                 ? "border-input bg-background"
-                                : "border-sky-300 bg-sky-50",
+                                : row.suggestion_confidence === "alta"
+                                  ? "border-emerald-300 bg-emerald-50"
+                                  : row.suggestion_confidence === "media"
+                                    ? "border-sky-300 bg-sky-50"
+                                    : "border-amber-400 bg-amber-50",
                             )}
                             title={
                               row.payment_method && !row.payment_method_confirmed
-                                ? "Sugerido automáticamente según el banco - sin confirmar"
+                                ? `Sin confirmar - ${row.suggestion_reason}`
                                 : undefined
                             }
                           >
@@ -567,6 +616,21 @@ export default function CorteDeCajaView() {
                               </option>
                             ))}
                           </select>
+                          {row.payment_method && !row.payment_method_confirmed && (
+                            <span
+                              className={cn(
+                                "shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide",
+                                row.suggestion_confidence === "alta"
+                                  ? "text-emerald-700"
+                                  : row.suggestion_confidence === "media"
+                                    ? "text-sky-700"
+                                    : "text-amber-700",
+                              )}
+                              title={row.suggestion_reason}
+                            >
+                              {row.suggestion_confidence === "baja" ? "elegir" : row.suggestion_confidence}
+                            </span>
+                          )}
                           {row.payment_method && !row.payment_method_confirmed && (
                             <Button
                               size="sm"

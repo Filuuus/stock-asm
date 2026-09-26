@@ -52,10 +52,11 @@ needs - a partial abono is a real cash-collection event for this report even
 though it isn't a commission-earning one for that report.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import timedelta, timezone as dt_timezone
 from decimal import Decimal
 
+from django.db.models import Count
 from django.utils import timezone as dj_timezone
 
 from commissions.services import (
@@ -114,6 +115,16 @@ def _suggest_payment_method(account_id, bank_accounts):
         return None, None
     method = PAYMENT_METHOD_EFECTIVO if codigo.startswith(CASH_ACCOUNT_CODE_PREFIX) else PAYMENT_METHOD_TRANSFERENCIA
     return method, nombre
+
+
+BANK_CODES = ('BBVA', 'HSBC', 'BANAMEX', 'BANORTE')
+
+
+def _bank_code(bank_name):
+    """Short, stable bank key ('BBVA'...) from the ledger account name
+    ('BBVA BANCOMER 0161357344'); '' when the bank isn't traceable."""
+    name = (bank_name or '').upper()
+    return next((code for code in BANK_CODES if code in name), '')
 
 
 # Ledger lines naming this generic public-sales account can't be tied to one
@@ -405,6 +416,62 @@ def _dominant_categories(invoice_ids):
     }
 
 
+# --- Payment-method suggestion engine ---------------------------------------
+# The ERP has no payment-method record and the receiving bank alone is a weak
+# signal (checked on 3,715 payments tagged from the accountant's own sheet: the
+# bank predicts the method only ~69% of the time), but each client's own
+# confirmed history is strong. Tested chronologically (every payment predicted
+# using only EARLIER days), same client + same bank with >= 3 earlier payments
+# agreeing >= 80% was right 99% of the time on ~59% of payments; the same client
+# at any bank (>= 4 payments) ~88% on another ~6%; everything else ~55%.
+# History comes only from CONFIRMED tags (never from our own suggestions), so
+# it can't feed on itself, and it keeps learning as accountants confirm rows.
+SUGGESTION_MIN_PAYMENTS = 3
+SUGGESTION_MIN_AGREEMENT = 0.8
+CONFIDENCE_HIGH = 'alta'
+CONFIDENCE_MEDIUM = 'media'
+CONFIDENCE_LOW = 'baja'
+PAYMENT_METHOD_LABELS = dict(CorteDeCajaAdjustment.PAYMENT_METHOD_CHOICES)
+
+
+def _load_method_history():
+    by_client_bank = defaultdict(Counter)
+    by_client = defaultdict(Counter)
+    tagged = (
+        CorteDeCajaAdjustment.objects.exclude(payment_method='').exclude(client_id=None)
+        .values('client_id', 'bank_code', 'payment_method').annotate(n=Count('id'))
+    )
+    for tag in tagged:
+        by_client_bank[(tag['client_id'], tag['bank_code'])][tag['payment_method']] += tag['n']
+        by_client[tag['client_id']][tag['payment_method']] += tag['n']
+    return by_client_bank, by_client
+
+
+def _predict_method(client_id, bank_code, client_name, history):
+    """(method, confidence, plain-Spanish reason) from the client's confirmed
+    history, or None when there isn't enough of it. The generic "Ventas Publico
+    en General" client is skipped: many unrelated buyers share it."""
+    if (client_name or '').upper().startswith(GENERIC_CLIENT_PREFIX):
+        return None
+    by_client_bank, by_client = history
+    for counter, needed, confidence, scope in (
+        (by_client_bank.get((client_id, bank_code)), SUGGESTION_MIN_PAYMENTS, CONFIDENCE_HIGH,
+         'de este cliente en este banco'),
+        (by_client.get(client_id), SUGGESTION_MIN_PAYMENTS + 1, CONFIDENCE_MEDIUM, 'de este cliente'),
+    ):
+        if not counter:
+            continue
+        total = sum(counter.values())
+        if total < needed:
+            continue
+        method, hits = counter.most_common(1)[0]
+        if hits / total >= SUGGESTION_MIN_AGREEMENT:
+            return method, confidence, (
+                f'{hits} de {total} pagos anteriores {scope} fueron {PAYMENT_METHOD_LABELS[method]}.'
+            )
+    return None
+
+
 def calculate_corte_de_caja(date_from, date_to):
     """Cash collected against real Facturas with a payment event dated in
     [date_from, date_to]. Returns per-zone/per-method totals and a
@@ -434,6 +501,11 @@ def calculate_corte_de_caja(date_from, date_to):
         )
     }
 
+    history = _load_method_history()
+    suggestion_totals = {
+        confidence: {'count': 0, 'total_amount': Decimal('0')}
+        for confidence in (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_LOW)
+    }
     zone_totals = defaultdict(Decimal)
     method_totals = defaultdict(Decimal)
     rows = []
@@ -447,13 +519,28 @@ def calculate_corte_de_caja(date_from, date_to):
         adjustment = adjustments.get((event['invoice_id'], event['event_date']))
         excluded = bool(adjustment and adjustment.excluded)
         manual_method = adjustment.payment_method if adjustment else ''
-        # A human-confirmed tag always wins; otherwise fall back to the
-        # bank-derived suggestion (see _resolve_ledger_events) - still
-        # unconfirmed, but populated, per the user's direction to minimize
-        # how much needs manual attention rather than requiring every row
-        # to be tagged by hand.
-        payment_method = manual_method or event['suggested_method'] or ''
+        # A human-confirmed tag always wins. Otherwise: the client's own
+        # confirmed history when there's enough of it (see the engine above),
+        # then the bank-derived suggestion (see _resolve_ledger_events) as a
+        # low-confidence default - always unconfirmed, but populated, so the
+        # day's totals are usable while the accountant works through the rest.
         confirmed = bool(manual_method)
+        suggestion_confidence = None
+        suggestion_reason = ''
+        if manual_method:
+            payment_method = manual_method
+        else:
+            prediction = _predict_method(
+                factura['CIDCLIENTEPROVEEDOR'], _bank_code(event['bank']), factura['CRAZONSOCIAL'], history,
+            )
+            if prediction:
+                payment_method, suggestion_confidence, suggestion_reason = prediction
+            elif event['suggested_method']:
+                payment_method = event['suggested_method']
+                suggestion_confidence = CONFIDENCE_LOW
+                suggestion_reason = 'Sin historial suficiente de este cliente: sugerido según el banco.'
+            else:
+                payment_method = ''
 
         if event['approximate']:
             approximate_count += 1
@@ -464,6 +551,8 @@ def calculate_corte_de_caja(date_from, date_to):
                 method_totals[payment_method] += event['amount']
                 if not confirmed:
                     unconfirmed_total += event['amount']
+                    suggestion_totals[suggestion_confidence]['count'] += 1
+                    suggestion_totals[suggestion_confidence]['total_amount'] += event['amount']
             else:
                 unclassified_total += event['amount']
 
@@ -481,9 +570,13 @@ def calculate_corte_de_caja(date_from, date_to):
             'approximate': event['approximate'],
             'excluded': excluded,
             'bank': event['bank'],
+            'bank_code': _bank_code(event['bank']),
+            'client_id': factura['CIDCLIENTEPROVEEDOR'],
             'cuenta': _client_account_label(event['account_ids'], client_account_codes),
             'payment_method': payment_method,
             'payment_method_confirmed': confirmed,
+            'suggestion_confidence': suggestion_confidence,
+            'suggestion_reason': suggestion_reason,
             'reviewed': bool(adjustment and adjustment.reviewed),
             'reviewed_by': adjustment.reviewed_by.username if adjustment and adjustment.reviewed_by else None,
             'note': adjustment.note if adjustment else '',
@@ -516,12 +609,13 @@ def calculate_corte_de_caja(date_from, date_to):
                 '(Efectivo/Terminal/Cheque/Transferencia) para que se incluyan en los totales.'
             ),
         },
+        'suggestions': suggestion_totals,
         'unconfirmed': {
             'count': len([r for r in rows if r['payment_method'] and not r['payment_method_confirmed'] and not r['excluded']]),
             'total_amount': unconfirmed_total,
             'note': (
-                'Forma de pago sugerida automáticamente según el banco que recibió el pago, aún sin '
-                'confirmar por un usuario - revise y corrija los que no sean transferencias reales.'
+                'Forma de pago sugerida automáticamente según el historial confirmado de cada cliente (o el '
+                'banco, con confianza baja), aún sin confirmar por un usuario.'
             ),
         },
         'approximate': {
