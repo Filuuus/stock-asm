@@ -148,9 +148,13 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
     that date resolves to the SAME bank account, so a single event never
     mixes two different banks.
 
-    Returns (events, covered_invoice_ids) - covered_invoice_ids lists which
-    Facturas got at least one event from the ledger IN THIS WINDOW, so the
-    Comercial-side fallback below only fills in what the ledger didn't.
+    Returns (events, covered_invoice_ids) - covered_invoice_ids lists every
+    Factura the ledger resolves at least one real event for, ANYWHERE in
+    [floor_date, today], not only within [date_from, date_to]. A Factura
+    whose only ledger event falls outside this window is still "covered" -
+    it correctly produces no row here, rather than falling through to the
+    Comercial-side fallback below (which doesn't know the ledger's true,
+    already-resolved date and would show a worse, unsplit event instead).
     """
     poliza_bank = _poliza_bank_accounts(ledger_lines, bank_accounts)
 
@@ -311,8 +315,18 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
             # real collection.
             if abs(amount) < LEDGER_FULL_PAYMENT_TOLERANCE:
                 continue
+            # Covered as soon as the ledger resolves ANY real event for this
+            # invoice, even one dated outside [date_from, date_to] - NOT only
+            # when a resolved date happens to land inside the window. Found
+            # 2026-09-26: querying a single day whose ONLY ledger-known
+            # event fell one day earlier (the usual capture lag) wrongly
+            # concluded "the ledger doesn't cover this" for that day and let
+            # the Comercial fallback take over - which then showed a bulk,
+            # multi-invoice payment as an approximate event on that day
+            # instead of correctly showing no row at all (the real
+            # collection is already accounted for on its actual date).
+            covered_invoice_ids.add(f['CIDDOCUMENTO'])
             if date_from <= event_date <= date_to:
-                covered_invoice_ids.add(f['CIDDOCUMENTO'])
                 accounts = {poliza_bank.get(p) for p in polizas}
                 account_id = accounts.pop() if len(accounts) == 1 else None
                 suggested_method, bank_name = _suggest_payment_method(account_id, bank_accounts)
