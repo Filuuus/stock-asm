@@ -23,17 +23,13 @@ export interface CorteDeCajaRow {
   due_date: string | null;
   category: string | null;
   amount: number;
-  // null = amount came from the Comercial-side fallback (no per-invoice
-  // split available), so whether it was a partial installment can't be
-  // determined the way it can from the ledger.
-  abono: boolean | null;
-  source: "ledger" | "fallback";
-  approximate: boolean;
+  // true = a partial installment; the invoice isn't paid off yet.
+  abono: boolean;
   excluded: boolean;
   // The real bank account that received the money (from the Contabilidad
-  // ledger's own bank-debit line), when traceable - null for fallback-
-  // sourced events or a handful of ledger events that split across more
-  // than one account in the same journal entry.
+  // ledger's own bank-debit line), when traceable - null for the handful
+  // of ledger events that split across more than one account in the same
+  // journal entry.
   bank: string | null;
   // payment_method is always the EFFECTIVE value - either a human-confirmed
   // tag, or (when unconfirmed) an auto-suggestion derived from `bank`
@@ -69,8 +65,29 @@ export interface UnconfirmedInfo {
   note: string;
 }
 
-export interface ApproximateInfo {
+// A payment Contpaqi Comercial records but Contabilidad has no poliza for.
+// Listed for the accountant to fix in Contpaqi, never part of the corte:
+// every date in the corte must be the Contabilidad date.
+export interface SinPolizaRow {
+  invoice_id: number;
+  comercial_date: string;
+  folio_display: string;
+  cliente: string;
+  zone: Zone;
+  // A payment dated before its own invoice usually means a wrong reference.
+  invoice_date: string;
+  invoice_total: number;
+  amount: number;
+  referencia: string;
+  // How many other invoices the same Comercial payment names - its amount is
+  // the whole payment, not this invoice's share.
+  shared_with: number;
+}
+
+export interface SinPolizaInfo {
   count: number;
+  total_amount: number;
+  rows: SinPolizaRow[];
   note: string;
 }
 
@@ -84,5 +101,5 @@ export interface CorteDeCajaSummary {
   unclassified: UnclassifiedInfo;
   suggestions: Record<SuggestionConfidence, SuggestionTier>;
   unconfirmed: UnconfirmedInfo;
-  approximate: ApproximateInfo;
+  sin_poliza: SinPolizaInfo;
 }

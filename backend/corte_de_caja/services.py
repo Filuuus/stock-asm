@@ -43,9 +43,10 @@ not making the accountant tag hundreds of rows by hand).
 
 Reuses commissions.services directly for everything that IS derivable and
 already verified there: the real-sale/zone-scope filter, the Contabilidad-
-ledger payment resolution (the itemized per-invoice payment ledger, primary
-source), and the Comercial-side CREFERENCIA fallback - see that module for
-the full history of getting this right. The one new piece here is emitting
+ledger payment resolution (the itemized per-invoice payment ledger - the
+ONLY source of rows and dates here, see _payments_without_poliza for why)
+and its CREFERENCIA matching - see that module for the full history of
+getting this right. The one new piece here is emitting
 EVERY dated payment installment in the window (an event log), not just the
 single date an invoice finally reached zero balance the way commissions
 needs - a partial abono is a real cash-collection event for this report even
@@ -147,9 +148,8 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
     Factura the ledger resolves at least one real event for, ANYWHERE in
     [floor_date, today], not only within [date_from, date_to]. A Factura
     whose only ledger event falls outside this window is still "covered" -
-    it correctly produces no row here, rather than falling through to the
-    Comercial-side fallback below (which doesn't know the ledger's true,
-    already-resolved date and would show a worse, unsplit event instead).
+    it correctly produces no row here, and is not listed as a payment
+    without poliza either (see _payments_without_poliza).
     """
     poliza_bank = _poliza_bank_accounts(ledger_lines, bank_accounts)
     accepted = attribute_ledger_payments(facturas, ledger_lines, concepto_series)
@@ -201,8 +201,6 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
                     'event_date': event_date,
                     'amount': _as_decimal(amount),
                     'abono': cumulative < total - LEDGER_FULL_PAYMENT_TOLERANCE,
-                    'source': 'ledger',
-                    'approximate': False,
                     'suggested_method': suggested_method,
                     'bank': bank_name,
                     'account_ids': sorted({a for p in polizas for a in poliza_ref_accounts.get(p, ())}),
@@ -222,16 +220,23 @@ def _client_account_label(account_ids, client_account_codes):
     return None
 
 
-def _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_from, date_to):
-    """Comercial-side CREFERENCIA events for candidate Facturas the ledger
-    didn't cover in this window - same folio+client matching commissions'
-    own fallback uses. The Comercial payment document only carries ONE total
-    for the whole payment, not a per-invoice split (only the ledger has
-    that), so when one payment document's reference matches more than one
-    Factura here its amount can't be safely divided - each match is emitted
-    with the document's full CTOTAL and flagged `approximate` so the
-    dashboard can surface it for a human to check, rather than guessing a
-    split.
+def _payments_without_poliza(facturas, payment_docs, ledger_covered_ids, date_from, date_to):
+    """Payments Contpaqi Comercial records against a candidate Factura that
+    the Contabilidad ledger has no poliza for at all - matched by the
+    Comercial payment document's CREFERENCIA (same folio+client rule
+    commissions' fallback uses).
+
+    These are NOT cash-collection rows. Decided 2026-09-28: every date in
+    this report must be the Contabilidad date, because Contabilidad is the
+    audit record and SAT checks that dates on accounting documents match
+    exactly - a row dated by Comercial would put a date on the corte that no
+    poliza backs. Until 2026-09-28 they were shown as ordinary rows (and,
+    when one Comercial payment named several invoices, with the full amount
+    on each, flagged "approximate"). Now they are only listed so the
+    accountant can register the poliza (or correct the reference) in
+    Contpaqi; once the poliza exists the payment appears on its own date.
+
+    Returns one dict per (payment document, matched invoice).
     """
     by_folio_client = defaultdict(list)
     for f in facturas:
@@ -239,34 +244,38 @@ def _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_fr
             continue
         by_folio_client[(int(f['CFOLIO']), f['CIDCLIENTEPROVEEDOR'])].append(f)
 
-    events = []
+    payments = []
     for pago in payment_docs:
-        event_date = pago['CFECHA'].date()
-        if not (date_from <= event_date <= date_to):
+        comercial_date = pago['CFECHA'].date()
+        if not (date_from <= comercial_date <= date_to):
+            continue
+        # Cents-sized documents are rounding leftovers, not collections
+        # (same threshold the ledger events use).
+        if abs(pago['CTOTAL'] or 0) < LEDGER_FULL_PAYMENT_TOLERANCE:
             continue
         cliente = pago['CIDCLIENTEPROVEEDOR']
         matched = []
         for token in _extract_folio_tokens(pago['CREFERENCIA']):
             matched.extend(by_folio_client.get((int(token), cliente), []))
-        if not matched:
+        # A lone match that the payment couldn't fit into is the reference
+        # pointing at the wrong invoice, not a missing poliza: found
+        # 2026-09-28 on two cents-sized placeholder invoices (B 19975, B 19245)
+        # sharing a folio number with the real, already-polized invoice the
+        # payment was for (F 19975; 19179 in "19179 19245").
+        if len(matched) == 1 and (pago['CTOTAL'] or 0) > (matched[0]['CTOTAL'] or 0) + LEDGER_FULL_PAYMENT_TOLERANCE:
             continue
-        amount = _as_decimal(pago['CTOTAL'])
         for f in matched:
-            events.append({
+            payments.append({
                 'invoice_id': f['CIDDOCUMENTO'],
                 'factura': f,
-                'event_date': event_date,
-                'amount': amount,
-                'abono': None,
-                'source': 'fallback',
-                'approximate': len(matched) > 1,
-                # No poliza to trace a bank from - this path only exists for
-                # invoices the ledger didn't cover in this window at all.
-                'suggested_method': None,
-                'bank': None,
-                'account_ids': [],
+                'comercial_date': comercial_date,
+                'amount': _as_decimal(pago['CTOTAL']),
+                'referencia': pago['CREFERENCIA'],
+                # The Comercial document carries one total for all the
+                # invoices it names; only a poliza splits it per invoice.
+                'shared_with': len(matched) - 1,
             })
-    return events
+    return payments
 
 
 def _invoice_series(invoice_ids):
@@ -395,14 +404,14 @@ def calculate_corte_de_caja(date_from, date_to):
     )
 
     payment_docs = CommissionRepository.fetch_payment_docs(floor_date)
-    fallback_events = _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_from, date_to)
+    without_poliza = _payments_without_poliza(facturas, payment_docs, ledger_covered_ids, date_from, date_to)
 
-    all_events = ledger_events + fallback_events
+    all_events = ledger_events
 
     agent_codes = CommissionRepository.fetch_agent_codes()
     client_account_codes = CommissionRepository.fetch_client_account_codes()
     categories = _dominant_categories(list({e['invoice_id'] for e in all_events}))
-    invoice_series = _invoice_series({e['invoice_id'] for e in all_events})
+    invoice_series = _invoice_series({e['invoice_id'] for e in all_events} | {p['invoice_id'] for p in without_poliza})
     adjustments = {
         (a.invoice_id, a.event_date): a for a in CorteDeCajaAdjustment.objects.filter(
             invoice_id__in={e['invoice_id'] for e in all_events}
@@ -419,7 +428,6 @@ def calculate_corte_de_caja(date_from, date_to):
     rows = []
     unclassified_total = Decimal('0')
     unconfirmed_total = Decimal('0')
-    approximate_count = 0
 
     for event in all_events:
         factura = event['factura']
@@ -450,9 +458,6 @@ def calculate_corte_de_caja(date_from, date_to):
             else:
                 payment_method = ''
 
-        if event['approximate']:
-            approximate_count += 1
-
         if not excluded:
             zone_totals[zone_code] += event['amount']
             if payment_method:
@@ -475,8 +480,6 @@ def calculate_corte_de_caja(date_from, date_to):
             'category': categories.get(event['invoice_id']),
             'amount': event['amount'],
             'abono': event['abono'],
-            'source': event['source'],
-            'approximate': event['approximate'],
             'excluded': excluded,
             'bank': event['bank'],
             'bank_code': _bank_code(event['bank']),
@@ -492,6 +495,22 @@ def calculate_corte_de_caja(date_from, date_to):
         })
 
     rows.sort(key=lambda r: (r['event_date'], r['zone'] or ''), reverse=False)
+
+    sin_poliza_rows = sorted((
+        {
+            'invoice_id': p['invoice_id'],
+            'comercial_date': p['comercial_date'],
+            'folio_display': f"{invoice_series.get(p['invoice_id'], 'F')} {int(p['factura']['CFOLIO'])}",
+            'cliente': p['factura']['CRAZONSOCIAL'],
+            'zone': agent_codes.get(p['factura']['CIDAGENTE']),
+            'invoice_date': p['factura']['CFECHA'].date(),
+            'invoice_total': _as_decimal(p['factura']['CTOTAL']),
+            'amount': p['amount'],
+            'referencia': p['referencia'],
+            'shared_with': p['shared_with'],
+        }
+        for p in without_poliza
+    ), key=lambda r: (r['comercial_date'], r['folio_display']))
 
     # The physical cash-drawer total (TOTAL CORTE on the original sheet)
     # excludes bank transfers - those never hit the till, they're recorded
@@ -527,11 +546,14 @@ def calculate_corte_de_caja(date_from, date_to):
                 'banco, con confianza baja), aún sin confirmar por un usuario.'
             ),
         },
-        'approximate': {
-            'count': approximate_count,
+        'sin_poliza': {
+            'count': len(sin_poliza_rows),
+            'total_amount': sum((r['amount'] for r in sin_poliza_rows), Decimal('0')),
+            'rows': sin_poliza_rows,
             'note': (
-                'Pago registrado en Contpaqi Comercial que cubre más de una factura - el monto '
-                'mostrado es el total del pago completo, no un desglose verificado por factura.'
+                'Pagos registrados en Contpaqi Comercial sin póliza en Contabilidad. No se incluyen en el corte: '
+                'sus fechas deben venir de Contabilidad. Registre la póliza (o corrija la referencia) en Contpaqi '
+                'y el pago aparecerá en la fecha de la póliza.'
             ),
         },
     }
