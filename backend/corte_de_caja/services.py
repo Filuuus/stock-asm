@@ -53,18 +53,18 @@ though it isn't a commission-earning one for that report.
 """
 
 from collections import Counter, defaultdict
-from datetime import timedelta, timezone as dt_timezone
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Count
-from django.utils import timezone as dj_timezone
 
 from commissions.services import (
+    GENERIC_CLIENT_PREFIX,
     LEDGER_FULL_PAYMENT_TOLERANCE,
     CommissionRepository,
     _classify_line,
     _extract_folio_tokens,
-    _normalize_name,
+    attribute_ledger_payments,
 )
 
 from api.models import AdmConceptos, AdmDocumentos
@@ -129,19 +129,14 @@ def _bank_code(bank_name):
     return next((code for code in BANK_CODES if code in name), '')
 
 
-# Ledger lines naming this generic public-sales account can't be tied to one
-# specific invoice by client name alone.
-GENERIC_CLIENT_PREFIX = 'VENTAS PUBLIC'
-
-
 def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_accounts, date_from, date_to):
     """Every dated, netted installment event the Contabilidad ledger records
-    against a candidate Factura, restricted to [date_from, date_to] - unlike
-    commissions.services._resolve_payment_dates_from_ledger (which this
-    mirrors), this does NOT collapse to only the date the invoice reached
-    full payment; a partial abono is its own event here. `abono` is set by
-    walking the SAME cumulative-vs-CTOTAL logic that function uses, just
-    keeping every step instead of only the one that clears the balance.
+    against a candidate Factura, restricted to [date_from, date_to] - built on
+    the same attribution commissions uses (commissions.services.
+    attribute_ledger_payments), but NOT collapsed to only the date the invoice
+    reached full payment; a partial abono is its own event here. `abono` is
+    set by walking the SAME cumulative-vs-CTOTAL logic, just keeping every
+    step instead of only the one that clears the balance.
 
     Also resolves each event's bank (see _poliza_bank_accounts) and derives
     a suggested payment_method from it - only when every poliza netted into
@@ -157,144 +152,14 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
     already-resolved date and would show a worse, unsplit event instead).
     """
     poliza_bank = _poliza_bank_accounts(ledger_lines, bank_accounts)
+    accepted = attribute_ledger_payments(facturas, ledger_lines, concepto_series)
 
-    by_reference = defaultdict(list)
     poliza_ref_accounts = defaultdict(set)  # accounts on each poliza's invoice-referenced lines (client + IVA)
     for id_poliza, referencia, fecha, concepto, importe, tipo_movto, id_cuenta in ledger_lines:
-        if not referencia:
-            continue
-        if dj_timezone.is_naive(fecha):
-            fecha = dj_timezone.make_aware(fecha, dt_timezone.utc)
-        signed_amount = importe if tipo_movto else -importe
-        by_reference[referencia.upper()].append((fecha, _normalize_name(concepto), signed_amount, id_poliza))
-        poliza_ref_accounts[id_poliza].add(id_cuenta)
+        if referencia:
+            poliza_ref_accounts[id_poliza].add(id_cuenta)
 
-    # Series+folio pairs shared by more than one candidate Factura - only
-    # those need the client-name check to tell them apart. Enforcing it on
-    # unique pairs silently dropped real payments whenever the ledger spelled
-    # the client differently (truncated, typo'd, or the actual buyer on a
-    # "Ventas Publico en General" invoice): found 2026-09-25 on F 20933,
-    # where a 9,000 payment was reported as 1,241.38.
-    reference_counts = defaultdict(int)
-    for f in facturas:
-        reference_counts[(concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F'), int(f['CFOLIO']))] += 1
-
-    # PASS 1 - per invoice, which ledger payments (by poliza, per day) it
-    # accepts, plus "misfits": payments cited against an invoice they don't
-    # fit (would push it past its own total, or carry another client's name).
-    accepted = {}
-    misfits = []
-    for f in facturas:
-        serie = concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F')
-        folio = int(f['CFOLIO'])
-        client_name = _normalize_name(f['CRAZONSOCIAL'])
-        total = f['CTOTAL'] or 0
-        ambiguous = reference_counts[(serie, folio)] > 1
-
-        lines_by_date = defaultdict(list)
-        for referencia in (f'{serie}-{folio}'.upper(), f'{serie} {folio}'.upper()):
-            for fecha, ledger_client_name, signed_amount, id_poliza in by_reference.get(referencia, []):
-                name_ok = not client_name or client_name in ledger_client_name
-                if ambiguous and not name_ok:
-                    continue
-                lines_by_date[fecha.date()].append((id_poliza, signed_amount, name_ok, ledger_client_name))
-        if not lines_by_date:
-            continue
-
-        by_date = {}
-        cumulative = 0.0
-        for event_date in sorted(lines_by_date):
-            lines = lines_by_date[event_date]
-            names = {p: name for p, _, _, name in lines}
-            # A poliza where at least one line names the client is trusted
-            # outright (the ledger often truncates or misspells the name on
-            # its other lines). A poliza where NO line names the client - on
-            # a unique series+folio - is either the real buyer on a "Ventas
-            # Publico en General" invoice or a mistyped folio pointing at
-            # the wrong invoice; only attribute it if it still fits within
-            # the invoice's total, otherwise it's a misfit for pass 2.
-            named_polizas = {p for p, _, ok, _ in lines if ok}
-            entries = [(p, a) for p, a, _, _ in lines if p in named_polizas]
-            unnamed = defaultdict(float)
-            for p, a, _, _ in lines:
-                if p not in named_polizas:
-                    unnamed[p] += a
-            running = cumulative + sum(a for _, a in entries)
-            for p, net in unnamed.items():
-                if net > 0 and running + net <= total + LEDGER_FULL_PAYMENT_TOLERANCE:
-                    entries.append((p, net))
-                    running += net
-                elif net > 0:
-                    misfits.append({'invoice_id': f['CIDDOCUMENTO'], 'date': event_date, 'poliza': p,
-                                    'amount': net, 'name': names[p], 'tentative': False})
-            if not entries:
-                continue
-            # The ledger sometimes holds the same payment twice (found
-            # 2026-09-25: two identical Polizas for one 35,060 payment, which
-            # Contpaqi Comercial records once). Only when a day's entries
-            # would push the invoice past its own total AND several are the
-            # exact same amount, drop the extra copies - a lone overpayment
-            # (e.g. 1,830 received on a 1,744.01 invoice) is real cash and
-            # must stay as recorded.
-            if total and len(entries) > 1 and len({amt for _, amt in entries}) == 1 and entries[0][1] > 0:
-                while len(entries) > 1 and cumulative + sum(a for _, a in entries) > total + LEDGER_FULL_PAYMENT_TOLERANCE:
-                    entries = entries[:-1]
-            # Trusted polizas that still overshoot the total stay attributed
-            # here unless pass 2 finds their real invoice (tentative misfits).
-            net_by_poliza = defaultdict(float)
-            for p, a in entries:
-                net_by_poliza[p] += a
-            run = cumulative
-            for p, net in net_by_poliza.items():
-                run += net
-                if net > 0 and total and run > total + LEDGER_FULL_PAYMENT_TOLERANCE:
-                    misfits.append({'invoice_id': f['CIDDOCUMENTO'], 'date': event_date, 'poliza': p,
-                                    'amount': net, 'name': names.get(p, ''), 'tentative': True})
-            by_date[event_date] = entries
-            cumulative += sum(a for _, a in entries)
-        if by_date:
-            accepted[f['CIDDOCUMENTO']] = by_date
-
-    # PASS 2 - a misfit payment usually means the ledger cites the wrong
-    # invoice number (found 2026-09-25: 33,194 cited against a 10,290
-    # invoice, when the paid one was the neighbouring folio). Move it only
-    # when the evidence is unambiguous: another invoice whose client the
-    # ledger line names, dated on/before the payment, that Comercial marks as
-    # paid by exactly this much more than the ledger has attributed to it -
-    # and exactly one such invoice. "Ventas Publico en General" is skipped as
-    # a key: any number of unrelated invoices share it.
-    def attributed_total(invoice_id):
-        return sum(a for entries in accepted.get(invoice_id, {}).values() for _, a in entries)
-
-    for m in misfits:
-        candidates = []
-        for u in facturas:
-            uid = u['CIDDOCUMENTO']
-            key = _normalize_name(u['CRAZONSOCIAL'])[:12]
-            if uid == m['invoice_id'] or len(key) < 6 or key.startswith(GENERIC_CLIENT_PREFIX) or key not in m['name']:
-                continue
-            if u['CFECHA'].date() > m['date']:
-                continue
-            shortfall = (u['CTOTAL'] or 0) - (u['CPENDIENTE'] or 0) - attributed_total(uid)
-            if abs(shortfall - m['amount']) <= LEDGER_FULL_PAYMENT_TOLERANCE:
-                candidates.append(uid)
-        if len(candidates) != 1:
-            # No unambiguous home found: the cash was still received, so
-            # keep it on the invoice the ledger cites (visible as an
-            # over-total mismatch) rather than dropping it from the day's total.
-            if not m['tentative']:
-                accepted.setdefault(m['invoice_id'], {}).setdefault(m['date'], []).append((m['poliza'], m['amount']))
-            continue
-        if m['tentative']:
-            day = accepted[m['invoice_id']][m['date']]
-            kept = [(p, a) for p, a in day if p != m['poliza']]
-            if kept:
-                accepted[m['invoice_id']][m['date']] = kept
-            else:
-                del accepted[m['invoice_id']][m['date']]
-        accepted.setdefault(candidates[0], {}).setdefault(m['date'], []).append((m['poliza'], m['amount']))
-
-    # PASS 3 - dated, netted events per invoice.
+    # Dated, netted events per invoice.
     events = []
     covered_invoice_ids = set()
     for f in facturas:

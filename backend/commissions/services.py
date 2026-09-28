@@ -13,11 +13,10 @@ Every ERP access in this module is a read (.filter()/.values()) against the
 import re
 import unicodedata
 from collections import defaultdict
-from datetime import date, timedelta, timezone as dt_timezone
+from datetime import date, datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
 
 from django.db import connections
-from django.utils import timezone as dj_timezone
 
 from api.models import AdmAgentes, AdmClasificacionesValores, AdmConceptos, AdmDocumentos, AdmMovimientos, AdmProductos
 
@@ -94,9 +93,20 @@ PUNTOVENTA_RATE_CODE = 'PUNTOVENTA'
 
 # How far before date_from to look for still-open invoices that might get
 # paid off (and therefore become commission-eligible) within the requested
-# period. 120 days comfortably covers the observed late-payment tail
-# (verified against real data: the 90+-days-late bucket is small).
-DEFAULT_LOOKBACK_DAYS = 120
+# period. Was 120 days until 2026-09-28, which silently dropped real
+# commissions: an invoice on long credit terms paid late still earns (decay
+# only reaches zero 12 weeks past the DUE date), but if it was invoiced more
+# than 120 days before the queried month it never appeared in any month at
+# all - not in the totals, not in the manual-review bucket. Found on folio
+# 19892 (invoiced Mar 20 on 90-day terms, paid Aug 13 - 54 days late, still
+# 2%); 16 invoices ($153k of sales) paid in 2026 were affected. Resolution is
+# window-independent (see fetch_payment_docs), so a wider floor only costs
+# query size.
+DEFAULT_LOOKBACK_DAYS = 365
+
+# Ledger lines naming this generic public-sales account can't be tied to one
+# specific invoice by client name alone.
+GENERIC_CLIENT_PREFIX = 'VENTAS PUBLIC'
 
 FOLIO_TOKEN_RE = re.compile(r'(\d{3,7})')
 # Rare (3 of 36,799 payment references dataset-wide) but real: a compressed
@@ -118,17 +128,23 @@ def _extract_folio_tokens(text):
 
 class CommissionRepository:
     @staticmethod
-    def fetch_paid_facturas(floor_date):
+    def fetch_scoped_facturas(floor_date, date_to):
+        """Real, zone-scoped, non-cancelled Facturas dated within
+        [floor_date, date_to], paid or not. Commissions keeps only the
+        CPENDIENTE=0 ones for its totals, but the ledger attribution (see
+        attribute_ledger_payments) needs the unpaid ones too: to know which
+        series+folio pairs are shared, and as repair targets.
+        """
         return list(
             AdmDocumentos.objects.filter(
                 CIDDOCUMENTODE=FACTURA_DOC_TYPE,
                 CCANCELADO=0,
-                CPENDIENTE=0,
                 CIDAGENTE__in=ZONE_SCOPE.values(),
                 CFECHA__date__gte=floor_date,
+                CFECHA__date__lte=date_to,
             ).values(
-                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO',
-                'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CTOTAL', 'CIDCONCEPTODOCUMENTO',
+                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO', 'CTOTAL', 'CPENDIENTE',
+                'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CIDCONCEPTODOCUMENTO',
             )
         )
 
@@ -147,24 +163,13 @@ class CommissionRepository:
         casting back further than the report window itself. Returns real,
         zone-scoped, non-cancelled Facturas dated within
         [date_from - candidate_lookback_days, date_to] regardless of
-        CPENDIENTE - unlike fetch_paid_facturas, being currently unpaid
+        CPENDIENTE - unlike commissions' paid-only set, being currently unpaid
         doesn't disqualify a Factura here, since we're matching against
         historical ledger/payment events dated in the window, not today's
         live balance.
         """
         floor_date = date_from - timedelta(days=candidate_lookback_days)
-        return list(
-            AdmDocumentos.objects.filter(
-                CIDDOCUMENTODE=FACTURA_DOC_TYPE,
-                CCANCELADO=0,
-                CIDAGENTE__in=ZONE_SCOPE.values(),
-                CFECHA__date__gte=floor_date,
-                CFECHA__date__lte=date_to,
-            ).values(
-                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO', 'CTOTAL', 'CPENDIENTE',
-                'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CIDCONCEPTODOCUMENTO',
-            )
-        )
+        return CommissionRepository.fetch_scoped_facturas(floor_date, date_to)
 
     @staticmethod
     def fetch_payment_docs(floor_date):
@@ -214,39 +219,20 @@ class CommissionRepository:
         }
 
     @staticmethod
-    def fetch_ledger_payments(floor_date):
+    def fetch_ledger_payment_lines(floor_date):
         """Raw cross-database read against the Contabilidad ledger (see
         LEDGER_DATABASE above) - still read-only, just not expressible
-        through the Django ORM since it's a second database on the same
-        SQL Server rather than a model in this app. COLLATE DATABASE_DEFAULT
-        is required on the join or MSSQL refuses it with a collation-
-        conflict error between the two databases' default collations.
-        """
-        with connections['erp'].cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT LTRIM(RTRIM(mp.Referencia)), mp.Fecha, mp.Concepto, mp.Importe, mp.TipoMovto
-                FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
-                JOIN {LEDGER_DATABASE}.dbo.Polizas p ON p.Id = mp.IdPoliza
-                WHERE p.Concepto = %s AND mp.Fecha >= %s AND mp.Fecha <= %s
-                  AND mp.Referencia IS NOT NULL AND mp.Referencia <> ''
-                """,
-                [LEDGER_PAGO_CONCEPTO, floor_date, date.today()],
-            )
-            return cursor.fetchall()
+        through the Django ORM since it's a second database on the same SQL
+        Server rather than a model in this app.
 
-    @staticmethod
-    def fetch_ledger_payment_lines(floor_date):
-        """Every MovimientosPoliza line for payment polizas in the window
+        Every MovimientosPoliza line for payment polizas in the window
         (PAGO DEL CLIENTE, plus any other Ingresos poliza - a few dozen a
         year are typed with the client's name as their concept instead, e.g.
-        F 20933's Aug 6 and Aug 31 payments, and would otherwise be missed) -
-        unlike fetch_ledger_payments above, this does NOT filter
-        out blank-Referencia lines. Those are the OTHER side of the same
-        journal entry: the one that debits the real bank account the money
-        landed in (see corte_de_caja/services.py, which is the only
-        consumer of this - commissions itself only ever needed the
-        referenced/matchable lines). Checked live 2026-09-24: every real
+        F 20933's Aug 6 and Aug 31 payments, and would otherwise be missed).
+        Blank-Referencia lines are kept: those are the OTHER side of the same
+        journal entry, the one that debits the real bank account the money
+        landed in (only corte_de_caja reads them - attribute_ledger_payments
+        skips them). Checked live 2026-09-24: every real
         payment debits one of a handful of actual bank accounts (see
         fetch_bank_accounts) - the business's Caja Chica (cash) account is
         used once in all of 2026, so this identifies WHICH BANK, not
@@ -349,7 +335,7 @@ class CommissionRepository:
 
 
 def _resolve_payment_dates(facturas, payment_docs):
-    """FALLBACK ONLY as of 2026-09-17 - see _resolve_payment_dates_from_ledger
+    """FALLBACK ONLY as of 2026-09-17 - see attribute_ledger_payments
     below, which is tried first and is far more reliable. Kept for the
     handful of invoices the ledger doesn't cover.
 
@@ -392,91 +378,203 @@ def _normalize_name(value):
 # in real netted entries (e.g. an "$800,000" installment posting as
 # 799,999.98), nowhere near loose enough to accept a partial installment.
 LEDGER_FULL_PAYMENT_TOLERANCE = 1.0
+# How many days the ledger's record of a payment may trail the Comercial
+# payment document for the same money (see calculate_commissions).
+LEDGER_CAPTURE_LAG_DAYS = 7
 
 
-def _resolve_payment_dates_from_ledger(facturas, ledger_rows, concepto_series):
-    """PRIMARY payment-date source (2026-09-17): the Contpaqi Contabilidad
-    ledger (see LEDGER_DATABASE) mirrors every sale/payment as an accounting
-    entry with a clean folio reference - even bulk payments covering several
+def attribute_ledger_payments(facturas, ledger_lines, concepto_series):
+    """PRIMARY payment source (2026-09-17): the Contpaqi Contabilidad ledger
+    (see LEDGER_DATABASE) mirrors every sale/payment as an accounting entry
+    with a clean folio reference - even bulk payments covering several
     invoices get one itemized line per invoice there, unlike the Comercial
-    side's free-text CREFERENCIA which is sometimes blank and sometimes
-    lists only some of the invoices a bulk payment actually covers. Verified
+    side's free-text CREFERENCIA which is sometimes blank and sometimes lists
+    only some of the invoices a bulk payment actually covers. Verified
     against three real cases the user found by hand in Contpaqi, and raised
     September's resolution rate from 84% to 96%.
+
+    Shared by commissions (the date an invoice reached full payment, see
+    _paid_dates_from_ledger) and corte_de_caja (every dated installment).
+    It used to be two copies; the corte one got five real bug fixes during
+    the 2026-09-25/28 accuracy work and the commissions one got none, so
+    there is now one implementation (audit 2026-09-28).
 
     The ledger's Referencia is built as "{serie}-{folio}" or "{serie} {folio}"
     (both forms seen in real data, inconsistently) where serie is the tax
     series (A/B/F) - NOT the display prefix, which is always "F" regardless
-    of series (see AdmConceptos.CSERIEPOROMISION vs CPREFIJOCONCEPTO).
+    of series (see AdmConceptos.CSERIEPOROMISION vs CPREFIJOCONCEPTO). Lines
+    are netted signed by TipoMovto (True adds, False subtracts - verified
+    against real data, e.g. three lines netting to exactly a $500,000
+    installment also visible on the Comercial side).
 
-    Folio+serie collisions happen (two different clients can share a folio,
-    and old unrelated transactions going back to 2017 have reused the exact
-    same reference text), so results are cross-checked against the client
-    name in the ledger entry's own Concepto field (accent/case-normalized,
-    substring match - the two systems store the same razon social text,
-    just not always identically formatted).
+    `facturas` must be every candidate invoice, paid or not (see
+    CommissionRepository.fetch_scoped_facturas) and needs CPENDIENTE.
 
-    CRITICAL - installments and full-payment verification: a large invoice
-    can be settled via several dated entries under the same reference (each
-    one two or three netted debit/credit lines - True/False on TipoMovto -
-    that sum to the real installment amount). The first cut of this function
-    just took the LATEST matching entry's date, same mistake as the old
-    fallback method it was meant to fix: found 2026-09-17 on a real
-    $5,300,000 ZONA2 invoice (CIDDOCUMENTO 100223) where the matching
-    entries - Dec 30 $500k, Jan 30 $1M, Feb 27 $500k, Jun 30 $799,999.98 -
-    only sum to ~$2.8M, nowhere near the full $5.3M (this client has a
-    running-account arrangement with a persistent unexplained balance gap,
-    found earlier during a FIFO-simulation investigation). Taking "Jun 30,
-    the latest one found" as the full-payment date would have been just as
-    unverified a guess as the old method's "Feb 27, the latest one it could
-    parse" - neither is proven to be when the invoice actually hit zero.
-
-    So: entries are netted per date (signed by TipoMovto: True adds, False
-    subtracts - verified against real data, e.g. Dec 30's three lines net to
-    exactly the $500,000 installment also visible on the Comercial side),
-    sorted chronologically, and walked as a running total. Only the FIRST
-    date where the cumulative total reaches the Factura's own CTOTAL (within
-    LEDGER_FULL_PAYMENT_TOLERANCE) is accepted as the paid date. If the
-    matched entries never reach the full total, this invoice is left
-    unresolved by the ledger entirely (not resolved to a wrong, too-early
-    date) - it falls through to the Comercial-side fallback method, or ends
-    up in the manual-review bucket if that can't resolve it either.
-
-    Returns {invoice_id: paid_date}.
+    Returns {invoice_id: {event_date: [(id_poliza, signed_amount), ...]}}.
     """
-    # fecha comes back naive from the raw cross-database cursor (Django's
-    # ORM-level timezone conversion only applies to QuerySets, not raw SQL),
-    # but everything else in this module (USE_TZ=True) is timezone-aware -
-    # without this, subtracting paid_date - due_date later raises
-    # "can't subtract offset-naive and offset-aware datetimes".
     by_reference = defaultdict(list)
-    for referencia, fecha, concepto, importe, tipo_movto in ledger_rows:
-        if dj_timezone.is_naive(fecha):
-            fecha = dj_timezone.make_aware(fecha, dt_timezone.utc)
+    for id_poliza, referencia, fecha, concepto, importe, tipo_movto, id_cuenta in ledger_lines:
+        if not referencia:
+            continue
         signed_amount = importe if tipo_movto else -importe
-        by_reference[referencia.upper()].append((fecha, _normalize_name(concepto), signed_amount))
+        by_reference[referencia.upper()].append((fecha.date(), _normalize_name(concepto), signed_amount, id_poliza))
 
-    paid_dates = {}
+    # Series+folio pairs shared by more than one candidate Factura - only
+    # those need the client-name check to tell them apart. Enforcing it on
+    # unique pairs silently dropped real payments whenever the ledger spelled
+    # the client differently (truncated, typo'd, or the actual buyer on a
+    # "Ventas Publico en General" invoice): found 2026-09-25 on F 20933,
+    # where a 9,000 payment was reported as 1,241.38.
+    reference_counts = defaultdict(int)
+    for f in facturas:
+        reference_counts[(concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F'), int(f['CFOLIO']))] += 1
+
+    # PASS 1 - per invoice, which ledger payments (by poliza, per day) it
+    # accepts, plus "misfits": payments cited against an invoice they don't
+    # fit (would push it past its own total, or carry another client's name).
+    accepted = {}
+    misfits = []
     for f in facturas:
         serie = concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F')
         folio = int(f['CFOLIO'])
         client_name = _normalize_name(f['CRAZONSOCIAL'])
         total = f['CTOTAL'] or 0
+        ambiguous = reference_counts[(serie, folio)] > 1
 
-        by_date = defaultdict(float)
+        lines_by_date = defaultdict(list)
         for referencia in (f'{serie}-{folio}'.upper(), f'{serie} {folio}'.upper()):
-            for fecha, ledger_client_name, signed_amount in by_reference.get(referencia, []):
-                if client_name and client_name not in ledger_client_name:
+            for event_date, ledger_client_name, signed_amount, id_poliza in by_reference.get(referencia, []):
+                name_ok = not client_name or client_name in ledger_client_name
+                if ambiguous and not name_ok:
                     continue
-                by_date[fecha] += signed_amount
-        if not by_date:
+                lines_by_date[event_date].append((id_poliza, signed_amount, name_ok, ledger_client_name))
+        if not lines_by_date:
             continue
 
+        by_date = {}
         cumulative = 0.0
-        for fecha in sorted(by_date):
-            cumulative += by_date[fecha]
+        for event_date in sorted(lines_by_date):
+            lines = lines_by_date[event_date]
+            names = {p: name for p, _, _, name in lines}
+            # A poliza where at least one line names the client is trusted
+            # outright (the ledger often truncates or misspells the name on
+            # its other lines). A poliza where NO line names the client - on
+            # a unique series+folio - is either the real buyer on a "Ventas
+            # Publico en General" invoice or a mistyped folio pointing at
+            # the wrong invoice; only attribute it if it still fits within
+            # the invoice's total, otherwise it's a misfit for pass 2.
+            named_polizas = {p for p, _, ok, _ in lines if ok}
+            entries = [(p, a) for p, a, _, _ in lines if p in named_polizas]
+            unnamed = defaultdict(float)
+            for p, a, _, _ in lines:
+                if p not in named_polizas:
+                    unnamed[p] += a
+            running = cumulative + sum(a for _, a in entries)
+            for p, net in unnamed.items():
+                if net > 0 and running + net <= total + LEDGER_FULL_PAYMENT_TOLERANCE:
+                    entries.append((p, net))
+                    running += net
+                elif net > 0:
+                    misfits.append({'invoice_id': f['CIDDOCUMENTO'], 'date': event_date, 'poliza': p,
+                                    'amount': net, 'name': names[p], 'tentative': False})
+            if not entries:
+                continue
+            # The ledger sometimes holds the same payment twice (found
+            # 2026-09-25: two identical Polizas for one 35,060 payment, which
+            # Contpaqi Comercial records once). Only when a day's entries
+            # would push the invoice past its own total AND several are the
+            # exact same amount, drop the extra copies - a lone overpayment
+            # (e.g. 1,830 received on a 1,744.01 invoice) is real cash and
+            # must stay as recorded.
+            if total and len(entries) > 1 and len({amt for _, amt in entries}) == 1 and entries[0][1] > 0:
+                while len(entries) > 1 and cumulative + sum(a for _, a in entries) > total + LEDGER_FULL_PAYMENT_TOLERANCE:
+                    entries = entries[:-1]
+            # Trusted polizas that still overshoot the total stay attributed
+            # here unless pass 2 finds their real invoice (tentative misfits).
+            net_by_poliza = defaultdict(float)
+            for p, a in entries:
+                net_by_poliza[p] += a
+            run = cumulative
+            for p, net in net_by_poliza.items():
+                run += net
+                if net > 0 and total and run > total + LEDGER_FULL_PAYMENT_TOLERANCE:
+                    misfits.append({'invoice_id': f['CIDDOCUMENTO'], 'date': event_date, 'poliza': p,
+                                    'amount': net, 'name': names.get(p, ''), 'tentative': True})
+            by_date[event_date] = entries
+            cumulative += sum(a for _, a in entries)
+        if by_date:
+            accepted[f['CIDDOCUMENTO']] = by_date
+
+    # PASS 2 - a misfit payment usually means the ledger cites the wrong
+    # invoice number (found 2026-09-25: 33,194 cited against a 10,290
+    # invoice, when the paid one was the neighbouring folio). Move it only
+    # when the evidence is unambiguous: another invoice whose client the
+    # ledger line names, dated on/before the payment, that Comercial marks as
+    # paid by exactly this much more than the ledger has attributed to it -
+    # and exactly one such invoice. "Ventas Publico en General" is skipped as
+    # a key: any number of unrelated invoices share it.
+    def attributed_total(invoice_id):
+        return sum(a for entries in accepted.get(invoice_id, {}).values() for _, a in entries)
+
+    for m in misfits:
+        candidates = []
+        for u in facturas:
+            uid = u['CIDDOCUMENTO']
+            key = _normalize_name(u['CRAZONSOCIAL'])[:12]
+            if uid == m['invoice_id'] or len(key) < 6 or key.startswith(GENERIC_CLIENT_PREFIX) or key not in m['name']:
+                continue
+            if u['CFECHA'].date() > m['date']:
+                continue
+            shortfall = (u['CTOTAL'] or 0) - (u['CPENDIENTE'] or 0) - attributed_total(uid)
+            if abs(shortfall - m['amount']) <= LEDGER_FULL_PAYMENT_TOLERANCE:
+                candidates.append(uid)
+        if len(candidates) != 1:
+            # No unambiguous home found: the cash was still received, so
+            # keep it on the invoice the ledger cites (visible as an
+            # over-total mismatch) rather than dropping it.
+            if not m['tentative']:
+                accepted.setdefault(m['invoice_id'], {}).setdefault(m['date'], []).append((m['poliza'], m['amount']))
+            continue
+        if m['tentative']:
+            day = accepted[m['invoice_id']][m['date']]
+            kept = [(p, a) for p, a in day if p != m['poliza']]
+            if kept:
+                accepted[m['invoice_id']][m['date']] = kept
+            else:
+                del accepted[m['invoice_id']][m['date']]
+        accepted.setdefault(candidates[0], {}).setdefault(m['date'], []).append((m['poliza'], m['amount']))
+
+    return accepted
+
+
+def _paid_dates_from_ledger(facturas, accepted):
+    """The date each Factura reached full payment according to the ledger
+    attribution above. Returns {invoice_id: paid_datetime}.
+
+    CRITICAL - installments and full-payment verification: a large invoice
+    can be settled via several dated entries under the same reference. Just
+    taking the LATEST one is the same mistake the old Comercial fallback
+    makes: found 2026-09-17 on a real $5,300,000 ZONA2 invoice (CIDDOCUMENTO
+    100223) where the matching entries - Dec 30 $500k, Jan 30 $1M, Feb 27
+    $500k, Jun 30 $799,999.98 - only sum to ~$2.8M, nowhere near the full
+    $5.3M (this client has a running-account arrangement with a persistent
+    unexplained balance gap). So entries are walked chronologically as a
+    running total, and only the FIRST date where it reaches the Factura's
+    own CTOTAL (within LEDGER_FULL_PAYMENT_TOLERANCE) is accepted. If it
+    never does, the invoice is left unresolved here (not resolved to a
+    wrong, too-early date) - see calculate_commissions for what happens next.
+    """
+    paid_dates = {}
+    for f in facturas:
+        by_date = accepted.get(f['CIDDOCUMENTO'])
+        if not by_date:
+            continue
+        total = f['CTOTAL'] or 0
+        cumulative = 0.0
+        for event_date in sorted(by_date):
+            cumulative += sum(a for _, a in by_date[event_date])
             if cumulative >= total - LEDGER_FULL_PAYMENT_TOLERANCE:
-                paid_dates[f['CIDDOCUMENTO']] = fecha
+                paid_dates[f['CIDDOCUMENTO']] = datetime.combine(event_date, time(), tzinfo=dt_timezone.utc)
                 break
     return paid_dates
 
@@ -534,7 +632,15 @@ def _find_credit_noted_invoices(facturas, devoluciones):
         origen = d['CIDDOCUMENTOORIGEN']
         if origen and origen in facturas_by_id and is_full_reversal(facturas_by_id[origen], d['CTOTAL']):
             credit_noted.add(origen)
-            continue
+            # A direct link to an invoice from around the same time settles
+            # it. One pointing at a much OLDER invoice is the reissue pattern
+            # above (105153's return points at an invoice five months
+            # earlier), so the recent same-amount invoice is still searched
+            # for. Until 2026-09-28 this stopped here unconditionally, which
+            # only worked while the lookback window happened to be too short
+            # to contain the older invoice.
+            if abs((d['CFECHA'] - facturas_by_id[origen]['CFECHA']).days) <= DEVOLUCION_FALLBACK_WINDOW_DAYS:
+                continue
 
         total = d['CTOTAL']
         if not total:
@@ -700,7 +806,9 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     review bucket rather than guessed at).
     """
     floor_date = date_from - timedelta(days=lookback_days)
-    all_facturas = CommissionRepository.fetch_paid_facturas(floor_date)
+    # Unpaid candidates are only needed by the ledger attribution below.
+    candidates = CommissionRepository.fetch_scoped_facturas(floor_date, date.today())
+    all_facturas = [f for f in candidates if f['CPENDIENTE'] == 0]
     devoluciones = CommissionRepository.fetch_devoluciones(floor_date)
     credit_noted_ids = _find_credit_noted_invoices(all_facturas, devoluciones)
 
@@ -744,8 +852,24 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     paid_dates_fallback = _resolve_payment_dates(facturas, payment_docs)
 
     concepto_series = CommissionRepository.fetch_concepto_series()
-    ledger_rows = CommissionRepository.fetch_ledger_payments(floor_date)
-    paid_dates_ledger = _resolve_payment_dates_from_ledger(facturas, ledger_rows, concepto_series)
+    ledger_lines = CommissionRepository.fetch_ledger_payment_lines(floor_date)
+    accepted = attribute_ledger_payments(candidates, ledger_lines, concepto_series)
+    paid_dates_ledger = _paid_dates_from_ledger(facturas, accepted)
+
+    # The fallback's "latest referencing payment" can't be the full-payment
+    # date if the ledger records a payment on that invoice AFTER it - leave
+    # those for manual review instead. Found 2026-09-28 on CIDDOCUMENTO
+    # 100223 ($5.3M): the ledger (correctly) refuses to call it paid, but the
+    # fallback then resolved it to Feb 27 although the ledger shows a
+    # $799,999.98 installment on Jun 30 - the exact too-early guess
+    # _paid_dates_from_ledger exists to avoid.
+    # A few days' difference is just the usual capture lag between the two
+    # systems (0-3 days on every other fallback-resolved invoice, 2025-2026),
+    # not a later payment.
+    for invoice_id, paid_date in list(paid_dates_fallback.items()):
+        ledger_dates = accepted.get(invoice_id)
+        if ledger_dates and (max(ledger_dates) - paid_date.date()).days > LEDGER_CAPTURE_LAG_DAYS:
+            del paid_dates_fallback[invoice_id]
 
     # Ledger wins on overlap - it's the authoritative accounting record, the
     # Comercial-side CREFERENCIA guess is only a fallback for what it misses.
