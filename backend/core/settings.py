@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'api',
     'catalog',
     'commissions',
+    'corte_de_caja',
 ]
 
 MIDDLEWARE = [
@@ -100,7 +101,7 @@ DATABASES = {
         'HOST': f"{os.getenv('DB_HOST')},{os.getenv('DB_PORT', '49862')}",
         'PORT': '',
         'OPTIONS': {
-            'driver': 'ODBC Driver 17 for SQL Server',
+            'driver': os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server'),
             'extra_params': 'TrustServerCertificate=yes',
         },
     },
@@ -178,5 +179,24 @@ CACHES = {
         'LOCATION': 'redis://127.0.0.1:6379/0',
     }
 }
+
+# Where `manage.py export_corte_de_caja` writes the monthly Corte de Caja
+# workbook (see corte_de_caja/exports.py). Defaults to a local folder for
+# dev - in production this should point at a path that's shared out over
+# SMB on the office server, so the accountant/manager can open it directly
+# without any manual export step. Setting up the actual SMB share is a
+# server/IT configuration task, not something this app does.
+CORTE_DE_CAJA_EXPORT_DIR = os.getenv('CORTE_DE_CAJA_EXPORT_DIR', str(BASE_DIR / 'exports' / 'corte_de_caja'))
+
+# Optional display names for the zone blocks in the exported Corte de Caja
+# workbook, e.g. "ZONA1=Nombre Apellido;ZONA2=Nombre Apellido". Zone codes are
+# the ERP's agent codes (ZONA1, ZONA2, OFICINA, SERVICIOS, PUNTOVENTA); anything
+# not listed uses the ERP's own agent name ("ZONA 1", "OFICINA"...). Kept in
+# .env rather than code so real people's names never land in the repo.
+CORTE_DE_CAJA_ZONE_LABELS = dict(
+    (code.strip().upper(), label.strip())
+    for code, _, label in (pair.partition('=') for pair in os.getenv('CORTE_DE_CAJA_ZONE_LABELS', '').split(';'))
+    if code.strip() and label.strip()
+)
 
 

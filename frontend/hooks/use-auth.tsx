@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import { apiFetch } from "@/lib/api";
 
-export type Role = "SALESPERSON" | "MANAGEMENT";
+export type Role = "SALESPERSON" | "ACCOUNTING" | "MANAGEMENT";
 
 interface AuthUser {
   username: string;
@@ -14,6 +14,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   isWorker: boolean;
+  isAccounting: boolean;
   isManagement: boolean;
   login: (username: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => Promise<void>;
@@ -70,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         loading,
         isWorker: user !== null,
+        isAccounting: user?.role === "ACCOUNTING",
         isManagement: user?.role === "MANAGEMENT",
         login,
         logout,

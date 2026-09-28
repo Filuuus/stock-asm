@@ -38,6 +38,7 @@ PAGO_DOC_TYPES = (9, 10, 12)
 # against real data: raised the September resolution rate from 84% to 96%.
 LEDGER_DATABASE = 'ctAGROPECUARIA_SANTA_MARIA_SA_DE_CV'
 LEDGER_PAGO_CONCEPTO = 'PAGO DEL CLIENTE'
+LEDGER_INGRESOS_TIPOPOL = 1  # TiposPolizas.Id 1 = "Ingresos"
 
 # How close a Devolucion's date can be to a Factura's own date for the
 # same-client/same-amount fallback match below (see _find_credit_noted_invoices).
@@ -132,6 +133,40 @@ class CommissionRepository:
         )
 
     @staticmethod
+    def fetch_facturas_for_corte(date_from, date_to, candidate_lookback_days):
+        """Candidate real Facturas for the Corte de Caja report (see
+        corte_de_caja app) - a DAILY CASH-COLLECTIONS log, not an aging
+        report (see that app's services.py docstring for the full
+        correction - an earlier version of this method served a design that
+        turned out not to match the real spreadsheet at all).
+
+        Corte de Caja needs every Factura that could plausibly have had a
+        payment EVENT land in [date_from, date_to] - which, since a large
+        sale can take months to fully settle via several installments (see
+        commissions' own CIDDOCUMENTO 100223 case, a ~6-month spread), means
+        casting back further than the report window itself. Returns real,
+        zone-scoped, non-cancelled Facturas dated within
+        [date_from - candidate_lookback_days, date_to] regardless of
+        CPENDIENTE - unlike fetch_paid_facturas, being currently unpaid
+        doesn't disqualify a Factura here, since we're matching against
+        historical ledger/payment events dated in the window, not today's
+        live balance.
+        """
+        floor_date = date_from - timedelta(days=candidate_lookback_days)
+        return list(
+            AdmDocumentos.objects.filter(
+                CIDDOCUMENTODE=FACTURA_DOC_TYPE,
+                CCANCELADO=0,
+                CIDAGENTE__in=ZONE_SCOPE.values(),
+                CFECHA__date__gte=floor_date,
+                CFECHA__date__lte=date_to,
+            ).values(
+                'CIDDOCUMENTO', 'CFOLIO', 'CFECHA', 'CFECHAVENCIMIENTO', 'CTOTAL', 'CPENDIENTE',
+                'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CIDCONCEPTODOCUMENTO',
+            )
+        )
+
+    @staticmethod
     def fetch_payment_docs(floor_date):
         # Searched from the invoice lookback floor through TODAY - never
         # capped at the report's date_to. Capping it there was a real bug:
@@ -154,7 +189,7 @@ class CommissionRepository:
                 CFECHA__date__gte=floor_date,
                 CFECHA__date__lte=date.today(),
             ).exclude(CREFERENCIA__isnull=True).exclude(CREFERENCIA='').values(
-                'CFECHA', 'CIDCLIENTEPROVEEDOR', 'CREFERENCIA',
+                'CFECHA', 'CIDCLIENTEPROVEEDOR', 'CREFERENCIA', 'CTOTAL',
             )
         )
 
@@ -199,6 +234,57 @@ class CommissionRepository:
                 [LEDGER_PAGO_CONCEPTO, floor_date, date.today()],
             )
             return cursor.fetchall()
+
+    @staticmethod
+    def fetch_ledger_payment_lines(floor_date):
+        """Every MovimientosPoliza line for payment polizas in the window
+        (PAGO DEL CLIENTE, plus any other Ingresos poliza - a few dozen a
+        year are typed with the client's name as their concept instead, e.g.
+        F 20933's Aug 6 and Aug 31 payments, and would otherwise be missed) -
+        unlike fetch_ledger_payments above, this does NOT filter
+        out blank-Referencia lines. Those are the OTHER side of the same
+        journal entry: the one that debits the real bank account the money
+        landed in (see corte_de_caja/services.py, which is the only
+        consumer of this - commissions itself only ever needed the
+        referenced/matchable lines). Checked live 2026-09-24: every real
+        payment debits one of a handful of actual bank accounts (see
+        fetch_bank_accounts) - the business's Caja Chica (cash) account is
+        used once in all of 2026, so this identifies WHICH BANK, not
+        cash/terminal/cheque/transfer as such.
+        """
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT mp.IdPoliza, LTRIM(RTRIM(mp.Referencia)), mp.Fecha, mp.Concepto,
+                       mp.Importe, mp.TipoMovto, mp.IdCuenta
+                FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
+                JOIN {LEDGER_DATABASE}.dbo.Polizas p ON p.Id = mp.IdPoliza
+                WHERE (p.Concepto = %s OR p.TipoPol = %s) AND mp.Fecha >= %s AND mp.Fecha <= %s
+                """,
+                [LEDGER_PAGO_CONCEPTO, LEDGER_INGRESOS_TIPOPOL, floor_date, date.today()],
+            )
+            return cursor.fetchall()
+
+    @staticmethod
+    def fetch_client_account_codes():
+        """Contabilidad's per-client accounts (chart-of-accounts prefix '103',
+        "Clientes") keyed by id - the accountant's sheet has a CUENTA column
+        holding exactly this code (e.g. 103-107-408) for each client.
+        """
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(f"SELECT Id, Codigo FROM {LEDGER_DATABASE}.dbo.Cuentas WHERE Codigo LIKE '103%'")
+            return {id_: (codigo or '').strip() for id_, codigo in cursor.fetchall()}
+
+    @staticmethod
+    def fetch_bank_accounts():
+        """Real bank/cash accounts (Cuentas.Codigo under the 'Circulante'
+        chart-of-accounts group, prefix '1001') - used to label which
+        account a ledger payment's bank-debit line (see
+        fetch_ledger_payment_lines) landed in.
+        """
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(f"SELECT Id, Codigo, Nombre FROM {LEDGER_DATABASE}.dbo.Cuentas WHERE Codigo LIKE '1001%'")
+            return {id_: (codigo, nombre) for id_, codigo, nombre in cursor.fetchall()}
 
     @staticmethod
     def fetch_movimientos(invoice_ids):
