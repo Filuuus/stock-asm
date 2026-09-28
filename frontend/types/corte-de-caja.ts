@@ -103,3 +103,52 @@ export interface CorteDeCajaSummary {
   unconfirmed: UnconfirmedInfo;
   sin_poliza: SinPolizaInfo;
 }
+
+// "Diferencias de fecha" tab: each customer payment with its Contpaqi
+// Comercial date next to its Contabilidad (poliza) date.
+export type DateDifferenceStatus =
+  | "distinto_mes"
+  | "solo_comercial"
+  | "solo_contabilidad"
+  | "distinto_dia"
+  | "mismo_dia";
+
+export interface ComercialPayment {
+  date: string;
+  // When the payment was applied to the invoice - usually the same day.
+  applied_date: string;
+  amount: number;
+  // The payment document as Comercial lists it ("BBV 19146").
+  documento: string;
+}
+
+export interface ContabilidadPayment {
+  date: string;
+  amount: number;
+  // "Ingresos 254" - poliza type and folio in Contabilidad.
+  polizas: string[];
+}
+
+export interface DateDifferenceRow {
+  invoice_id: number;
+  folio_display: string;
+  cliente: string;
+  zone: Zone;
+  invoice_date: string;
+  amount: number;
+  status: DateDifferenceStatus;
+  // Latest date on each side (a payment can be split in pieces on one side);
+  // null when only the other system has the payment.
+  comercial_date: string | null;
+  contabilidad_date: string | null;
+  days_difference: number | null;
+  comercial: ComercialPayment[];
+  contabilidad: ContabilidadPayment[];
+}
+
+export interface DateDifferencesSummary {
+  date_from: string;
+  date_to: string;
+  rows: DateDifferenceRow[];
+  totals: Record<DateDifferenceStatus, { count: number; total_amount: number }>;
+}

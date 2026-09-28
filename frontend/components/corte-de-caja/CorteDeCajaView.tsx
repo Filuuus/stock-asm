@@ -23,6 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import DiferenciasFechaView from "@/components/corte-de-caja/DiferenciasFechaView";
 import {
   Card,
   CardDescription,
@@ -207,6 +209,7 @@ export default function CorteDeCajaView() {
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"corte" | "diferencias">("corte");
 
   const requestIdRef = useRef(0);
 
@@ -390,6 +393,25 @@ export default function CorteDeCajaView() {
     );
   }
 
+  const viewTabs = (
+    <Tabs value={view} onValueChange={(v) => setView(v as "corte" | "diferencias")}>
+      <TabsList>
+        <TabsTrigger value="corte">Corte diario</TabsTrigger>
+        <TabsTrigger value="diferencias">Diferencias de fecha</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  if (view === "diferencias") {
+    return (
+      <main className="w-full p-6 flex flex-col gap-6">
+        <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
+        {viewTabs}
+        <DiferenciasFechaView />
+      </main>
+    );
+  }
+
   return (
     <main className="w-full p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -401,6 +423,8 @@ export default function CorteDeCajaView() {
           y elija las demás.
         </p>
       </div>
+
+      {viewTabs}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button

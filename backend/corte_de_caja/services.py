@@ -204,6 +204,7 @@ def _resolve_ledger_events(facturas, ledger_lines, concepto_series, bank_account
                     'suggested_method': suggested_method,
                     'bank': bank_name,
                     'account_ids': sorted({a for p in polizas for a in poliza_ref_accounts.get(p, ())}),
+                    'polizas': sorted(polizas),
                 })
     return events, covered_invoice_ids
 

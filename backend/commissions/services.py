@@ -25,6 +25,7 @@ from .models import CommissionCategoryRate, InvoiceCommissionOverride, PuntoVent
 FACTURA_DOC_TYPE = 4
 DEVOLUCION_DOC_TYPE = 5  # Devolucion sobre Venta - a return/credit note against a Factura, not a real sale.
 PAGO_DOC_TYPES = (9, 10, 12)
+PAGO_CLIENTE_DOC_TYPE = 9  # "Pago del cliente" - the only one of PAGO_DOC_TYPES ever applied to a 2026 Factura
 
 # The Comercial database (adAGROPECUARIA_2018, everything above) is only half
 # of this Contpaqi install - there's a separate accounting-module database
@@ -250,6 +251,52 @@ class CommissionRepository:
                 [LEDGER_PAGO_CONCEPTO, LEDGER_INGRESOS_TIPOPOL, floor_date, date.today()],
             )
             return cursor.fetchall()
+
+    @staticmethod
+    def fetch_comercial_applications(floor_date):
+        """Contpaqi Comercial's own record of which customer payment was
+        applied to which invoice, and for how much (admAsocCargosAbonos) -
+        exact, unlike the free-text CREFERENCIA: checked 2026-09-28, the
+        applied amounts add up to CTOTAL - CPENDIENTE on every one of the
+        3,687 non-cancelled 2026 invoices, and a payment covering several
+        invoices is split per invoice. Only customer payments (Pago del
+        cliente); credit notes and returns are applied here too but aren't
+        cash. Rows: (invoice_id, payment_id, payment_date, applied_date,
+        amount, payment_series, payment_folio).
+        """
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.CIDDOCUMENTOCARGO, a.CIDDOCUMENTOABONO, ab.CFECHA, a.CFECHAABONOCARGO,
+                       a.CIMPORTEABONO, LTRIM(RTRIM(ab.CSERIEDOCUMENTO)), ab.CFOLIO
+                FROM admAsocCargosAbonos a
+                JOIN admDocumentos ab ON ab.CIDDOCUMENTO = a.CIDDOCUMENTOABONO
+                WHERE ab.CIDDOCUMENTODE = %s AND ab.CCANCELADO = 0 AND ab.CFECHA >= %s
+                """,
+                [PAGO_CLIENTE_DOC_TYPE, floor_date],
+            )
+            return cursor.fetchall()
+
+    @staticmethod
+    def fetch_poliza_labels(poliza_ids):
+        """{poliza id: 'Ingresos 235'} - the type and folio the accountant
+        searches by in Contpaqi Contabilidad."""
+        labels = {}
+        ids = sorted(poliza_ids)
+        with connections['erp'].cursor() as cursor:
+            for start in range(0, len(ids), 1000):  # SQL Server caps a query at 2,100 parameters
+                chunk = ids[start:start + 1000]
+                cursor.execute(
+                    f"""
+                    SELECT p.Id, t.Nombre, p.Folio
+                    FROM {LEDGER_DATABASE}.dbo.Polizas p
+                    JOIN {LEDGER_DATABASE}.dbo.TiposPolizas t ON t.Id = p.TipoPol
+                    WHERE p.Id IN ({', '.join(['%s'] * len(chunk))})
+                    """,
+                    chunk,
+                )
+                labels.update({id_: f'{tipo} {folio}' for id_, tipo, folio in cursor.fetchall()})
+        return labels
 
     @staticmethod
     def fetch_client_account_codes():
