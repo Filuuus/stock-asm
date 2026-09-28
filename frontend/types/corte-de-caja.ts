@@ -12,7 +12,13 @@ export interface CorteDeCajaRow {
   invoice_id: number;
   event_date: string;
   folio: number;
+  // "B 19758" - the tax series plus the bare folio, the way the accountant's
+  // own sheet writes it. Prefer this over `folio` for display.
+  folio_display: string;
   cliente: string;
+  // The client's Contabilidad account (103-107-408), when resolvable - null
+  // for the generic "Ventas Publico en General" account.
+  cuenta: string | null;
   zone: Zone;
   due_date: string | null;
   category: string | null;

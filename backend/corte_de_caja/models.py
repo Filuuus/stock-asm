@@ -29,9 +29,16 @@ class CorteDeCajaAdjustment(models.Model):
       rather than guessed at). Once tagged, the EFECTIVO/TERMINAL/CHEQUE/
       TOTAL CORTE cash-drawer totals compute themselves from these tags
       instead of being hand-typed arithmetic like the original sheet.
-    - excluded / reviewed / note: same purpose as the rest of this app's
-      correction tools - pull a bad match out of the totals, mark it
-      checked, leave an observación.
+    - reviewed / note: mark a row checked, leave an observación - the
+      accountant's own working notes, not ERP data, so editing them freely
+      doesn't reintroduce the manual-entry errors this platform exists to
+      avoid.
+    - excluded: pulls a row out of the totals. Deliberately NOT part of the
+      accountant/management API workflow (locked 2026-09-26, see
+      corte_de_caja/views.py::adjustment_upsert) - a bad number here almost
+      always means the ERP itself is wrong (e.g. a duplicate poliza), which
+      must be fixed in Contpaqi, not hidden in this app. Still settable via
+      the Django admin as a rare, deliberate escape hatch.
 
     Same PII rule as the commissions overrides: never store the client's
     name, only the ERP invoice id.

@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { addDays, format, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 import {
   AlertTriangle,
-  Ban,
   Calendar as CalendarIcon,
   Check,
   ChevronLeft,
@@ -15,7 +14,6 @@ import {
   Info,
   Loader2,
   Pencil,
-  RotateCcw,
   X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -159,6 +157,11 @@ const ZONE_LABELS: Record<Zone, string> = {
   PUNTOVENTA: "Punto de Venta",
 };
 
+// Same order the accountant's sheet lists blocks in (and the .xlsx export
+// mirrors) - rows are grouped by zone in the table below instead of
+// repeating the zone/salesperson name on every single row.
+const ZONE_ORDER = Object.keys(ZONE_LABELS) as Zone[];
+
 const CATEGORY_LABELS: Record<string, string> = {
   R: "Refacciones",
   R_NW: "Refacciones (Tapetes y pernos)",
@@ -204,6 +207,7 @@ export default function CorteDeCajaView() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const requestIdRef = useRef(0);
 
@@ -302,13 +306,16 @@ export default function CorteDeCajaView() {
     }
   };
 
-  const handleToggleExclude = async (row: CorteDeCajaRow) => {
-    try {
-      await patchAdjustment(row, { excluded: !row.excluded });
-      fetchSummary(dateFrom, dateTo);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo actualizar la factura.");
-    }
+  const rowKey = (row: CorteDeCajaRow) => `${row.invoice_id}-${row.event_date}`;
+
+  const toggleExpanded = (row: CorteDeCajaRow) => {
+    const key = rowKey(row);
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   const openEditDialog = (row: CorteDeCajaRow) => {
@@ -338,8 +345,36 @@ export default function CorteDeCajaView() {
     if (selectedZone) filtered = filtered.filter((r) => r.zone === selectedZone);
     const q = filter.trim().toLowerCase();
     if (!q) return filtered;
-    return filtered.filter((r) => `${r.cliente} ${r.folio}`.toLowerCase().includes(q));
+    return filtered.filter((r) => `${r.cliente} ${r.folio_display}`.toLowerCase().includes(q));
   }, [data, filter, selectedZone]);
+
+  // One block per zone, like the accountant's sheet and the .xlsx export -
+  // a header row instead of repeating the zone/salesperson name on every
+  // payment, sorted the same way (cliente, then date, then folio).
+  const zoneGroups = useMemo(() => {
+    const byZone = new Map<Zone, CorteDeCajaRow[]>();
+    for (const row of rows) {
+      const list = byZone.get(row.zone) ?? [];
+      list.push(row);
+      byZone.set(row.zone, list);
+    }
+    const order = (zone: Zone) => {
+      const i = ZONE_ORDER.indexOf(zone);
+      return i === -1 ? ZONE_ORDER.length : i;
+    };
+    return [...byZone.entries()]
+      .sort(([a], [b]) => order(a) - order(b))
+      .map(([zone, zoneRows]) => ({
+        zone,
+        rows: [...zoneRows].sort(
+          (a, b) =>
+            a.cliente.localeCompare(b.cliente) ||
+            a.event_date.localeCompare(b.event_date) ||
+            a.folio_display.localeCompare(b.folio_display),
+        ),
+        subtotal: zoneRows.reduce((sum, r) => sum + r.amount, 0),
+      }));
+  }, [rows]);
 
   if (!authLoading && !canUse) {
     return (
@@ -520,152 +555,203 @@ export default function CorteDeCajaView() {
             </div>
 
             <div className="rounded-lg border bg-white overflow-x-auto">
-              <Table className="min-w-[1550px]">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8" />
                     <TableHead className="w-8" />
                     <TableHead className="whitespace-nowrap">Fecha</TableHead>
                     <TableHead className="whitespace-nowrap">Folio</TableHead>
                     <TableHead className="whitespace-nowrap">Cliente</TableHead>
-                    <TableHead className="whitespace-nowrap">Zona</TableHead>
-                    <TableHead className="whitespace-nowrap">Categoría</TableHead>
                     <TableHead className="whitespace-nowrap text-right">Monto</TableHead>
                     <TableHead className="whitespace-nowrap">Tipo</TableHead>
-                    <TableHead className="whitespace-nowrap">Banco</TableHead>
                     <TableHead className="whitespace-nowrap">Forma de pago</TableHead>
-                    <TableHead className="whitespace-nowrap w-40">Nota</TableHead>
-                    <TableHead className="w-24" />
+                    <TableHead className="whitespace-nowrap">Nota</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow
-                      key={`${row.invoice_id}-${row.event_date}`}
-                      className={cn(row.excluded && "opacity-50")}
-                    >
-                      <TableCell>
-                        <Checkbox
-                          checked={row.reviewed}
-                          onCheckedChange={() => handleToggleReviewed(row)}
-                          title={row.reviewed ? `Revisado por ${row.reviewed_by ?? "?"}` : "Marcar como revisado"}
-                        />
-                      </TableCell>
-                      <TableCell className="text-xs text-gray-600 whitespace-nowrap">{row.event_date}</TableCell>
-                      <TableCell className={cn("font-mono text-xs whitespace-nowrap", row.excluded && "line-through")}>
-                        {row.folio}
-                      </TableCell>
-                      <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
-                        {row.cliente}
-                      </TableCell>
-                      <TableCell className="text-xs text-gray-600 whitespace-nowrap">
-                        {ZONE_LABELS[row.zone] ?? row.zone}
-                      </TableCell>
-                      <TableCell className="text-xs text-gray-600 whitespace-nowrap">
-                        {row.category ? (CATEGORY_LABELS[row.category] ?? row.category) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs whitespace-nowrap">
-                        {currency(row.amount)}
-                        {row.approximate && (
-                          <HelpCircle
-                            className="inline w-3 h-3 ml-1 text-amber-500"
-                            aria-label="Monto aproximado, revisar"
-                          />
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {row.abono === null ? (
-                          <span className="text-xs text-gray-400">?</span>
-                        ) : row.abono ? (
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                            Abono
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                            Completo
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-gray-600 max-w-32 truncate" title={row.bank ?? undefined}>
-                        {row.bank ?? "-"}
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          <select
-                            value={row.payment_method}
-                            onChange={(e) => handleMethodChange(row, e.target.value)}
-                            className={cn(
-                              "h-8 rounded-md border px-2 text-xs",
-                              row.payment_method_confirmed
-                                ? "border-input bg-background"
-                                : row.suggestion_confidence === "alta"
-                                  ? "border-emerald-300 bg-emerald-50"
-                                  : row.suggestion_confidence === "media"
-                                    ? "border-sky-300 bg-sky-50"
-                                    : "border-amber-400 bg-amber-50",
-                            )}
-                            title={
-                              row.payment_method && !row.payment_method_confirmed
-                                ? `Sin confirmar - ${row.suggestion_reason}`
-                                : undefined
-                            }
-                          >
-                            <option value="">Sin clasificar</option>
-                            {(Object.keys(METHOD_LABELS) as PaymentMethod[]).map((m) => (
-                              <option key={m} value={m}>
-                                {METHOD_LABELS[m]}
-                              </option>
-                            ))}
-                          </select>
-                          {row.payment_method && !row.payment_method_confirmed && (
-                            <span
-                              className={cn(
-                                "shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide",
-                                row.suggestion_confidence === "alta"
-                                  ? "text-emerald-700"
-                                  : row.suggestion_confidence === "media"
-                                    ? "text-sky-700"
-                                    : "text-amber-700",
-                              )}
-                              title={row.suggestion_reason}
-                            >
-                              {row.suggestion_confidence === "baja" ? "elegir" : row.suggestion_confidence}
+                  {zoneGroups.map(({ zone, rows: groupRows, subtotal }) => (
+                    <Fragment key={zone}>
+                      <TableRow className="bg-slate-50 hover:bg-slate-50">
+                        <TableCell colSpan={9} className="py-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-gray-800">
+                              {ZONE_LABELS[zone] ?? zone}
+                              <span className="ml-2 text-xs font-normal text-gray-500">
+                                ({groupRows.length})
+                              </span>
                             </span>
-                          )}
-                          {row.payment_method && !row.payment_method_confirmed && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="px-1.5 h-8"
-                              title="Confirmar sugerencia"
-                              onClick={() => handleMethodChange(row, row.payment_method)}
-                            >
-                              <Check className="w-3.5 h-3.5 text-sky-600" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-40 truncate text-xs text-gray-600">{row.note}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button size="sm" variant="ghost" className="px-2" onClick={() => openEditDialog(row)}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="px-2"
-                            onClick={() => handleToggleExclude(row)}
-                            title={row.excluded ? "Restaurar pago" : "Excluir pago"}
-                          >
-                            {row.excluded ? <RotateCcw className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                            <span className="font-mono text-sm font-semibold text-gray-800">
+                              {currency(subtotal)}
+                            </span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {groupRows.map((row) => {
+                        const expanded = expandedRows.has(rowKey(row));
+                        return (
+                          <Fragment key={rowKey(row)}>
+                            <TableRow className={cn(row.excluded && "opacity-50")}>
+                              <TableCell>
+                                <button
+                                  onClick={() => toggleExpanded(row)}
+                                  className="flex items-center justify-center rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                  title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                                >
+                                  <ChevronRight
+                                    className={cn("w-3.5 h-3.5 transition-transform", expanded && "rotate-90")}
+                                  />
+                                </button>
+                              </TableCell>
+                              <TableCell>
+                                <Checkbox
+                                  checked={row.reviewed}
+                                  onCheckedChange={() => handleToggleReviewed(row)}
+                                  title={row.reviewed ? `Revisado por ${row.reviewed_by ?? "?"}` : "Marcar como revisado"}
+                                />
+                              </TableCell>
+                              <TableCell className="text-xs text-gray-600 whitespace-nowrap">{row.event_date}</TableCell>
+                              <TableCell
+                                className={cn("font-mono text-xs whitespace-nowrap", row.excluded && "line-through")}
+                              >
+                                {row.folio_display}
+                              </TableCell>
+                              <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
+                                {row.cliente}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs whitespace-nowrap">
+                                {currency(row.amount)}
+                                {row.approximate && (
+                                  <HelpCircle
+                                    className="inline w-3 h-3 ml-1 text-amber-500"
+                                    aria-label="Monto aproximado, revisar"
+                                  />
+                                )}
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap">
+                                {row.abono === null ? (
+                                  <span className="text-xs text-gray-400">?</span>
+                                ) : row.abono ? (
+                                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                    Abono
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                    Completo
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={row.payment_method}
+                                    onChange={(e) => handleMethodChange(row, e.target.value)}
+                                    className={cn(
+                                      "h-8 rounded-md border px-2 text-xs",
+                                      row.payment_method_confirmed
+                                        ? "border-input bg-background"
+                                        : row.suggestion_confidence === "alta"
+                                          ? "border-emerald-300 bg-emerald-50"
+                                          : row.suggestion_confidence === "media"
+                                            ? "border-sky-300 bg-sky-50"
+                                            : "border-amber-400 bg-amber-50",
+                                    )}
+                                    title={
+                                      row.payment_method && !row.payment_method_confirmed
+                                        ? `Sin confirmar - ${row.suggestion_reason}`
+                                        : undefined
+                                    }
+                                  >
+                                    <option value="">Sin clasificar</option>
+                                    {(Object.keys(METHOD_LABELS) as PaymentMethod[]).map((m) => (
+                                      <option key={m} value={m}>
+                                        {METHOD_LABELS[m]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {row.payment_method && !row.payment_method_confirmed && (
+                                    <span
+                                      className={cn(
+                                        "shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide",
+                                        row.suggestion_confidence === "alta"
+                                          ? "text-emerald-700"
+                                          : row.suggestion_confidence === "media"
+                                            ? "text-sky-700"
+                                            : "text-amber-700",
+                                      )}
+                                      title={row.suggestion_reason}
+                                    >
+                                      {row.suggestion_confidence === "baja" ? "elegir" : row.suggestion_confidence}
+                                    </span>
+                                  )}
+                                  {row.payment_method && !row.payment_method_confirmed && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="px-1.5 h-8"
+                                      title="Confirmar sugerencia"
+                                      onClick={() => handleMethodChange(row, row.payment_method)}
+                                    >
+                                      <Check className="w-3.5 h-3.5 text-sky-600" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1">
+                                  <span
+                                    className="max-w-32 truncate text-xs text-gray-600"
+                                    title={row.note || undefined}
+                                  >
+                                    {row.note || "-"}
+                                  </span>
+                                  <Button size="sm" variant="ghost" className="px-1.5 h-7" onClick={() => openEditDialog(row)}>
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                            {expanded && (
+                              <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
+                                <TableCell />
+                                <TableCell colSpan={8} className="py-3">
+                                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs sm:grid-cols-4">
+                                    <div>
+                                      <p className="text-gray-400">Categoría</p>
+                                      <p className="text-gray-700">
+                                        {row.category ? (CATEGORY_LABELS[row.category] ?? row.category) : "-"}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400">Banco</p>
+                                      <p className="text-gray-700">{row.bank ?? "No identificado"}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400">Cuenta</p>
+                                      <p className="text-gray-700">{row.cuenta ?? "-"}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400">Origen</p>
+                                      <p className="text-gray-700">
+                                        {row.source === "ledger" ? "Contabilidad" : "Contpaqi Comercial"}
+                                        {row.approximate && " (monto aproximado)"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {row.approximate && (
+                                    <p className="mt-2 text-xs text-amber-700">{data?.approximate.note}</p>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
                   ))}
                   {rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={12} className="text-center text-sm text-gray-500 py-8">
+                      <TableCell colSpan={9} className="text-center text-sm text-gray-500 py-8">
                         Sin resultados para este período.
                       </TableCell>
                     </TableRow>
@@ -681,7 +767,7 @@ export default function CorteDeCajaView() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Nota - factura {editingRow?.folio} ({editingRow?.event_date}) - {editingRow?.cliente}
+              Nota - factura {editingRow?.folio_display} ({editingRow?.event_date}) - {editingRow?.cliente}
             </DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-4">

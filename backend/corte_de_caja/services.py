@@ -67,6 +67,8 @@ from commissions.services import (
     _normalize_name,
 )
 
+from api.models import AdmConceptos, AdmDocumentos
+
 from .models import CorteDeCajaAdjustment
 
 # How far back to look for candidate Facturas relative to date_from - a
@@ -388,6 +390,32 @@ def _resolve_fallback_events(facturas, payment_docs, ledger_covered_ids, date_fr
     return events
 
 
+def _invoice_series(invoice_ids):
+    """No. FACTURA on the real sheet is the tax series ('A', 'B', or 'F' for
+    the default 16% series) plus the bare folio number. The series lives in
+    AdmConceptos.CSERIEPOROMISION - CPREFIJOCONCEPTO is 'F' for every
+    concept, so using it renders every B/A invoice as 'F' (verified against
+    the accountant's Sep 2026 sheet: 272/273 rows match this way).
+    """
+    concepto_by_invoice = dict(
+        AdmDocumentos.objects.filter(CIDDOCUMENTO__in=invoice_ids).values_list(
+            'CIDDOCUMENTO', 'CIDCONCEPTODOCUMENTO',
+        )
+    )
+    serie_by_concepto = dict(
+        AdmConceptos.objects.values_list('CIDCONCEPTODOCUMENTO', 'CSERIEPOROMISION')
+    )
+
+    def display(concepto_id):
+        serie = (serie_by_concepto.get(concepto_id) or '').strip().upper()
+        return serie if serie in ('A', 'B') else 'F'
+
+    return {
+        invoice_id: display(concepto_id)
+        for invoice_id, concepto_id in concepto_by_invoice.items()
+    }
+
+
 def _dominant_categories(invoice_ids):
     """One category badge per invoice, for display only (not a rate
     calculation the way commissions needs per-line precision) - the
@@ -495,6 +523,7 @@ def calculate_corte_de_caja(date_from, date_to):
     agent_codes = CommissionRepository.fetch_agent_codes()
     client_account_codes = CommissionRepository.fetch_client_account_codes()
     categories = _dominant_categories(list({e['invoice_id'] for e in all_events}))
+    invoice_series = _invoice_series({e['invoice_id'] for e in all_events})
     adjustments = {
         (a.invoice_id, a.event_date): a for a in CorteDeCajaAdjustment.objects.filter(
             invoice_id__in={e['invoice_id'] for e in all_events}
@@ -560,6 +589,7 @@ def calculate_corte_de_caja(date_from, date_to):
             'invoice_id': event['invoice_id'],
             'event_date': event['event_date'],
             'folio': factura['CFOLIO'],
+            'folio_display': f"{invoice_series.get(event['invoice_id'], 'F')} {int(factura['CFOLIO'])}",
             'cliente': factura['CRAZONSOCIAL'],
             'zone': zone_code,
             'due_date': factura['CFECHAVENCIMIENTO'],

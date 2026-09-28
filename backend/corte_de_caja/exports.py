@@ -35,7 +35,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
-from api.models import AdmAgentes, AdmConceptos, AdmDocumentos
+from api.models import AdmAgentes
 from corte_de_caja.models import CorteDeCajaAdjustment
 from corte_de_caja.services import calculate_corte_de_caja
 
@@ -92,32 +92,6 @@ COLUMN_WIDTHS = {
 def _month_bounds(year, month):
     last_day = calendar.monthrange(year, month)[1]
     return date(year, month, 1), date(year, month, last_day)
-
-
-def _folio_prefixes(invoice_ids):
-    """No. FACTURA on the real sheet is the tax series ('A', 'B', or 'F' for
-    the default 16% series) plus the bare folio number. The series lives in
-    AdmConceptos.CSERIEPOROMISION - CPREFIJOCONCEPTO is 'F' for every
-    concept, so using it renders every B/A invoice as 'F' (verified against
-    the accountant's Sep 2026 sheet: 272/273 rows match this way).
-    """
-    concepto_by_invoice = dict(
-        AdmDocumentos.objects.filter(CIDDOCUMENTO__in=invoice_ids).values_list(
-            'CIDDOCUMENTO', 'CIDCONCEPTODOCUMENTO',
-        )
-    )
-    serie_by_concepto = dict(
-        AdmConceptos.objects.values_list('CIDCONCEPTODOCUMENTO', 'CSERIEPOROMISION')
-    )
-
-    def display(concepto_id):
-        serie = (serie_by_concepto.get(concepto_id) or '').strip().upper()
-        return serie if serie in ('A', 'B') else 'F'
-
-    return {
-        invoice_id: display(concepto_id)
-        for invoice_id, concepto_id in concepto_by_invoice.items()
-    }
 
 
 def _zone_labels():
@@ -193,13 +167,12 @@ class _DaySheet:
         self.r += 1
         return row
 
-    def payment_row(self, row, folio_prefixes, excluded=False):
+    def payment_row(self, row, excluded=False):
         self.blank_table_row()
         font = FONT_EXCLUDED if excluded else None
-        folio = f"{folio_prefixes.get(row['invoice_id'], 'F')} {int(row['folio'])}"
         self.cell(1, row['cuenta'], font=font)
         self.cell(2, row['cliente'], font=font)
-        self.cell(3, folio, font=font)
+        self.cell(3, row['folio_display'], font=font)
         self.cell(4, 'A' if row['abono'] else None, font=font, align='center')
         self.cell(5, float(row['amount']), fmt=MONEY_FORMAT, align='right', font=font)
         self.cell(8, row['due_date'].date() if row['due_date'] else None, fmt=DUE_DATE_FORMAT, align='center', font=font)
@@ -218,7 +191,7 @@ def _zone_sort_key(zone):
     return (ZONE_ORDER.index(zone) if zone in ZONE_ORDER else len(ZONE_ORDER), zone or '')
 
 
-def _write_day_sheet(wb, day, rows, folio_prefixes, zone_labels):
+def _write_day_sheet(wb, day, rows, zone_labels):
     ws = wb.create_sheet(f'{day.day:02d}.{SPANISH_MONTH_ABBR[day.month - 1]}'[:31])
     sheet = _DaySheet(ws)
 
@@ -263,7 +236,7 @@ def _write_day_sheet(wb, day, rows, folio_prefixes, zone_labels):
         sheet.label_row(zone_labels.get(zone, zone))
         first = sheet.r
         for row in sorted((r for r in physical if r['zone'] == zone), key=order):
-            sheet.payment_row(row, folio_prefixes)
+            sheet.payment_row(row)
         corte_subtotals.append(sheet.subtotal_row(first, sheet.r - 1))
 
     # Transfers: trailing section, outside TOTAL CORTE - same as the original.
@@ -272,14 +245,14 @@ def _write_day_sheet(wb, day, rows, folio_prefixes, zone_labels):
         sheet.label_row('TRANSFERENCIAS')
         first = sheet.r
         for row in sorted(transfers, key=order):
-            sheet.payment_row(row, folio_prefixes)
+            sheet.payment_row(row)
         transfer_subtotal = sheet.subtotal_row(first, sheet.r - 1)
     data_end = sheet.r - 1
 
     if excluded:
         sheet.label_row('EXCLUIDOS DEL CORTE (no se suman)')
         for row in sorted(excluded, key=order):
-            sheet.payment_row(row, folio_prefixes, excluded=True)
+            sheet.payment_row(row, excluded=True)
 
     # Totals block - labels in B, values in D:E, like the original.
     def total_line(label, formula):
@@ -346,14 +319,12 @@ def build_month_workbook(year, month):
     for row in result['rows']:
         rows_by_day.setdefault(row['event_date'], []).append(row)
 
-    invoice_ids = {row['invoice_id'] for row in result['rows']}
-    folio_prefixes = _folio_prefixes(invoice_ids)
     zone_labels = _zone_labels()
 
     wb = Workbook()
     wb.remove(wb.active)  # openpyxl creates a default blank sheet - unused, this workbook is all named day sheets
     for day in sorted(rows_by_day):
-        _write_day_sheet(wb, day, rows_by_day[day], folio_prefixes, zone_labels)
+        _write_day_sheet(wb, day, rows_by_day[day], zone_labels)
 
     if not wb.sheetnames:
         # No payments at all this month (e.g. exporting the current month

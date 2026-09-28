@@ -72,7 +72,15 @@ def adjustment_upsert(request):
             bank_code = data.get('bank_code') or ''
             defaults['bank_code'] = bank_code if bank_code in BANK_CODES else ''
     if 'excluded' in data:
-        defaults['excluded'] = bool(data['excluded'])
+        # Locked 2026-09-26: excluding a row hides real ERP cash instead of
+        # fixing the ERP data that's wrong (e.g. a duplicate poliza) - exactly
+        # the kind of manual correction this platform exists to avoid. The
+        # model field stays (Django admin can still set it for a genuine
+        # emergency), but the accountants' day-to-day workflow can't reach it.
+        return Response(
+            {'error': 'Un pago no se puede excluir desde aquí. Corrija el dato de origen en Contpaqi.'},
+            status=400,
+        )
     if 'note' in data:
         defaults['note'] = data['note'] or ''
     if 'reviewed' in data:
