@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from accounts.permissions import IsAccountingOrManagement
 from api.models import AdmDocumentos
 
+from .date_differences import calculate_date_differences
 from .models import CorteDeCajaAdjustment
 from .services import BANK_CODES, CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENCE_MEDIUM, calculate_corte_de_caja
 
@@ -29,6 +30,20 @@ def corte_de_caja_summary(request):
 
     result = calculate_corte_de_caja(date_from, date_to)
     return Response(result)
+
+
+@api_view(['GET'])
+@permission_classes([IsAccountingOrManagement])
+def date_differences(request):
+    today = date.today()
+    try:
+        date_from = _parse_date(request.query_params.get('date_from'), today.replace(day=1))
+        date_to = _parse_date(request.query_params.get('date_to'), today)
+    except ValueError:
+        return Response({'error': 'date_from/date_to deben tener formato YYYY-MM-DD.'}, status=400)
+    if date_from > date_to:
+        return Response({'error': 'date_from debe ser anterior a date_to.'}, status=400)
+    return Response(calculate_date_differences(date_from, date_to))
 
 
 def _serialize_adjustment(adjustment):

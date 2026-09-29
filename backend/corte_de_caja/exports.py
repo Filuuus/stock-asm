@@ -6,9 +6,12 @@ always has instead of using the web dashboard directly (requested
 
 Layout follows the real "Corte de caja 2026.xlsx" day sheets (reworked
 2026-09-25 to match them closely, keeping everything the automatic version
-adds): Arial 8, thin borders, merged title/long-format date, the same 11
-columns (CUENTA ... OBSERVACIONES, with OBSERVACIONES merged across K:O),
-then our two extra columns (FORMA DE PAGO, BANCO). Rows are grouped in
+adds): Arial 8, thin borders, merged title/long-format date, the same
+columns (CUENTA ... OBSERVACIONES, with OBSERVACIONES merged across I:M)
+minus ENTREGA and RECIBE, then our two extra columns (FORMA DE PAGO, BANCO).
+ENTREGA/RECIBE (who handed over / received the cash) were always empty -
+nothing in the ERP records it - so they were dropped 2026-09-28 at the
+user's request to save width on a read-only sheet. Rows are grouped in
 blocks with a bold header row and a bold =SUM subtotal, but by ZONE (named
 from the ERP's own agent names, optionally overridden with a salesperson's
 name via CORTE_DE_CAJA_ZONE_LABELS) because who physically collected the
@@ -45,10 +48,12 @@ from corte_de_caja.services import calculate_corte_de_caja
 EARLIEST_EXPORT_MONTH = date(2026, 9, 1)
 
 HEADERS = [
-    'CUENTA', 'NOMBRE DEL CLIENTE', 'No. FACTURA', 'DEBE', 'HABER', 'ENTREGA', 'RECIBE',
+    'CUENTA', 'NOMBRE DEL CLIENTE', 'No. FACTURA', 'DEBE', 'HABER',
     'VENCIMIENTO', 'COMISION', 'EQ-R-S', 'OBSERVACIONES',
 ]
-COL_FORMA_PAGO, COL_BANCO = 16, 17  # after OBSERVACIONES (K:O merged)
+COL_VENCIMIENTO, COL_COMISION, COL_EQRS, COL_OBSERVACIONES = 6, 7, 8, 9
+COL_OBSERVACIONES_END = 13  # OBSERVACIONES is merged across I:M, like the original's K:O
+COL_FORMA_PAGO, COL_BANCO = 14, 15
 LAST_COL = COL_BANCO
 HEADER_ROW = 5
 
@@ -84,8 +89,8 @@ FONT_EXCLUDED = Font(name='Arial', size=8, color='808080', strike=True)
 THIN = Side(style='thin')
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 COLUMN_WIDTHS = {
-    1: 12, 2: 33, 3: 10.7, 4: 7, 5: 15, 6: 7.3, 7: 6.3, 8: 11.4, 9: 8.7, 10: 6.1,
-    11: 9, 12: 9, 13: 9, 14: 9, 15: 9, COL_FORMA_PAGO: 24, COL_BANCO: 26,
+    1: 12, 2: 33, 3: 10.7, 4: 7, 5: 15, COL_VENCIMIENTO: 11.4, COL_COMISION: 8.7, COL_EQRS: 6.1,
+    9: 9, 10: 9, 11: 9, 12: 9, 13: 9, COL_FORMA_PAGO: 24, COL_BANCO: 26,
 }
 
 
@@ -152,7 +157,8 @@ class _DaySheet:
     def blank_table_row(self):
         for col in range(1, LAST_COL + 1):
             self.cell(col)
-        self.ws.merge_cells(start_row=self.r, start_column=11, end_row=self.r, end_column=15)
+        self.ws.merge_cells(start_row=self.r, start_column=COL_OBSERVACIONES, end_row=self.r,
+                            end_column=COL_OBSERVACIONES_END)
         self.ws.row_dimensions[self.r].height = 13.5
 
     def label_row(self, text):
@@ -175,10 +181,11 @@ class _DaySheet:
         self.cell(3, row['folio_display'], font=font)
         self.cell(4, 'A' if row['abono'] else None, font=font, align='center')
         self.cell(5, float(row['amount']), fmt=MONEY_FORMAT, align='right', font=font)
-        self.cell(8, row['due_date'].date() if row['due_date'] else None, fmt=DUE_DATE_FORMAT, align='center', font=font)
-        self.cell(9, ZONE_SHEET_CODES.get(row['zone'], row['zone']), align='center', font=font)
-        self.cell(10, CATEGORY_SHEET_CODES.get(row['category'], row['category']), align='center', font=font)
-        self.cell(11, _observaciones(row), font=font)
+        self.cell(COL_VENCIMIENTO, row['due_date'].date() if row['due_date'] else None, fmt=DUE_DATE_FORMAT,
+                  align='center', font=font)
+        self.cell(COL_COMISION, ZONE_SHEET_CODES.get(row['zone'], row['zone']), align='center', font=font)
+        self.cell(COL_EQRS, CATEGORY_SHEET_CODES.get(row['category'], row['category']), align='center', font=font)
+        self.cell(COL_OBSERVACIONES, _observaciones(row), font=font)
         method_label = PAYMENT_METHOD_LABELS.get(row['payment_method'], '')
         if row['payment_method'] and not row['payment_method_confirmed']:
             method_label += ' (sugerido)'
@@ -196,7 +203,7 @@ def _write_day_sheet(wb, day, rows, zone_labels):
     sheet = _DaySheet(ws)
 
     # Title, long-format date, source note - same cells as the original.
-    ws.merge_cells('A1:Q1')
+    ws.merge_cells(f'A1:{get_column_letter(LAST_COL)}1')
     ws['A1'] = 'CORTE DE CAJA COBRANZA GENERAL'
     ws['A1'].font = FONT_TITLE
     ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
@@ -287,7 +294,7 @@ def _write_day_sheet(wb, day, rows, zone_labels):
     sheet.r += 1
     ws.cell(row=sheet.r, column=2, value='TOTALES POR ZONA (todas las formas de pago)').font = FONT_BOLD
     sheet.r += 1
-    zone_col = get_column_letter(9)
+    zone_col = get_column_letter(COL_COMISION)
     for zone in sorted({r['zone'] for r in counted}, key=_zone_sort_key):
         code = ZONE_SHEET_CODES.get(zone, zone)
         total_line(f'TOTAL {code}', f'=SUMIF({rng(zone_col)},"{code}",{rng("E")})')

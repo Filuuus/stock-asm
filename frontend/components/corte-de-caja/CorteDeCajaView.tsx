@@ -10,7 +10,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  HelpCircle,
   Info,
   Loader2,
   Pencil,
@@ -24,6 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import DiferenciasFechaView from "@/components/corte-de-caja/DiferenciasFechaView";
 import {
   Card,
   CardDescription,
@@ -208,6 +209,7 @@ export default function CorteDeCajaView() {
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"corte" | "diferencias">("corte");
 
   const requestIdRef = useRef(0);
 
@@ -391,6 +393,25 @@ export default function CorteDeCajaView() {
     );
   }
 
+  const viewTabs = (
+    <Tabs value={view} onValueChange={(v) => setView(v as "corte" | "diferencias")}>
+      <TabsList>
+        <TabsTrigger value="corte">Corte diario</TabsTrigger>
+        <TabsTrigger value="diferencias">Diferencias de fecha</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  if (view === "diferencias") {
+    return (
+      <main className="w-full p-6 flex flex-col gap-6">
+        <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
+        {viewTabs}
+        <DiferenciasFechaView />
+      </main>
+    );
+  }
+
   return (
     <main className="w-full p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -402,6 +423,8 @@ export default function CorteDeCajaView() {
           y elija las demás.
         </p>
       </div>
+
+      {viewTabs}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -522,12 +545,57 @@ export default function CorteDeCajaView() {
             </div>
           )}
 
-          {data.approximate.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">{data.approximate.count} pagos con monto aproximado</p>
-                <p className="text-slate-600">{data.approximate.note}</p>
+          {data.sin_poliza.count > 0 && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium">
+                  {data.sin_poliza.count} pagos en Comercial sin póliza en Contabilidad (
+                  {currency(data.sin_poliza.total_amount)}) - no incluidos en el corte
+                </p>
+                <p className="text-amber-700">{data.sin_poliza.note}</p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="text-xs">
+                    <thead className="text-left text-amber-700">
+                      <tr>
+                        <th className="pr-4 font-medium">Fecha en Comercial</th>
+                        <th className="pr-4 font-medium">Factura</th>
+                        <th className="pr-4 font-medium">Fecha factura</th>
+                        <th className="pr-4 font-medium">Cliente</th>
+                        <th className="pr-4 font-medium text-right">Total factura</th>
+                        <th className="pr-4 font-medium text-right">Monto del pago</th>
+                        <th className="font-medium">Referencia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.sin_poliza.rows.map((r) => (
+                        <tr key={`${r.invoice_id}-${r.comercial_date}-${r.referencia}`}>
+                          <td className="pr-4 whitespace-nowrap">{r.comercial_date}</td>
+                          <td className="pr-4 font-mono whitespace-nowrap">{r.folio_display}</td>
+                          <td
+                            className={cn("pr-4 whitespace-nowrap", r.invoice_date > r.comercial_date && "font-medium text-red-700")}
+                            title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar la referencia" : undefined}
+                          >
+                            {r.invoice_date}
+                          </td>
+                          <td className="pr-4 max-w-56 truncate" title={r.cliente}>
+                            {r.cliente}
+                          </td>
+                          <td className="pr-4 text-right font-mono whitespace-nowrap">{currency(r.invoice_total)}</td>
+                          <td className="pr-4 text-right font-mono whitespace-nowrap">
+                            {currency(r.amount)}
+                            {r.shared_with > 0 && (
+                              <span className="ml-1 text-amber-600" title="El mismo pago de Comercial nombra más facturas; solo la póliza lo reparte">
+                                (compartido con {r.shared_with} más)
+                              </span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap">{r.referencia}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -621,17 +689,9 @@ export default function CorteDeCajaView() {
                               </TableCell>
                               <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                                 {currency(row.amount)}
-                                {row.approximate && (
-                                  <HelpCircle
-                                    className="inline w-3 h-3 ml-1 text-amber-500"
-                                    aria-label="Monto aproximado, revisar"
-                                  />
-                                )}
                               </TableCell>
                               <TableCell className="whitespace-nowrap">
-                                {row.abono === null ? (
-                                  <span className="text-xs text-gray-400">?</span>
-                                ) : row.abono ? (
+                                {row.abono ? (
                                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                                     Abono
                                   </Badge>
@@ -715,7 +775,7 @@ export default function CorteDeCajaView() {
                               <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
                                 <TableCell />
                                 <TableCell colSpan={8} className="py-3">
-                                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs sm:grid-cols-4">
+                                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs sm:grid-cols-3">
                                     <div>
                                       <p className="text-gray-400">Categoría</p>
                                       <p className="text-gray-700">
@@ -730,17 +790,7 @@ export default function CorteDeCajaView() {
                                       <p className="text-gray-400">Cuenta</p>
                                       <p className="text-gray-700">{row.cuenta ?? "-"}</p>
                                     </div>
-                                    <div>
-                                      <p className="text-gray-400">Origen</p>
-                                      <p className="text-gray-700">
-                                        {row.source === "ledger" ? "Contabilidad" : "Contpaqi Comercial"}
-                                        {row.approximate && " (monto aproximado)"}
-                                      </p>
-                                    </div>
                                   </div>
-                                  {row.approximate && (
-                                    <p className="mt-2 text-xs text-amber-700">{data?.approximate.note}</p>
-                                  )}
                                 </TableCell>
                               </TableRow>
                             )}
