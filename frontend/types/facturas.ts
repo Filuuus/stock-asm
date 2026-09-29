@@ -79,6 +79,14 @@ export interface PaymentPair {
     documento: string;
   }[];
   contabilidad: { date: string; amount: number; polizas: string[] }[];
+  // folio_equivocado only: the other side, on the look-alike invoice.
+  cited: {
+    invoice_id: number;
+    folio_display: string;
+    documento: string;
+    date: string;
+    amount: number;
+  } | null;
 }
 
 export interface InvoiceApplication {

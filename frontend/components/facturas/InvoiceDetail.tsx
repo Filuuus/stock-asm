@@ -24,6 +24,7 @@ import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
 import ClientLink from "@/components/facturas/ClientLink";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
 import type {
   FlagLevel,
   InvoiceDetail,
@@ -425,7 +426,10 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
       </TableCell>
       <TableCell className="text-xs">
         {pair.comercial.length === 0 ? (
-          <span className="text-gray-400">Sin pago aplicado</span>
+          <>
+            <span className="text-gray-400">Sin pago aplicado</span>
+            {pair.cited && <CitedElsewhere cited={pair.cited} verb="aplicado a" />}
+          </>
         ) : (
           pair.comercial.map((c, i) => (
             <div key={i} className="whitespace-nowrap">
@@ -441,7 +445,10 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
       </TableCell>
       <TableCell className="text-xs">
         {pair.contabilidad.length === 0 ? (
-          <span className="text-gray-400">Sin póliza</span>
+          <>
+            <span className="text-gray-400">Sin póliza</span>
+            {pair.cited && <CitedElsewhere cited={pair.cited} verb="cita" />}
+          </>
         ) : (
           pair.contabilidad.map((l, i) => (
             <div key={i} className="whitespace-nowrap">
@@ -453,6 +460,16 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+// folio_equivocado: the matching payment or poliza sits on a look-alike folio.
+function CitedElsewhere({ cited, verb }: { cited: NonNullable<PaymentPair["cited"]>; verb: string }) {
+  return (
+    <span className="block whitespace-nowrap text-red-700">
+      {formatDay(cited.date)} {cited.documento} {verb}{" "}
+      <InvoiceLink invoiceId={cited.invoice_id} label={cited.folio_display} />
+    </span>
   );
 }
 
