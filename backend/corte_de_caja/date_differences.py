@@ -1,5 +1,6 @@
-"""Comercial vs Contabilidad payment dates, per payment - the "Diferencias
-de fecha" tab of the Corte de Caja dashboard.
+"""Comercial vs Contabilidad, per payment - the "Discrepancias" tab of the
+Corte de Caja dashboard (called "Diferencias de fecha" until 2026-09-29,
+when it also started flagging different amounts and mistyped folios).
 
 Requested by the accountant 2026-09-28: a payment registered in Contpaqi
 Comercial at the end of a month whose poliza is dated in the next month
@@ -39,8 +40,19 @@ STATUS_DIFFERENT_DAY = 'distinto_dia'
 STATUS_DIFFERENT_MONTH = 'distinto_mes'
 STATUS_COMERCIAL_ONLY = 'solo_comercial'
 STATUS_CONTABILIDAD_ONLY = 'solo_contabilidad'
+# A one-sided Comercial payment and a one-sided poliza this close in date and
+# amount are most likely the same payment typed with a different amount
+# (B 19236: $1,753 in Comercial, $1,756 in the poliza, same day).
+STATUS_DIFFERENT_AMOUNT = 'monto_distinto'
+DIFFERENT_AMOUNT_MAX_DAYS = 3
+DIFFERENT_AMOUNT_MAX_RATIO = Decimal('0.05')
+# The same payment on two invoices whose folios differ by one digit or two
+# swapped digits: the poliza cites a mistyped folio (Ingresos 264 cites
+# F 20317, another client's invoice; Comercial applied the payment to F 20377).
+STATUS_WRONG_FOLIO = 'folio_equivocado'
 STATUSES = (
-    STATUS_DIFFERENT_MONTH, STATUS_COMERCIAL_ONLY, STATUS_CONTABILIDAD_ONLY,
+    STATUS_DIFFERENT_MONTH, STATUS_WRONG_FOLIO, STATUS_DIFFERENT_AMOUNT,
+    STATUS_COMERCIAL_ONLY, STATUS_CONTABILIDAD_ONLY,
     STATUS_DIFFERENT_DAY, STATUS_SAME_DAY,
 )
 
@@ -115,6 +127,71 @@ def _status(ledger_items, comercial_items):
     return STATUS_SAME_DAY
 
 
+def pair_payments(ledger, comercial):
+    """_pair_invoice plus the "monto distinto" pass over what it leaves
+    one-sided. Returns a list of (ledger_items, comercial_items, status)."""
+    matches = []
+    only_ledger, only_comercial = [], []
+    for ledger_items, comercial_items in _pair_invoice(ledger, comercial):
+        if not comercial_items:
+            only_ledger.append(ledger_items[0])
+        elif not ledger_items:
+            only_comercial.append(comercial_items[0])
+        else:
+            matches.append((ledger_items, comercial_items, _status(ledger_items, comercial_items)))
+    for c in only_comercial:
+        close = [
+            l for l in only_ledger
+            if abs((l['date'] - c['date']).days) <= DIFFERENT_AMOUNT_MAX_DAYS
+            and abs(l['amount'] - c['amount']) <= max(TOLERANCE, DIFFERENT_AMOUNT_MAX_RATIO * abs(c['amount']))
+        ]
+        if close:
+            l = min(close, key=lambda l: (abs((l['date'] - c['date']).days), abs(l['amount'] - c['amount'])))
+            only_ledger.remove(l)
+            matches.append(([l], [c], STATUS_DIFFERENT_AMOUNT))
+        else:
+            matches.append(([], [c], STATUS_COMERCIAL_ONLY))
+    matches.extend(([l], [], STATUS_CONTABILIDAD_ONLY) for l in only_ledger)
+    return matches
+
+
+def _folios_look_alike(a, b):
+    """One digit different, or two neighbouring digits swapped."""
+    a, b = str(int(a)), str(int(b))
+    if len(a) != len(b):
+        return False
+    diff = [i for i in range(len(a)) if a[i] != b[i]]
+    return len(diff) == 1 or (
+        len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]
+    )
+
+
+def _match_wrong_folios(pairs, facturas_by_id):
+    """Joins a one-sided Comercial payment with a one-sided poliza on another
+    invoice: same amount, a few days apart, folios that look alike. The row
+    stays on the invoice Comercial applied the payment to; cited_invoice_id
+    is the one the poliza names."""
+    only_ledger = [p for p in pairs if p['status'] == STATUS_CONTABILIDAD_ONLY]
+    for p in pairs:
+        if p['status'] != STATUS_COMERCIAL_ONLY:
+            continue
+        c = p['comercial'][0]
+        folio = facturas_by_id[p['invoice_id']]['CFOLIO']
+        close = [
+            q for q in only_ledger
+            if q['invoice_id'] != p['invoice_id']
+            and abs(q['ledger'][0]['amount'] - c['amount']) <= TOLERANCE
+            and abs((q['ledger'][0]['date'] - c['date']).days) <= DIFFERENT_AMOUNT_MAX_DAYS
+            and _folios_look_alike(folio, facturas_by_id[q['invoice_id']]['CFOLIO'])
+        ]
+        if close:
+            q = min(close, key=lambda q: abs((q['ledger'][0]['date'] - c['date']).days))
+            only_ledger.remove(q)
+            pairs.remove(q)
+            p.update(ledger=q['ledger'], status=STATUS_WRONG_FOLIO, cited_invoice_id=q['invoice_id'])
+    return pairs
+
+
 def calculate_date_differences(date_from, date_to):
     """Every customer payment on a real (zone-scoped) Factura with a
     Comercial or Contabilidad date in [date_from, date_to], each with both
@@ -152,25 +229,33 @@ def calculate_date_differences(date_from, date_to):
             'documento': ' '.join(filter(None, [serie, str(int(folio))])),
         })
 
-    in_period = []
-    for invoice_id in ledger_by_invoice.keys() | comercial_by_invoice.keys():
-        for ledger_items, comercial_items in _pair_invoice(
+    pairs = [
+        {'invoice_id': invoice_id, 'ledger': ledger_items, 'comercial': comercial_items,
+         'status': status, 'cited_invoice_id': None}
+        for invoice_id in ledger_by_invoice.keys() | comercial_by_invoice.keys()
+        for ledger_items, comercial_items, status in pair_payments(
             ledger_by_invoice.get(invoice_id, []), comercial_by_invoice.get(invoice_id, []),
-        ):
-            dates = [i['date'] for i in ledger_items + comercial_items]
-            if any(date_from <= d <= date_to for d in dates):
-                in_period.append((invoice_id, ledger_items, comercial_items))
+        )
+    ]
+    pairs = _match_wrong_folios(pairs, facturas_by_id)
+    in_period = [
+        p for p in pairs
+        if any(date_from <= i['date'] <= date_to for i in p['ledger'] + p['comercial'])
+    ]
 
     agent_codes = CommissionRepository.fetch_agent_codes()
-    invoice_series = _invoice_series({invoice_id for invoice_id, _, _ in in_period})
+    invoice_series = _invoice_series(
+        {p['invoice_id'] for p in in_period} | {p['cited_invoice_id'] for p in in_period if p['cited_invoice_id']}
+    )
     poliza_labels = CommissionRepository.fetch_poliza_labels(
-        {p for _, ledger_items, _ in in_period for i in ledger_items for p in i['polizas']}
+        {pol for p in in_period for i in p['ledger'] for pol in i['polizas']}
     )
 
     rows = []
-    for invoice_id, ledger_items, comercial_items in in_period:
+    for p in in_period:
+        invoice_id, ledger_items, comercial_items, status = p['invoice_id'], p['ledger'], p['comercial'], p['status']
+        cited = p['cited_invoice_id']
         factura = facturas_by_id[invoice_id]
-        status = _status(ledger_items, comercial_items)
         contabilidad_date = max((i['date'] for i in ledger_items), default=None)
         comercial_date = max((i['date'] for i in comercial_items), default=None)
         rows.append({
@@ -182,6 +267,11 @@ def calculate_date_differences(date_from, date_to):
             'invoice_date': factura['CFECHA'].date(),
             'amount': sum((i['amount'] for i in (ledger_items or comercial_items)), Decimal('0')),
             'status': status,
+            # folio_equivocado only: the invoice the poliza actually cites.
+            'cited_invoice_id': cited,
+            'cited_folio_display': (
+                f"{invoice_series.get(cited, 'F')} {int(facturas_by_id[cited]['CFOLIO'])}" if cited else None
+            ),
             'comercial_date': comercial_date,
             'contabilidad_date': contabilidad_date,
             'days_difference': (

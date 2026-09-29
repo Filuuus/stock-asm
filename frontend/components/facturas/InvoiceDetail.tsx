@@ -29,21 +29,11 @@ import type {
   InvoiceDetail,
   InvoiceSearchResult,
   PaymentPair,
-  PaymentPairStatus,
   Poliza,
 } from "@/types/facturas";
 
 // Everything about one invoice - shared by the Consulta de factura page and
 // the invoice dialog any other screen opens (see InvoiceDialog).
-
-const PAIR_STATUS_INFO: Record<PaymentPairStatus, { label: string; description: string; badge: string }> = {
-  ...STATUS_INFO,
-  monto_distinto: {
-    label: "Monto distinto",
-    description: "Parece el mismo pago, pero Comercial y la póliza tienen importes distintos.",
-    badge: "bg-red-50 text-red-700 border-red-200",
-  },
-};
 
 const FLAG_STYLE: Record<FlagLevel, { box: string; icon: typeof AlertCircle }> = {
   error: { box: "border-red-200 bg-red-50 text-red-800", icon: AlertCircle },
@@ -424,7 +414,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
 }
 
 function PaymentPairRow({ pair }: { pair: PaymentPair }) {
-  const info = PAIR_STATUS_INFO[pair.status];
+  const info = STATUS_INFO[pair.status];
   const highlight = pair.status === "distinto_mes" || pair.status === "monto_distinto";
   return (
     <TableRow className="align-top">

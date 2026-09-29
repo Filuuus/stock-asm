@@ -70,12 +70,8 @@ export interface InvoiceFlag {
   text: string;
 }
 
-// "monto_distinto": a Comercial payment and a poliza a few days apart whose
-// amounts differ slightly - most likely the same payment typed differently.
-export type PaymentPairStatus = DateDifferenceStatus | "monto_distinto";
-
 export interface PaymentPair {
-  status: PaymentPairStatus;
+  status: DateDifferenceStatus;
   comercial: {
     date: string;
     applied_date: string;

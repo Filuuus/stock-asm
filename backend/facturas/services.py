@@ -45,9 +45,9 @@ from commissions.services import (
 from corte_de_caja.date_differences import (
     STATUS_COMERCIAL_ONLY,
     STATUS_CONTABILIDAD_ONLY,
+    STATUS_DIFFERENT_AMOUNT,
     STATUS_DIFFERENT_MONTH,
-    _pair_invoice,
-    _status,
+    pair_payments,
 )
 from corte_de_caja.services import BANK_ACCOUNT_CODE_PREFIX, CASH_ACCOUNT_CODE_PREFIX, _as_decimal
 
@@ -60,13 +60,6 @@ QUERY_RE = re.compile(r'^\s*([A-Za-z]?)\s*-?\s*(\d{1,7})\s*$')
 # Same rule as corte_de_caja.services._invoice_series: the tax series lives
 # in admConceptos.CSERIEPOROMISION; anything but A/B is the 16% 'F' series.
 SERIES_SQL = "CASE WHEN c.CSERIEPOROMISION IN ('A','B') THEN c.CSERIEPOROMISION ELSE 'F' END"
-
-# A one-sided Comercial payment and a one-sided poliza this close in date and
-# amount are most likely the same payment typed with a different amount
-# (B 19236: $1,753 in Comercial, $1,756 in the poliza, same day).
-STATUS_DIFFERENT_AMOUNT = 'monto_distinto'
-DIFFERENT_AMOUNT_MAX_DAYS = 3
-DIFFERENT_AMOUNT_MAX_RATIO = Decimal('0.05')
 
 # A payment poliza dated this long before the invoice cites an older invoice
 # with the same number (F 19417 is cited by 2017 polizas) - same window the
@@ -326,7 +319,7 @@ def _polizas(lines, invoice, series, folio, shared_reference):
 
 def _payment_pairs(polizas, cash_applications):
     """Comercial payments next to their polizas, paired the way the
-    "Diferencias de fecha" tab pairs them (same amount, nearest date; pieces
+    "Discrepancias" tab pairs them (same amount, nearest date; pieces
     of one payment on one side only). One item per poliza, not netted per day
     like the corte: a duplicated poliza (B 20016, two identical 35,060
     polizas the same day) then pairs once and the copy is left on its own."""
@@ -338,28 +331,7 @@ def _payment_pairs(polizas, cash_applications):
         {'date': a['fecha'], 'applied_date': a['applied_date'], 'amount': a['amount'], 'documento': a['documento']}
         for a in cash_applications if abs(a['amount']) >= TOLERANCE
     ]
-    matches = []
-    only_ledger, only_comercial = [], []
-    for ledger_items, comercial_items in _pair_invoice(ledger, comercial):
-        if not comercial_items:
-            only_ledger.append(ledger_items[0])
-        elif not ledger_items:
-            only_comercial.append(comercial_items[0])
-        else:
-            matches.append((ledger_items, comercial_items, _status(ledger_items, comercial_items)))
-    for c in only_comercial:
-        close = [
-            l for l in only_ledger
-            if abs((l['date'] - c['date']).days) <= DIFFERENT_AMOUNT_MAX_DAYS
-            and abs(l['amount'] - c['amount']) <= max(TOLERANCE, DIFFERENT_AMOUNT_MAX_RATIO * abs(c['amount']))
-        ]
-        if close:
-            l = min(close, key=lambda l: (abs((l['date'] - c['date']).days), abs(l['amount'] - c['amount'])))
-            only_ledger.remove(l)
-            matches.append(([l], [c], STATUS_DIFFERENT_AMOUNT))
-        else:
-            matches.append(([], [c], STATUS_COMERCIAL_ONLY))
-    matches.extend(([l], [], STATUS_CONTABILIDAD_ONLY) for l in only_ledger)
+    matches = pair_payments(ledger, comercial)
 
     pairs = []
     for ledger_items, comercial_items, status in matches:

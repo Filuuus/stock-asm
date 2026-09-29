@@ -29,6 +29,8 @@ import type {
 const STATUS_ORDER = Object.keys(STATUS_INFO) as DateDifferenceStatus[];
 const PROBLEM_STATUSES: DateDifferenceStatus[] = [
   "distinto_mes",
+  "folio_equivocado",
+  "monto_distinto",
   "solo_comercial",
   "solo_contabilidad",
 ];
@@ -102,18 +104,19 @@ export default function DiferenciasFechaView() {
         statuses.has(r.status) &&
         (!term ||
           r.cliente.toLowerCase().includes(term) ||
-          r.folio_display.toLowerCase().includes(term)),
+          r.folio_display.toLowerCase().includes(term) ||
+          r.cited_folio_display?.toLowerCase().includes(term)),
     );
   }, [data, statuses, filter]);
 
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-gray-500">
-        Cada pago de cliente con su fecha en Contpaqi Comercial junto a la fecha
-        de su póliza en Contabilidad. Los pagos registrados en un mes en
-        Comercial y en otro en Contabilidad se declaran en periodos distintos:
-        corríjalos en Contpaqi. Un pago aparece en el mes de cualquiera de sus
-        dos fechas.
+        Cada pago de cliente en Contpaqi Comercial junto a su póliza en
+        Contabilidad. Los pagos registrados en un mes en Comercial y en otro en
+        Contabilidad se declaran en periodos distintos; también se marcan las
+        pólizas con otro importe o que citan un folio equivocado. Corríjalos en
+        Contpaqi. Un pago aparece en el mes de cualquiera de sus dos fechas.
       </p>
 
       <div className="flex items-center gap-2">
@@ -129,7 +132,7 @@ export default function DiferenciasFechaView() {
 
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             {STATUS_ORDER.map((status) => {
               const info = STATUS_INFO[status];
               const active = statuses.has(status);
@@ -287,6 +290,15 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
               <span className="ml-1 text-gray-500">
                 Póliza {l.polizas.join(", ")}
               </span>
+              {row.cited_invoice_id && row.cited_folio_display && (
+                <span className="block text-red-700">
+                  cita la factura{" "}
+                  <InvoiceLink
+                    invoiceId={row.cited_invoice_id}
+                    label={row.cited_folio_display}
+                  />
+                </span>
+              )}
               {row.contabilidad.length > 1 && (
                 <span className="ml-1 text-gray-500">{currency(l.amount)}</span>
               )}

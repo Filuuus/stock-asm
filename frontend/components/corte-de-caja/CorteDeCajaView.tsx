@@ -281,7 +281,7 @@ export default function CorteDeCajaView() {
     <Tabs value={view} onValueChange={(v) => setView(v as "corte" | "diferencias")}>
       <TabsList>
         <TabsTrigger value="corte">Corte diario</TabsTrigger>
-        <TabsTrigger value="diferencias">Diferencias de fecha</TabsTrigger>
+        <TabsTrigger value="diferencias">Discrepancias</TabsTrigger>
       </TabsList>
     </Tabs>
   );
