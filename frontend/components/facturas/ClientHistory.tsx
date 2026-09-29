@@ -11,9 +11,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { currency, Field, formatDay, Section, StatCard } from "@/components/facturas/InvoiceDetail";
+import { currency, Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
 import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
 import { cn } from "@/lib/utils";
+import { formatDay } from "@/lib/dates";
+import { zoneLabel } from "@/lib/zones";
 import type { ClientHistory, ClientInvoice, ClientInvoiceStatus } from "@/types/facturas";
 
 const STATUS_BADGE: Record<ClientInvoiceStatus, { label: string; className: string }> = {
@@ -101,7 +103,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
           <Field label="Cuenta" value={client.codigo} />
           <Field label="RFC" value={client.rfc} />
-          <Field label="Zona" value={client.zona} />
+          <Field label="Zona" value={zoneLabel(client.zona)} />
           <Field label="Días de crédito" value={client.dias_credito ? `${client.dias_credito} días` : "Contado"} />
           <Field label="Límite de crédito" value={client.limite_credito > 0 ? currency(client.limite_credito) : "Sin límite"} />
           <Field label="Cliente desde" value={formatDay(client.alta)} />

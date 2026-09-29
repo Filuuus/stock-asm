@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { addMonths, endOfMonth, format, startOfMonth } from "date-fns";
-import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { endOfMonth } from "date-fns";
+import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +15,8 @@ import {
 } from "@/components/ui/table";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
+import { MonthControl } from "@/components/date-controls";
+import { currentMonthISO, dateToISO, formatDay, isoToDate } from "@/lib/dates";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -41,23 +41,12 @@ function currency(value: number) {
   });
 }
 
-// Built from parts, not parsed, for the same off-by-one-day reason as in
-// CorteDeCajaView.
-function isoToDate(iso: string) {
-  const [year, month, day] = iso.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function formatDay(iso: string) {
-  return format(isoToDate(iso), "d MMM yyyy", { locale: es });
-}
-
 function monthKey(iso: string | null) {
   return iso ? iso.slice(0, 7) : null;
 }
 
 export default function DiferenciasFechaView() {
-  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  const [month, setMonth] = useState(currentMonthISO);
   const [data, setData] = useState<DateDifferencesSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,8 +58,8 @@ export default function DiferenciasFechaView() {
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
-    const from = format(month, "yyyy-MM-dd");
-    const to = format(endOfMonth(month), "yyyy-MM-dd");
+    const from = `${month}-01`;
+    const to = dateToISO(endOfMonth(isoToDate(month)));
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
@@ -117,8 +106,6 @@ export default function DiferenciasFechaView() {
     );
   }, [data, statuses, filter]);
 
-  const isCurrentMonth = startOfMonth(new Date()).getTime() === month.getTime();
-
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-gray-500">
@@ -130,26 +117,7 @@ export default function DiferenciasFechaView() {
       </p>
 
       <div className="flex items-center gap-2">
-        <Button
-          size="icon"
-          variant="outline"
-          onClick={() => setMonth((m) => addMonths(m, -1))}
-          title="Mes anterior"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </Button>
-        <span className="w-40 text-center font-medium capitalize">
-          {format(month, "MMMM yyyy", { locale: es })}
-        </span>
-        <Button
-          size="icon"
-          variant="outline"
-          onClick={() => setMonth((m) => addMonths(m, 1))}
-          disabled={isCurrentMonth}
-          title="Mes siguiente"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </Button>
+        <MonthControl month={month} onChange={setMonth} />
         {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
       </div>
 

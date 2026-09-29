@@ -16,7 +16,7 @@ async function getInventory(): Promise<Product[]> {
     });
     if (!res.ok) return [];
     return res.json();
-  } catch (error) {
+  } catch {
     return [];
   }
 }

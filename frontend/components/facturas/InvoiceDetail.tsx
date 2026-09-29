@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
 import {
   AlertCircle,
   AlertTriangle,
@@ -22,6 +20,8 @@ import {
 } from "@/components/ui/table";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn } from "@/lib/utils";
+import { formatDay } from "@/lib/dates";
+import { zoneLabel } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
 import ClientLink from "@/components/facturas/ClientLink";
 import type {
@@ -57,21 +57,6 @@ export function currency(value: number) {
     currency: "MXN",
     maximumFractionDigits: 2,
   });
-}
-
-// Built from parts, not parsed, for the same off-by-one-day reason as in
-// CorteDeCajaView.
-export function formatDay(iso: string | null) {
-  if (!iso) return "-";
-  const [year, month, day] = iso.split("-").map(Number);
-  return format(new Date(year, month - 1, day), "d MMM yyyy", { locale: es });
-}
-
-// The agent's name is often just the zone again ("ZONA1" / "ZONA 1").
-function zoneLabel(zona: string | null, agente: string) {
-  if (!zona) return agente;
-  const same = agente.replace(/\s/g, "").toUpperCase() === zona.toUpperCase();
-  return same || !agente ? zona : `${zona} (${agente})`;
 }
 
 export async function getJson<T>(path: string): Promise<T> {
@@ -137,7 +122,7 @@ export function InvoiceList({ results, onSelect }: {
               <TableCell className="max-w-72 truncate" title={r.cliente}>
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </TableCell>
-              <TableCell className="text-xs">{r.zona ?? "-"}</TableCell>
+              <TableCell className="text-xs">{zoneLabel(r.zona)}</TableCell>
               <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
               <TableCell className="text-right font-mono text-xs">{currency(r.pendiente)}</TableCell>
               <TableCell className="whitespace-nowrap">
@@ -222,7 +207,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <Field label="Cliente" value={<ClientLink clientId={invoice.client_id} label={invoice.cliente} />} />
           <Field label="RFC" value={invoice.rfc} />
-          <Field label="Zona" value={zoneLabel(invoice.zona, invoice.agente)} />
+          <Field label="Zona" value={zoneLabel(invoice.zona)} />
           <Field label="Capturó" value={invoice.usuario} />
           <Field label="Fecha" value={formatDay(invoice.fecha)} />
           <Field label="Vencimiento" value={formatDay(invoice.vencimiento)} />
