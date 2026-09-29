@@ -1,6 +1,6 @@
 "use client";
 
-import { useInvoiceDialog } from "@/components/facturas/InvoiceDialog";
+import { useInvoiceDialog } from "@/components/facturas/invoice-dialog-context";
 
 // An invoice number that opens the invoice dialog in place. Plain text for
 // users who can't see invoice details.

@@ -26,6 +26,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DiferenciasFechaView from "@/components/corte-de-caja/DiferenciasFechaView";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
+import ClientLink from "@/components/facturas/ClientLink";
 import {
   Card,
   CardDescription,
@@ -582,7 +583,7 @@ export default function CorteDeCajaView() {
                             {r.invoice_date}
                           </td>
                           <td className="pr-4 max-w-56 truncate" title={r.cliente}>
-                            {r.cliente}
+                            <ClientLink clientId={r.client_id} label={r.cliente} />
                           </td>
                           <td className="pr-4 text-right font-mono whitespace-nowrap">{currency(r.invoice_total)}</td>
                           <td className="pr-4 text-right font-mono whitespace-nowrap">
@@ -688,7 +689,7 @@ export default function CorteDeCajaView() {
                                 <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
                               </TableCell>
                               <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
-                                {row.cliente}
+                                <ClientLink clientId={row.client_id} label={row.cliente} />
                               </TableCell>
                               <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                                 {currency(row.amount)}

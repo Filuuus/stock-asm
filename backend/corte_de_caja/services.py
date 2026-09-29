@@ -502,6 +502,7 @@ def calculate_corte_de_caja(date_from, date_to):
             'invoice_id': p['invoice_id'],
             'comercial_date': p['comercial_date'],
             'folio_display': f"{invoice_series.get(p['invoice_id'], 'F')} {int(p['factura']['CFOLIO'])}",
+            'client_id': p['factura']['CIDCLIENTEPROVEEDOR'],
             'cliente': p['factura']['CRAZONSOCIAL'],
             'zone': agent_codes.get(p['factura']['CIDAGENTE']),
             'invoice_date': p['factura']['CFECHA'].date(),

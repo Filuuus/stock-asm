@@ -72,6 +72,8 @@ export interface SinPolizaRow {
   invoice_id: number;
   comercial_date: string;
   folio_display: string;
+  // Bare ERP client id - opens the client history (see ClientLink).
+  client_id: number;
   cliente: string;
   zone: Zone;
   // A payment dated before its own invoice usually means a wrong reference.
@@ -132,6 +134,8 @@ export interface ContabilidadPayment {
 export interface DateDifferenceRow {
   invoice_id: number;
   folio_display: string;
+  // Bare ERP client id - opens the client history (see ClientLink).
+  client_id: number;
   cliente: string;
   zone: Zone;
   invoice_date: string;

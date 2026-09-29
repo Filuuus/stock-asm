@@ -3,6 +3,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAccountingOrManagement
 
+from .client_history import client_history
 from .services import invoice_detail, search_invoices
 
 
@@ -22,3 +23,12 @@ def invoice_detail_view(request, invoice_id):
     if detail is None:
         return Response({'error': 'No existe una factura con ese id.'}, status=404)
     return Response(detail)
+
+
+@api_view(['GET'])
+@permission_classes([IsAccountingOrManagement])
+def client_history_view(request, client_id):
+    history = client_history(client_id, full=request.query_params.get('completo') == '1')
+    if history is None:
+        return Response({'error': 'No existe un cliente con ese id.'}, status=404)
+    return Response(history)

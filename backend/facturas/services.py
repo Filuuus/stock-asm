@@ -107,8 +107,8 @@ class InvoiceRepository:
         """Every Factura with this folio, any series, cancelled or not."""
         return _rows(
             f"""
-            SELECT d.CIDDOCUMENTO, {SERIES_SQL} AS serie, d.CFOLIO, d.CFECHA, d.CRAZONSOCIAL,
-                   d.CTOTAL, d.CPENDIENTE, d.CCANCELADO, ag.CCODIGOAGENTE
+            SELECT d.CIDDOCUMENTO, {SERIES_SQL} AS serie, d.CFOLIO, d.CFECHA, d.CIDCLIENTEPROVEEDOR,
+                   d.CRAZONSOCIAL, d.CTOTAL, d.CPENDIENTE, d.CCANCELADO, ag.CCODIGOAGENTE
             FROM admDocumentos d
             JOIN admConceptos c ON c.CIDCONCEPTODOCUMENTO = d.CIDCONCEPTODOCUMENTO
             LEFT JOIN admAgentes ag ON ag.CIDAGENTE = d.CIDAGENTE
@@ -242,6 +242,7 @@ def search_invoices(text):
             'folio_display': f"{r['serie']} {int(r['CFOLIO'])}",
             'series_match': series is None or r['serie'] == series,
             'fecha': _day(r['CFECHA']),
+            'client_id': r['CIDCLIENTEPROVEEDOR'],
             'cliente': r['CRAZONSOCIAL'],
             'zona': r['CCODIGOAGENTE'],
             'total': _money(r['CTOTAL']),
@@ -256,6 +257,19 @@ def search_invoices(text):
 
 def _document_label(serie, folio):
     return ' '.join(filter(None, [serie, str(int(folio or 0))]))
+
+
+def not_counted_reason(is_payment, poliza_date, invoice_date, shared_reference, names_client):
+    """Why a poliza citing an invoice does NOT count as a collection on it,
+    or '' when it counts. The one rule for the invoice detail and the client
+    history, so both show the same amounts."""
+    if not is_payment:
+        return 'No es una póliza de cobro.'
+    if (invoice_date - poliza_date).days > OLD_POLIZA_DAYS:
+        return 'Es de más de un año antes que la factura: cita otra factura con el mismo número.'
+    if shared_reference and not names_client:
+        return 'Otra factura tiene la misma serie y folio y esta póliza no menciona a este cliente.'
+    return ''
 
 
 def _polizas(lines, invoice, series, folio, shared_reference):
@@ -300,20 +314,10 @@ def _polizas(lines, invoice, series, folio, shared_reference):
         p['amount'] = _money(sum(line['_signed'] for line in citing))
         p['names_client'] = names_client
         p['bank'] = next((line['cuenta'] for line in p['lines'] if line['is_bank']), None)
-        if not p['is_payment']:
-            p['counted'] = False
-            p['not_counted_reason'] = 'No es una póliza de cobro.'
-        elif (invoice['CFECHA'].date() - p['fecha']).days > OLD_POLIZA_DAYS:
-            p['counted'] = False
-            p['not_counted_reason'] = 'Es de más de un año antes que la factura: cita otra factura con el mismo número.'
-        elif shared_reference and not names_client:
-            p['counted'] = False
-            p['not_counted_reason'] = (
-                'Otra factura tiene la misma serie y folio y esta póliza no menciona a este cliente.'
-            )
-        else:
-            p['counted'] = True
-            p['not_counted_reason'] = ''
+        p['not_counted_reason'] = not_counted_reason(
+            p['is_payment'], p['fecha'], invoice['CFECHA'].date(), shared_reference, names_client,
+        )
+        p['counted'] = not p['not_counted_reason']
         for line in p['lines']:
             del line['_signed'], line['_names_client']
         polizas.append(p)
@@ -474,6 +478,7 @@ def invoice_detail(invoice_id):
         'folio': folio,
         'fecha': _day(row['CFECHA']),
         'vencimiento': _day(row['CFECHAVENCIMIENTO']),
+        'client_id': row['CIDCLIENTEPROVEEDOR'],
         'cliente': row['CRAZONSOCIAL'],
         'rfc': (row['CRFC'] or '').strip(),
         'zona': row['CCODIGOAGENTE'],

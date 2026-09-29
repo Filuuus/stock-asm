@@ -23,6 +23,7 @@ import {
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
+import ClientLink from "@/components/facturas/ClientLink";
 import type {
   FlagLevel,
   InvoiceDetail,
@@ -50,7 +51,7 @@ const FLAG_STYLE: Record<FlagLevel, { box: string; icon: typeof AlertCircle }> =
   info: { box: "border-slate-200 bg-slate-50 text-slate-700", icon: Info },
 };
 
-function currency(value: number) {
+export function currency(value: number) {
   return value.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
@@ -60,7 +61,7 @@ function currency(value: number) {
 
 // Built from parts, not parsed, for the same off-by-one-day reason as in
 // CorteDeCajaView.
-function formatDay(iso: string | null) {
+export function formatDay(iso: string | null) {
   if (!iso) return "-";
   const [year, month, day] = iso.split("-").map(Number);
   return format(new Date(year, month - 1, day), "d MMM yyyy", { locale: es });
@@ -133,7 +134,9 @@ export function InvoiceList({ results, onSelect }: {
                 {r.folio_display}
               </TableCell>
               <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
-              <TableCell className="max-w-72 truncate" title={r.cliente}>{r.cliente}</TableCell>
+              <TableCell className="max-w-72 truncate" title={r.cliente}>
+                <ClientLink clientId={r.client_id} label={r.cliente} />
+              </TableCell>
               <TableCell className="text-xs">{r.zona ?? "-"}</TableCell>
               <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
               <TableCell className="text-right font-mono text-xs">{currency(r.pendiente)}</TableCell>
@@ -148,7 +151,7 @@ export function InvoiceList({ results, onSelect }: {
   );
 }
 
-function Section({ title, count, children }: {
+export function Section({ title, count, children }: {
   title: string;
   count?: number;
   children: React.ReactNode;
@@ -164,7 +167,7 @@ function Section({ title, count, children }: {
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+export function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col">
       <span className="text-xs text-gray-500">{label}</span>
@@ -173,7 +176,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function StatCard({ label, value, sub, tone }: {
+export function StatCard({ label, value, sub, tone }: {
   label: string;
   value: string;
   sub?: React.ReactNode;
@@ -217,7 +220,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
           />
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Field label="Cliente" value={invoice.cliente} />
+          <Field label="Cliente" value={<ClientLink clientId={invoice.client_id} label={invoice.cliente} />} />
           <Field label="RFC" value={invoice.rfc} />
           <Field label="Zona" value={zoneLabel(invoice.zona, invoice.agente)} />
           <Field label="Capturó" value={invoice.usuario} />

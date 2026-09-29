@@ -7,6 +7,7 @@ export interface InvoiceSearchResult {
   // false when the user typed a series and this invoice is in another one.
   series_match: boolean;
   fecha: string;
+  client_id: number;
   cliente: string;
   zona: Zone | string | null;
   total: number;
@@ -21,6 +22,7 @@ export interface InvoiceHeader {
   folio: number;
   fecha: string;
   vencimiento: string | null;
+  client_id: number;
   cliente: string;
   rfc: string;
   zona: Zone | string | null;
@@ -157,4 +159,61 @@ export interface InvoiceDetail {
   referencing_payments: ReferencingPayment[];
   polizas: Poliza[];
   same_folio: InvoiceSearchResult[];
+}
+
+export type ClientInvoiceStatus = "pagada" | "pendiente" | "vencida" | "cancelada";
+
+export interface ClientInvoice {
+  invoice_id: number;
+  folio_display: string;
+  fecha: string;
+  vencimiento: string | null;
+  zona: Zone | string | null;
+  total: number;
+  pendiente: number;
+  comercial_cash: number;
+  comercial_credit: number;
+  contabilidad_cash: number;
+  // The day the payment polizas covered the part paid with money - the
+  // Contabilidad date, as in the corte and commissions. Null when unpaid,
+  // settled only by credit notes, or the polizas never cover it.
+  paid_date: string | null;
+  // Paid: paid_date - vencimiento. Overdue: days past due so far.
+  days_late: number | null;
+  status: ClientInvoiceStatus;
+  // Comercial's money and the counted polizas agree (the invoice detail's
+  // "Cuadre"; the detail also checks each payment's date and amount).
+  cuadra: boolean;
+}
+
+export interface ClientHistory {
+  client: {
+    client_id: number;
+    // Same as the client's account in Contabilidad (103-104-977).
+    codigo: string;
+    cliente: string;
+    rfc: string;
+    zona: Zone | string | null;
+    dias_credito: number | null;
+    limite_credito: number;
+    alta: string | null;
+    activo: boolean;
+  };
+  summary: {
+    // Start of the recent period; null when the full history was asked for.
+    since: string | null;
+    facturado: number;
+    facturas: number;
+    // All open invoices, however old.
+    saldo_pendiente: number;
+    facturas_pendientes: number;
+    vencido: number;
+    facturas_vencidas: number;
+    pagadas_con_fecha: number;
+    pagadas_a_tiempo: number;
+    promedio_dias_atraso: number | null;
+    no_cuadran: number;
+  };
+  invoices: ClientInvoice[];
+  full: boolean;
 }

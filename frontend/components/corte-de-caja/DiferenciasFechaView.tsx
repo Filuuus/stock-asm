@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
+import ClientLink from "@/components/facturas/ClientLink";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -264,7 +265,7 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
         <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
       </TableCell>
       <TableCell className="max-w-56 truncate" title={row.cliente}>
-        {row.cliente}
+        <ClientLink clientId={row.client_id} label={row.cliente} />
       </TableCell>
       <TableCell className="text-right font-mono text-xs whitespace-nowrap">
         {currency(row.amount)}

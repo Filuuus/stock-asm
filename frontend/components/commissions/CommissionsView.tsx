@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
+import ClientLink from "@/components/facturas/ClientLink";
 import {
   Card,
   CardDescription,
@@ -73,6 +74,7 @@ const CATEGORY_BADGE: Record<string, string> = {
 interface InvoiceGroup {
   invoice_id: number;
   folio: number;
+  client_id: number;
   cliente: string;
   zone: Zone;
   paid_date: string;
@@ -127,6 +129,7 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
       group = {
         invoice_id: line.invoice_id,
         folio: line.folio,
+        client_id: line.client_id,
         cliente: line.cliente,
         zone: line.zone,
         paid_date: line.paid_date,
@@ -524,7 +527,7 @@ export default function CommissionsView() {
                             <InvoiceLink invoiceId={group.invoice_id} label={group.folio} />
                           </TableCell>
                           <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
-                            {group.cliente}
+                            <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
                             {ZONE_LABELS[group.zone] ?? group.zone}
