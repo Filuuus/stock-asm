@@ -667,6 +667,7 @@ def _manual_line(base, override):
     return {
         'invoice_id': base['invoice_id'],
         'folio': base['folio'],
+        'client_id': base.get('client_id'),
         'cliente': base['cliente'],
         'zone': override.zone or base['zone'],
         'producto_codigo': None,
@@ -727,7 +728,7 @@ def _apply_overrides(lines, zone_totals, overrides):
         facturas = {
             f['CIDDOCUMENTO']: f for f in AdmDocumentos.objects.filter(
                 CIDDOCUMENTO__in=[invoice_id for invoice_id, _ in added]
-            ).values('CIDDOCUMENTO', 'CFOLIO', 'CRAZONSOCIAL', 'CFECHA')
+            ).values('CIDDOCUMENTO', 'CFOLIO', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA')
         }
         for invoice_id, override in added:
             factura = facturas.get(invoice_id)
@@ -737,6 +738,7 @@ def _apply_overrides(lines, zone_totals, overrides):
             result_lines.append(_manual_line({
                 'invoice_id': invoice_id,
                 'folio': factura['CFOLIO'],
+                'client_id': factura['CIDCLIENTEPROVEEDOR'],
                 'cliente': factura['CRAZONSOCIAL'],
                 'zone': override.zone,
                 'paid_date': factura['CFECHA'],
@@ -887,6 +889,7 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         lines.append({
             'invoice_id': m['CIDDOCUMENTO'],
             'folio': factura['CFOLIO'],
+            'client_id': factura['CIDCLIENTEPROVEEDOR'],
             'cliente': factura['CRAZONSOCIAL'],
             'zone': zone_code,
             'producto_codigo': producto['CCODIGOPRODUCTO'],
@@ -916,27 +919,27 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             'count': len(unresolved),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in unresolved), Decimal('0')),
             'note': (
-                'Facturas fully paid per CPENDIENTE=0 whose payment the Contabilidad ledger does not '
-                'fully record - no official payment date, so excluded from the totals above; needs '
-                'manual review (usually a missing or mis-referenced poliza).'
+                'Facturas saldadas en Comercial cuyo pago Contabilidad no registra completo: sin fecha '
+                'oficial de pago, así que no entran en los totales. Revíselas en Contpaqi (casi siempre '
+                'falta una póliza o cita otro folio). Incluye facturas emitidas desde 12 meses antes '
+                'de este mes, no solo las de este mes.'
             ),
         },
         'credit_noted': {
             'count': len(credit_noted),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in credit_noted), Decimal('0')),
             'note': (
-                'Facturas settled entirely by credit notes or returns (Nota de Credito / Devolucion '
-                'sobre Venta), with no money paid - confirmed by management these do not earn '
-                'commission. Excluded entirely, not counted as needing manual review.'
+                'Facturas saldadas solo con notas de crédito o devoluciones, sin pago en dinero: no '
+                'generan comisión (confirmado por gerencia). Incluye facturas emitidas desde 12 meses '
+                'antes de este mes, no solo las de este mes.'
             ),
         },
         'puntoventa_unassigned': {
             'count': len(puntoventa_unassigned),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in puntoventa_unassigned), Decimal('0')),
             'note': (
-                'Punto de Venta invoices (subdistributor clients) whose responsible salesperson '
-                '(ZONA1/ZONA2) is not yet configured - add them in the admin (PuntoVentaClientZone) '
-                'to include their commission.'
+                'Facturas de Punto de Venta cuyo cliente aún no tiene zona asignada (Zona 1 o Zona 2): '
+                'su comisión no se paga a nadie hasta asignarla en el admin (PuntoVentaClientZone).'
             ),
         },
     }

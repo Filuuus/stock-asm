@@ -176,6 +176,7 @@ def calculate_date_differences(date_from, date_to):
         rows.append({
             'invoice_id': invoice_id,
             'folio_display': f"{invoice_series.get(invoice_id, 'F')} {int(factura['CFOLIO'])}",
+            'client_id': factura['CIDCLIENTEPROVEEDOR'],
             'cliente': factura['CRAZONSOCIAL'],
             'zone': agent_codes.get(factura['CIDAGENTE']),
             'invoice_date': factura['CFECHA'].date(),

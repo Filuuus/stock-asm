@@ -1,12 +1,9 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { addDays, format, isSameDay } from "date-fns";
-import { es } from "date-fns/locale";
-import type { DateRange } from "react-day-picker";
+import { addDays } from "date-fns";
 import {
   AlertTriangle,
-  Calendar as CalendarIcon,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -20,11 +17,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DiferenciasFechaView from "@/components/corte-de-caja/DiferenciasFechaView";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
+import ClientLink from "@/components/facturas/ClientLink";
+import { DateRangeControl } from "@/components/date-controls";
 import {
   Card,
   CardDescription,
@@ -46,122 +44,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { dateToISO, formatDay, isoToDate, todayISO } from "@/lib/dates";
+import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { Zone } from "@/types/commissions";
 import { CorteDeCajaRow, CorteDeCajaSummary, PaymentMethod } from "@/types/corte-de-caja";
-
-// Deliberately not date-fns's parseISO here - for a plain "YYYY-MM-DD"
-// calendar date (no time/timezone meaning at all) it's safer to build the
-// Date from its parts directly than to trust a library's date-only parsing
-// behavior, which has actually changed between date-fns major versions and
-// caused a real off-by-one-day display bug here (a date stored as the 24th
-// rendering as "23 sep").
-function isoToDate(iso: string) {
-  const [year, month, day] = iso.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function dateToISO(date: Date) {
-  return format(date, "yyyy-MM-dd");
-}
-
-function formatShort(iso: string) {
-  return format(isoToDate(iso), "d MMM yyyy", { locale: es });
-}
-
-// A single trigger that opens a range-capable calendar (pick one day, or
-// drag/click a start and end) - replaces two separate <input type="date">
-// fields, which needed two round trips to change one day.
-function DateRangeControl({
-  dateFrom,
-  dateTo,
-  onChange,
-}: {
-  dateFrom: string;
-  dateTo: string;
-  onChange: (from: string, to: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState<DateRange | undefined>({
-    from: isoToDate(dateFrom),
-    to: isoToDate(dateTo),
-  });
-
-  const handleOpenChange = (next: boolean) => {
-    if (next) {
-      setPending({ from: isoToDate(dateFrom), to: isoToDate(dateTo) });
-    }
-    setOpen(next);
-  };
-
-  const applyPreset = (from: Date, to: Date) => {
-    onChange(dateToISO(from), dateToISO(to));
-    setOpen(false);
-  };
-
-  const handleApply = () => {
-    if (!pending?.from) return;
-    applyPreset(pending.from, pending.to ?? pending.from);
-  };
-
-  const label = isSameDay(isoToDate(dateFrom), isoToDate(dateTo))
-    ? formatShort(dateFrom)
-    : `${formatShort(dateFrom)} – ${formatShort(dateTo)}`;
-
-  return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" className="w-56 justify-start gap-2 font-normal">
-          <CalendarIcon className="w-4 h-4 text-gray-400" />
-          {label}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-3" align="start">
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => applyPreset(new Date(), new Date())}>
-              Hoy
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => applyPreset(addDays(new Date(), -1), addDays(new Date(), -1))}>
-              Ayer
-            </Button>
-          </div>
-          <Calendar
-            mode="range"
-            selected={pending}
-            onSelect={setPending}
-            defaultMonth={pending?.to ?? pending?.from}
-            numberOfMonths={2}
-            locale={es}
-          />
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-500">
-              {pending?.from ? formatShort(dateToISO(pending.from)) : "Seleccione una fecha"}
-              {pending?.to && !isSameDay(pending.from!, pending.to) ? ` – ${formatShort(dateToISO(pending.to))}` : ""}
-            </p>
-            <Button size="sm" onClick={handleApply} disabled={!pending?.from}>
-              Aplicar
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-const ZONE_LABELS: Record<Zone, string> = {
-  ZONA1: "Zona 1 (Juan Jose Franco)",
-  ZONA2: "Zona 2 (Jesus Mendez)",
-  OFICINA: "Oficina",
-  SERVICIOS: "Servicios",
-  PUNTOVENTA: "Punto de Venta",
-};
-
-// Same order the accountant's sheet lists blocks in (and the .xlsx export
-// mirrors) - rows are grouped by zone in the table below instead of
-// repeating the zone/salesperson name on every single row.
-const ZONE_ORDER = Object.keys(ZONE_LABELS) as Zone[];
 
 const CATEGORY_LABELS: Record<string, string> = {
   R: "Refacciones",
@@ -185,10 +73,6 @@ function currency(value: number) {
     currency: "MXN",
     maximumFractionDigits: 2,
   });
-}
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export default function CorteDeCajaView() {
@@ -570,16 +454,18 @@ export default function CorteDeCajaView() {
                     <tbody>
                       {data.sin_poliza.rows.map((r) => (
                         <tr key={`${r.invoice_id}-${r.comercial_date}-${r.referencia}`}>
-                          <td className="pr-4 whitespace-nowrap">{r.comercial_date}</td>
-                          <td className="pr-4 font-mono whitespace-nowrap">{r.folio_display}</td>
+                          <td className="pr-4 whitespace-nowrap">{formatDay(r.comercial_date)}</td>
+                          <td className="pr-4 font-mono whitespace-nowrap">
+                            <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
+                          </td>
                           <td
                             className={cn("pr-4 whitespace-nowrap", r.invoice_date > r.comercial_date && "font-medium text-red-700")}
                             title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar la referencia" : undefined}
                           >
-                            {r.invoice_date}
+                            {formatDay(r.invoice_date)}
                           </td>
                           <td className="pr-4 max-w-56 truncate" title={r.cliente}>
-                            {r.cliente}
+                            <ClientLink clientId={r.client_id} label={r.cliente} />
                           </td>
                           <td className="pr-4 text-right font-mono whitespace-nowrap">{currency(r.invoice_total)}</td>
                           <td className="pr-4 text-right font-mono whitespace-nowrap">
@@ -678,14 +564,14 @@ export default function CorteDeCajaView() {
                                   title={row.reviewed ? `Revisado por ${row.reviewed_by ?? "?"}` : "Marcar como revisado"}
                                 />
                               </TableCell>
-                              <TableCell className="text-xs text-gray-600 whitespace-nowrap">{row.event_date}</TableCell>
+                              <TableCell className="text-xs text-gray-600 whitespace-nowrap">{formatDay(row.event_date)}</TableCell>
                               <TableCell
                                 className={cn("font-mono text-xs whitespace-nowrap", row.excluded && "line-through")}
                               >
-                                {row.folio_display}
+                                <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
                               </TableCell>
                               <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
-                                {row.cliente}
+                                <ClientLink clientId={row.client_id} label={row.cliente} />
                               </TableCell>
                               <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                                 {currency(row.amount)}
@@ -817,7 +703,7 @@ export default function CorteDeCajaView() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Nota - factura {editingRow?.folio_display} ({editingRow?.event_date}) - {editingRow?.cliente}
+              Nota - factura {editingRow?.folio_display} ({formatDay(editingRow?.event_date)}) - {editingRow?.cliente}
             </DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-4">

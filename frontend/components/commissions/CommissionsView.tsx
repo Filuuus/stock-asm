@@ -16,6 +16,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
+import ClientLink from "@/components/facturas/ClientLink";
+import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { MonthControl } from "@/components/date-controls";
+import { currentMonthISO, formatDay } from "@/lib/dates";
+import { ZONE_LABELS } from "@/lib/zones";
 import {
   Card,
   CardDescription,
@@ -41,14 +47,6 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { CommissionLine, CommissionsSummary, InvoiceSearchResult, Zone } from "@/types/commissions";
 
-const ZONE_LABELS: Record<Zone, string> = {
-  ZONA1: "Zona 1 (Juan Jose Franco)",
-  ZONA2: "Zona 2 (Jesus Mendez)",
-  OFICINA: "Oficina",
-  SERVICIOS: "Servicios",
-  PUNTOVENTA: "Punto de Venta",
-};
-
 const CATEGORY_LABELS: Record<string, string> = {
   R: "Refacciones",
   R_NW: "Refacciones (Tapetes y pernos)",
@@ -72,6 +70,7 @@ const CATEGORY_BADGE: Record<string, string> = {
 interface InvoiceGroup {
   invoice_id: number;
   folio: number;
+  client_id: number;
   cliente: string;
   zone: Zone;
   paid_date: string;
@@ -103,10 +102,6 @@ function quantity(value: number) {
   return value.toLocaleString("es-MX", { maximumFractionDigits: 2 });
 }
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
-}
-
 // month is "YYYY-MM" - commissions are always calculated one calendar month
 // at a time, based on when payment was received.
 function monthRange(month: string) {
@@ -126,6 +121,7 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
       group = {
         invoice_id: line.invoice_id,
         folio: line.folio,
+        client_id: line.client_id,
         cliente: line.cliente,
         zone: line.zone,
         paid_date: line.paid_date,
@@ -144,12 +140,26 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
     if (line.manual) group.manual = true;
     group.lines.push(line);
   }
-  return [...groups.values()].sort((a, b) => b.commission_total - a.commission_total);
+  return [...groups.values()];
 }
+
+type InvoiceSortKey = "folio" | "cliente" | "zona" | "paid_date" | "days_late" | "items" | "commission";
+
+const INVOICE_SORT: Record<InvoiceSortKey, SortColumn<InvoiceGroup>> = {
+  folio: { value: (g) => g.folio, first: "desc" },
+  cliente: { value: (g) => g.cliente, first: "asc" },
+  zona: { value: (g) => ZONE_LABELS[g.zone] ?? g.zone, first: "asc" },
+  paid_date: { value: (g) => g.paid_date, first: "desc" },
+  days_late: { value: (g) => g.days_late, first: "desc" },
+  items: { value: (g) => g.lines.length, first: "desc" },
+  commission: { value: (g) => g.commission_total, first: "desc" },
+};
+
+const byFolioDesc = (a: InvoiceGroup, b: InvoiceGroup) => b.folio - a.folio;
 
 export default function CommissionsView() {
   const { loading: authLoading, isWorker, isManagement } = useAuth();
-  const [month, setMonth] = useState(currentMonth());
+  const [month, setMonth] = useState(currentMonthISO);
   const [data, setData] = useState<CommissionsSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,13 +182,11 @@ export default function CommissionsView() {
   const requestIdRef = useRef(0);
 
   const fetchSummary = async (targetMonth: string) => {
-    // The native <input type="month"> can fire onChange with an incomplete
-    // value while being typed into (e.g. "2026-0" before the second digit
-    // lands) - fetching on that crashes the backend's date parser and, since
-    // nothing here previously guarded against overlapping requests, could
-    // leave the spinner stuck if an older request resolved after a newer
-    // one. Found live during a demo (2026-09-17): a 500 from a malformed
-    // date, likely combined with an out-of-order response.
+    // Never fetch a malformed month: the old native <input type="month">
+    // fired onChange with half-typed values ("2026-0"), which crashed the
+    // backend's date parser (found live 2026-09-17). The month picker only
+    // emits whole months now, but the guard is cheap. requestId keeps an
+    // older response from overwriting a newer one.
     if (!/^\d{4}-\d{2}$/.test(targetMonth)) return;
 
     const requestId = ++requestIdRef.current;
@@ -342,6 +350,12 @@ export default function CommissionsView() {
         ),
     );
   }, [data, filter, selectedZone]);
+  const {
+    sorted: sortedGroups,
+    sortKey,
+    sortDir,
+    toggle: toggleSort,
+  } = useSort(invoiceGroups, INVOICE_SORT, { key: "commission", dir: "desc" }, byFolioDesc);
 
   if (!authLoading && !isWorker) {
     return (
@@ -370,18 +384,10 @@ export default function CommissionsView() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-600">Mes</label>
-          <Input
-            type="month"
-            value={month}
-            onChange={(e) => handleMonthChange(e.target.value)}
-            className="w-40"
-          />
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <MonthControl month={month} onChange={handleMonthChange} />
         {(loading || authLoading) && (
-          <Loader2 className="w-4 h-4 mb-2 animate-spin text-gray-400" />
+          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
         )}
       </div>
 
@@ -396,7 +402,7 @@ export default function CommissionsView() {
           <Card>
             <CardHeader>
               <CardDescription>
-                Total de comisiones, {data.date_from} a {data.date_to}
+                Total de comisiones, {formatDay(data.date_from)} a {formatDay(data.date_to)}
               </CardDescription>
               <CardTitle className="text-3xl">
                 {currency(totalCommission)}
@@ -489,18 +495,32 @@ export default function CommissionsView() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
-                    <TableHead>Folio</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Zona</TableHead>
-                    <TableHead>Fecha de pago</TableHead>
-                    <TableHead className="text-right">Días tarde</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Comisión</TableHead>
+                    {(
+                      [
+                        ["folio", "Folio"],
+                        ["cliente", "Cliente"],
+                        ["zona", "Zona"],
+                        ["paid_date", "Fecha de pago"],
+                        ["days_late", "Días tarde", "right"],
+                        ["items", "Productos", "right"],
+                        ["commission", "Comisión", "right"],
+                      ] as [InvoiceSortKey, string, "right"?][]
+                    ).map(([key, label, align]) => (
+                      <SortableHead
+                        key={key}
+                        label={label}
+                        column={key}
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={toggleSort}
+                        align={align}
+                      />
+                    ))}
                     {isManagement && <TableHead className="w-28" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {invoiceGroups.map((group) => {
+                  {sortedGroups.map((group) => {
                     const isOpen = expanded.has(group.invoice_id);
                     return (
                       <Fragment key={group.invoice_id}>
@@ -520,16 +540,16 @@ export default function CommissionsView() {
                             )}
                           </TableCell>
                           <TableCell className={cn("font-mono text-xs", group.excluded && "line-through")}>
-                            {group.folio}
+                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio} />
                           </TableCell>
                           <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
-                            {group.cliente}
+                            <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
                             {ZONE_LABELS[group.zone] ?? group.zone}
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
-                            {group.paid_date?.slice(0, 10)}
+                            {formatDay(group.paid_date)}
                           </TableCell>
                           <TableCell className="text-right font-mono text-xs">
                             {group.days_late > 0 ? group.days_late : "-"}

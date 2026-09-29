@@ -30,6 +30,14 @@ export default function HeaderNav() {
           Corte de Caja
         </Link>
       )}
+      {(isAccounting || isManagement) && (
+        <Link
+          href="/facturas"
+          className="text-sm font-medium text-slate-200 hover:text-white"
+        >
+          Facturas
+        </Link>
+      )}
       {isManagement && (
         <Link
           href="/usuarios"

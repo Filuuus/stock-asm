@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'catalog',
     'commissions',
     'corte_de_caja',
+    'facturas',
 ]
 
 MIDDLEWARE = [

@@ -26,7 +26,7 @@ def corte_de_caja_summary(request):
         date_from = _parse_date(request.query_params.get('date_from'), today)
         date_to = _parse_date(request.query_params.get('date_to'), today)
     except ValueError:
-        return Response({'error': 'date_from/date_to must be YYYY-MM-DD'}, status=400)
+        return Response({'error': 'date_from/date_to deben tener formato YYYY-MM-DD.'}, status=400)
 
     result = calculate_corte_de_caja(date_from, date_to)
     return Response(result)
