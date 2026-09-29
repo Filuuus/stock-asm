@@ -45,7 +45,7 @@ Reuses commissions.services directly for everything that IS derivable and
 already verified there: the real-sale/zone-scope filter, the Contabilidad-
 ledger payment resolution (the itemized per-invoice payment ledger - the
 ONLY source of rows and dates here, see _payments_without_poliza for why)
-and its CREFERENCIA matching - see that module for the full history of
+- see that module for the full history of
 getting this right. The one new piece here is emitting
 EVERY dated payment installment in the window (an event log), not just the
 single date an invoice finally reached zero balance the way commissions
@@ -64,7 +64,6 @@ from commissions.services import (
     LEDGER_FULL_PAYMENT_TOLERANCE,
     CommissionRepository,
     _classify_line,
-    _extract_folio_tokens,
     attribute_ledger_payments,
 )
 
@@ -221,61 +220,46 @@ def _client_account_label(account_ids, client_account_codes):
     return None
 
 
-def _payments_without_poliza(facturas, payment_docs, ledger_covered_ids, date_from, date_to):
-    """Payments Contpaqi Comercial records against a candidate Factura that
-    the Contabilidad ledger has no poliza for at all - matched by the
-    Comercial payment document's CREFERENCIA (same folio+client rule
-    commissions' fallback uses).
+def _payments_without_poliza(facturas, applications, ledger_covered_ids, date_from, date_to):
+    """Payments Contpaqi Comercial applied to a candidate Factura that the
+    Contabilidad ledger has no poliza for at all - from Comercial's exact
+    payment-to-invoice record (admAsocCargosAbonos, see
+    CommissionRepository.fetch_comercial_applications), so each row is the
+    amount applied to that one invoice.
+
+    Until 2026-09-29 this matched the payment's free-text CREFERENCIA, which
+    put a shared payment's full amount on every invoice it named, and missed
+    payments whose text still named a cancelled folio: BBV 19686 (Aug 6,
+    $6,666) says "20582 4455" but Comercial applied it to the re-issued
+    A 4479 and F 20734, and its poliza cites the cancelled folios too - so it
+    appeared nowhere.
 
     These are NOT cash-collection rows. Decided 2026-09-28: every date in
     this report must be the Contabilidad date, because Contabilidad is the
     audit record and SAT checks that dates on accounting documents match
     exactly - a row dated by Comercial would put a date on the corte that no
-    poliza backs. Until 2026-09-28 they were shown as ordinary rows (and,
-    when one Comercial payment named several invoices, with the full amount
-    on each, flagged "approximate"). Now they are only listed so the
-    accountant can register the poliza (or correct the reference) in
-    Contpaqi; once the poliza exists the payment appears on its own date.
+    poliza backs. They are only listed so the accountant can register the
+    poliza (or correct its reference) in Contpaqi; once the poliza exists the
+    payment appears on its own date.
 
-    Returns one dict per (payment document, matched invoice).
+    Returns one dict per (payment document, invoice).
     """
-    by_folio_client = defaultdict(list)
-    for f in facturas:
-        if f['CIDDOCUMENTO'] in ledger_covered_ids:
-            continue
-        by_folio_client[(int(f['CFOLIO']), f['CIDCLIENTEPROVEEDOR'])].append(f)
-
+    uncovered = {f['CIDDOCUMENTO']: f for f in facturas if f['CIDDOCUMENTO'] not in ledger_covered_ids}
     payments = []
-    for pago in payment_docs:
-        comercial_date = pago['CFECHA'].date()
-        if not (date_from <= comercial_date <= date_to):
-            continue
-        # Cents-sized documents are rounding leftovers, not collections
+    for invoice_id, _payment_id, payment_date, _applied_date, amount, serie, folio in applications:
+        comercial_date = payment_date.date()
+        f = uncovered.get(invoice_id)
+        # Cents-sized amounts are rounding leftovers, not collections
         # (same threshold the ledger events use).
-        if abs(pago['CTOTAL'] or 0) < LEDGER_FULL_PAYMENT_TOLERANCE:
+        if f is None or not (date_from <= comercial_date <= date_to) or abs(amount or 0) < LEDGER_FULL_PAYMENT_TOLERANCE:
             continue
-        cliente = pago['CIDCLIENTEPROVEEDOR']
-        matched = []
-        for token in _extract_folio_tokens(pago['CREFERENCIA']):
-            matched.extend(by_folio_client.get((int(token), cliente), []))
-        # A lone match that the payment couldn't fit into is the reference
-        # pointing at the wrong invoice, not a missing poliza: found
-        # 2026-09-28 on two cents-sized placeholder invoices (B 19975, B 19245)
-        # sharing a folio number with the real, already-polized invoice the
-        # payment was for (F 19975; 19179 in "19179 19245").
-        if len(matched) == 1 and (pago['CTOTAL'] or 0) > (matched[0]['CTOTAL'] or 0) + LEDGER_FULL_PAYMENT_TOLERANCE:
-            continue
-        for f in matched:
-            payments.append({
-                'invoice_id': f['CIDDOCUMENTO'],
-                'factura': f,
-                'comercial_date': comercial_date,
-                'amount': _as_decimal(pago['CTOTAL']),
-                'referencia': pago['CREFERENCIA'],
-                # The Comercial document carries one total for all the
-                # invoices it names; only a poliza splits it per invoice.
-                'shared_with': len(matched) - 1,
-            })
+        payments.append({
+            'invoice_id': invoice_id,
+            'factura': f,
+            'comercial_date': comercial_date,
+            'amount': _as_decimal(amount),
+            'pago': f"{serie or ''} {int(folio)}".strip(),
+        })
     return payments
 
 
@@ -404,8 +388,8 @@ def calculate_corte_de_caja(date_from, date_to):
         facturas, ledger_lines, concepto_series, bank_accounts, date_from, date_to,
     )
 
-    payment_docs = CommissionRepository.fetch_payment_docs(floor_date)
-    without_poliza = _payments_without_poliza(facturas, payment_docs, ledger_covered_ids, date_from, date_to)
+    applications = CommissionRepository.fetch_comercial_applications(floor_date)
+    without_poliza = _payments_without_poliza(facturas, applications, ledger_covered_ids, date_from, date_to)
 
     all_events = ledger_events
 
@@ -508,8 +492,7 @@ def calculate_corte_de_caja(date_from, date_to):
             'invoice_date': p['factura']['CFECHA'].date(),
             'invoice_total': _as_decimal(p['factura']['CTOTAL']),
             'amount': p['amount'],
-            'referencia': p['referencia'],
-            'shared_with': p['shared_with'],
+            'pago': p['pago'],
         }
         for p in without_poliza
     ), key=lambda r: (r['comercial_date'], r['folio_display']))
@@ -555,7 +538,7 @@ def calculate_corte_de_caja(date_from, date_to):
             'note': (
                 'Pagos registrados en Contpaqi Comercial sin póliza en Contabilidad. No se incluyen en el corte: '
                 'sus fechas deben venir de Contabilidad. Registre la póliza (o corrija la referencia) en Contpaqi '
-                'y el pago aparecerá en la fecha de la póliza.'
+                'y el pago aparecerá en la fecha de la póliza. El monto es lo que Comercial aplicó a esa factura.'
             ),
         },
     }

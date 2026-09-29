@@ -448,19 +448,19 @@ export default function CorteDeCajaView() {
                         <th className="pr-4 font-medium">Cliente</th>
                         <th className="pr-4 font-medium text-right">Total factura</th>
                         <th className="pr-4 font-medium text-right">Monto del pago</th>
-                        <th className="font-medium">Referencia</th>
+                        <th className="font-medium">Pago en Comercial</th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.sin_poliza.rows.map((r) => (
-                        <tr key={`${r.invoice_id}-${r.comercial_date}-${r.referencia}`}>
+                        <tr key={`${r.invoice_id}-${r.comercial_date}-${r.pago}`}>
                           <td className="pr-4 whitespace-nowrap">{formatDay(r.comercial_date)}</td>
                           <td className="pr-4 font-mono whitespace-nowrap">
                             <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
                           </td>
                           <td
                             className={cn("pr-4 whitespace-nowrap", r.invoice_date > r.comercial_date && "font-medium text-red-700")}
-                            title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar la referencia" : undefined}
+                            title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar en Comercial a qué factura se aplicó" : undefined}
                           >
                             {formatDay(r.invoice_date)}
                           </td>
@@ -470,13 +470,8 @@ export default function CorteDeCajaView() {
                           <td className="pr-4 text-right font-mono whitespace-nowrap">{currency(r.invoice_total)}</td>
                           <td className="pr-4 text-right font-mono whitespace-nowrap">
                             {currency(r.amount)}
-                            {r.shared_with > 0 && (
-                              <span className="ml-1 text-amber-600" title="El mismo pago de Comercial nombra más facturas; solo la póliza lo reparte">
-                                (compartido con {r.shared_with} más)
-                              </span>
-                            )}
                           </td>
-                          <td className="whitespace-nowrap">{r.referencia}</td>
+                          <td className="font-mono whitespace-nowrap">{r.pago}</td>
                         </tr>
                       ))}
                     </tbody>

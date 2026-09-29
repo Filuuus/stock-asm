@@ -79,11 +79,10 @@ export interface SinPolizaRow {
   // A payment dated before its own invoice usually means a wrong reference.
   invoice_date: string;
   invoice_total: number;
+  // What Comercial applied to this invoice (admAsocCargosAbonos).
   amount: number;
-  referencia: string;
-  // How many other invoices the same Comercial payment names - its amount is
-  // the whole payment, not this invoice's share.
-  shared_with: number;
+  // The Comercial payment document, series + folio (e.g. "BBV 19686").
+  pago: string;
 }
 
 export interface SinPolizaInfo {

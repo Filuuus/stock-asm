@@ -99,8 +99,8 @@ PUNTOVENTA_RATE_CODE = 'PUNTOVENTA'
 # all - not in the totals, not in the manual-review bucket. Found on folio
 # 19892 (invoiced Mar 20 on 90-day terms, paid Aug 13 - 54 days late, still
 # 2%); 16 invoices ($153k of sales) paid in 2026 were affected. Resolution is
-# window-independent (see fetch_payment_docs), so a wider floor only costs
-# query size.
+# window-independent (the ledger is read through today), so a wider floor
+# only costs query size.
 DEFAULT_LOOKBACK_DAYS = 365
 
 # Ledger lines naming this generic public-sales account can't be tied to one
@@ -169,35 +169,6 @@ class CommissionRepository:
         """
         floor_date = date_from - timedelta(days=candidate_lookback_days)
         return CommissionRepository.fetch_scoped_facturas(floor_date, date_to)
-
-    @staticmethod
-    def fetch_payment_docs(floor_date):
-        # Only corte_de_caja reads these now (commissions dates come from the
-        # ledger alone since 2026-09-28). Searched from the invoice lookback
-        # floor through TODAY - never capped at the report's date_to. Capping
-        # it there was a real bug when commissions still used this: for an
-        # invoice settled via several installments in different months, the
-        # old Comercial-side resolver took the latest payment found
-        # *within the queried window*, so querying December only saw the
-        # December installment (resolved paid_date = December), querying
-        # January then saw December+January (resolved paid_date = January),
-        # and querying February saw all three - the same invoice's full
-        # commission got recomputed and counted again in EVERY month that
-        # contained a referencing payment. Searching through today instead
-        # of date_to means the resolved paid_date is the true, final one
-        # and doesn't change depending on which month is being viewed - an
-        # invoice can only ever land in exactly one month's totals. Found
-        # 2026-09-15 from a report showing the same invoice generating
-        # commission in three different months.
-        return list(
-            AdmDocumentos.objects.filter(
-                CIDDOCUMENTODE__in=PAGO_DOC_TYPES,
-                CFECHA__date__gte=floor_date,
-                CFECHA__date__lte=date.today(),
-            ).exclude(CREFERENCIA__isnull=True).exclude(CREFERENCIA='').values(
-                'CFECHA', 'CIDCLIENTEPROVEEDOR', 'CREFERENCIA', 'CTOTAL',
-            )
-        )
 
     @staticmethod
     def fetch_settlements(floor_date):
