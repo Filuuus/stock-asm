@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
+import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
 import {
   Card,
   CardDescription,
@@ -148,8 +149,22 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
     if (line.manual) group.manual = true;
     group.lines.push(line);
   }
-  return [...groups.values()].sort((a, b) => b.commission_total - a.commission_total);
+  return [...groups.values()];
 }
+
+type InvoiceSortKey = "folio" | "cliente" | "zona" | "paid_date" | "days_late" | "items" | "commission";
+
+const INVOICE_SORT: Record<InvoiceSortKey, SortColumn<InvoiceGroup>> = {
+  folio: { value: (g) => g.folio, first: "desc" },
+  cliente: { value: (g) => g.cliente, first: "asc" },
+  zona: { value: (g) => ZONE_LABELS[g.zone] ?? g.zone, first: "asc" },
+  paid_date: { value: (g) => g.paid_date, first: "desc" },
+  days_late: { value: (g) => g.days_late, first: "desc" },
+  items: { value: (g) => g.lines.length, first: "desc" },
+  commission: { value: (g) => g.commission_total, first: "desc" },
+};
+
+const byFolioDesc = (a: InvoiceGroup, b: InvoiceGroup) => b.folio - a.folio;
 
 export default function CommissionsView() {
   const { loading: authLoading, isWorker, isManagement } = useAuth();
@@ -346,6 +361,12 @@ export default function CommissionsView() {
         ),
     );
   }, [data, filter, selectedZone]);
+  const {
+    sorted: sortedGroups,
+    sortKey,
+    sortDir,
+    toggle: toggleSort,
+  } = useSort(invoiceGroups, INVOICE_SORT, { key: "commission", dir: "desc" }, byFolioDesc);
 
   if (!authLoading && !isWorker) {
     return (
@@ -493,18 +514,32 @@ export default function CommissionsView() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
-                    <TableHead>Folio</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Zona</TableHead>
-                    <TableHead>Fecha de pago</TableHead>
-                    <TableHead className="text-right">Días tarde</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Comisión</TableHead>
+                    {(
+                      [
+                        ["folio", "Folio"],
+                        ["cliente", "Cliente"],
+                        ["zona", "Zona"],
+                        ["paid_date", "Fecha de pago"],
+                        ["days_late", "Días tarde", "right"],
+                        ["items", "Items", "right"],
+                        ["commission", "Comisión", "right"],
+                      ] as [InvoiceSortKey, string, "right"?][]
+                    ).map(([key, label, align]) => (
+                      <SortableHead
+                        key={key}
+                        label={label}
+                        column={key}
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={toggleSort}
+                        align={align}
+                      />
+                    ))}
                     {isManagement && <TableHead className="w-28" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {invoiceGroups.map((group) => {
+                  {sortedGroups.map((group) => {
                     const isOpen = expanded.has(group.invoice_id);
                     return (
                       <Fragment key={group.invoice_id}>

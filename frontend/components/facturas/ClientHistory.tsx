@@ -8,11 +8,11 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { currency, Field, formatDay, Section, StatCard } from "@/components/facturas/InvoiceDetail";
+import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
 import { cn } from "@/lib/utils";
 import type { ClientHistory, ClientInvoice, ClientInvoiceStatus } from "@/types/facturas";
 
@@ -31,6 +31,41 @@ const FILTERS: { key: Filter; label: string; test: (r: ClientInvoice) => boolean
   { key: "vencidas", label: "Vencidas", test: (r) => r.status === "vencida" },
   { key: "no_cuadran", label: "No cuadran", test: (r) => !r.cuadra },
 ];
+
+type SortKey =
+  | "folio" | "fecha" | "vencimiento" | "total" | "pendiente" | "status" | "paid_date" | "days_late" | "cuadra";
+
+// Most urgent first when sorting by status.
+const STATUS_RANK: Record<ClientInvoiceStatus, number> = { vencida: 0, pendiente: 1, pagada: 2, cancelada: 3 };
+
+const folioNumber = (r: ClientInvoice) => Number(r.folio_display.split(" ").pop());
+
+const SORT_COLUMNS: Record<SortKey, SortColumn<ClientInvoice>> = {
+  folio: { value: folioNumber, first: "desc" },
+  fecha: { value: (r) => r.fecha, first: "desc" },
+  vencimiento: { value: (r) => r.vencimiento, first: "desc" },
+  total: { value: (r) => r.total, first: "desc" },
+  pendiente: { value: (r) => r.pendiente, first: "desc" },
+  status: { value: (r) => STATUS_RANK[r.status], first: "asc" },
+  paid_date: { value: (r) => r.paid_date, first: "desc" },
+  days_late: { value: (r) => r.days_late, first: "desc" },
+  cuadra: { value: (r) => (r.cuadra ? 1 : 0), first: "asc" },
+};
+
+const SORT_HEADERS: [SortKey, string, "right"?][] = [
+  ["folio", "Factura"],
+  ["fecha", "Fecha"],
+  ["vencimiento", "Vencimiento"],
+  ["total", "Total", "right"],
+  ["pendiente", "Pendiente", "right"],
+  ["status", "Estado"],
+  ["paid_date", "Pagada (póliza)"],
+  ["days_late", "Atraso", "right"],
+  ["cuadra", "Cuadre"],
+];
+
+const byNewest = (a: ClientInvoice, b: ClientInvoice) =>
+  b.fecha.localeCompare(a.fecha) || folioNumber(b) - folioNumber(a);
 
 function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
@@ -52,6 +87,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
       (r) => test(r) && (!term || r.folio_display.toLowerCase().includes(term)),
     );
   }, [history, filter, search]);
+  const { sorted, sortKey, sortDir, toggle } = useSort(rows, SORT_COLUMNS, { key: "fecha", dir: "desc" }, byNewest);
 
   return (
     <div className="flex flex-col gap-8">
@@ -144,16 +180,18 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
         <div className="overflow-x-auto rounded-lg border bg-white">
           <Table className="min-w-[950px]">
             <TableHeader>
-              <TableRow className="[&>th]:whitespace-nowrap">
-                <TableHead>Factura</TableHead>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Vencimiento</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-right">Pendiente</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Pagada (póliza)</TableHead>
-                <TableHead className="text-right">Atraso</TableHead>
-                <TableHead>Cuadre</TableHead>
+              <TableRow>
+                {SORT_HEADERS.map(([key, label, align]) => (
+                  <SortableHead
+                    key={key}
+                    label={label}
+                    column={key}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggle}
+                    align={align}
+                  />
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -164,7 +202,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map((r) => <ClientInvoiceRow key={r.invoice_id} row={r} onOpen={onOpenInvoice} />)
+                sorted.map((r) => <ClientInvoiceRow key={r.invoice_id} row={r} onOpen={onOpenInvoice} />)
               )}
             </TableBody>
           </Table>
