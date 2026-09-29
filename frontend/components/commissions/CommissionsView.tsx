@@ -86,14 +86,6 @@ function currency(value: number) {
   return value.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
-    maximumFractionDigits: 0,
-  });
-}
-
-function currencyPrecise(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
     maximumFractionDigits: 2,
   });
 }
@@ -636,7 +628,7 @@ export default function CommissionsView() {
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
                                         {line.unit_amount != null
-                                          ? currencyPrecise(line.unit_amount)
+                                          ? currency(line.unit_amount)
                                           : "-"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
