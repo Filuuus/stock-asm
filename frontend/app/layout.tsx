@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Settings, ShoppingCart } from "lucide-react";
 import { SearchQueryProvider } from "@/hooks/use-search-query";
 import { AuthProvider } from "@/hooks/use-auth";
 import SearchBar from "@/components/search-bar";
@@ -36,17 +35,11 @@ export default function RootLayout({
       <body className="min-h-screen flex flex-col bg-gray-50">
         <AuthProvider>
           <SearchQueryProvider>
-            <header className="bg-slate-900 px-6 py-3 flex items-center justify-between text-white border-b border-slate-800">
-              <div className="text-lg font-bold">Agropecuaria Santa María</div>
+            <header className="bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
+              <div className="text-lg font-bold whitespace-nowrap">Agropecuaria Santa María</div>
               <SearchBar />
-              <div className="flex items-center space-x-4">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <HeaderNav />
-                <button aria-label="Configuración" className="p-2 hover:bg-slate-800 rounded-full">
-                  <Settings className="w-5 h-5" />
-                </button>
-                <button aria-label="Carrito" className="p-2 hover:bg-slate-800 rounded-full">
-                  <ShoppingCart className="w-5 h-5" />
-                </button>
               </div>
             </header>
             <InvoiceDialogProvider>
