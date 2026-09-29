@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DiferenciasFechaView from "@/components/corte-de-caja/DiferenciasFechaView";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
 import {
   Card,
   CardDescription,
@@ -571,7 +572,9 @@ export default function CorteDeCajaView() {
                       {data.sin_poliza.rows.map((r) => (
                         <tr key={`${r.invoice_id}-${r.comercial_date}-${r.referencia}`}>
                           <td className="pr-4 whitespace-nowrap">{r.comercial_date}</td>
-                          <td className="pr-4 font-mono whitespace-nowrap">{r.folio_display}</td>
+                          <td className="pr-4 font-mono whitespace-nowrap">
+                            <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
+                          </td>
                           <td
                             className={cn("pr-4 whitespace-nowrap", r.invoice_date > r.comercial_date && "font-medium text-red-700")}
                             title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar la referencia" : undefined}
@@ -682,7 +685,7 @@ export default function CorteDeCajaView() {
                               <TableCell
                                 className={cn("font-mono text-xs whitespace-nowrap", row.excluded && "line-through")}
                               >
-                                {row.folio_display}
+                                <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
                               </TableCell>
                               <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
                                 {row.cliente}

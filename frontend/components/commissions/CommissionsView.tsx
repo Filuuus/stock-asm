@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
 import {
   Card,
   CardDescription,
@@ -520,7 +521,7 @@ export default function CommissionsView() {
                             )}
                           </TableCell>
                           <TableCell className={cn("font-mono text-xs", group.excluded && "line-through")}>
-                            {group.folio}
+                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio} />
                           </TableCell>
                           <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
                             {group.cliente}

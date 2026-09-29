@@ -15,6 +15,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
+import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import type {
@@ -22,43 +24,6 @@ import type {
   DateDifferenceStatus,
   DateDifferencesSummary,
 } from "@/types/corte-de-caja";
-
-const STATUS_INFO: Record<
-  DateDifferenceStatus,
-  { label: string; description: string; badge: string; card: string }
-> = {
-  distinto_mes: {
-    label: "Distinto mes",
-    description:
-      "Comercial y Contabilidad registran el pago en meses diferentes.",
-    badge: "bg-red-50 text-red-700 border-red-200",
-    card: "border-red-300 bg-red-50",
-  },
-  solo_comercial: {
-    label: "Solo en Comercial",
-    description: "Pago en Comercial sin póliza en Contabilidad por ese monto.",
-    badge: "bg-amber-50 text-amber-700 border-amber-200",
-    card: "border-amber-300 bg-amber-50",
-  },
-  solo_contabilidad: {
-    label: "Solo en Contabilidad",
-    description: "Póliza sin pago aplicado en Comercial por ese monto.",
-    badge: "bg-amber-50 text-amber-700 border-amber-200",
-    card: "border-amber-300 bg-amber-50",
-  },
-  distinto_dia: {
-    label: "Distinto día",
-    description: "Mismo mes, distinto día.",
-    badge: "bg-slate-50 text-slate-700 border-slate-200",
-    card: "border-slate-300 bg-slate-50",
-  },
-  mismo_dia: {
-    label: "Mismo día",
-    description: "Ambas fechas coinciden.",
-    badge: "bg-green-50 text-green-700 border-green-200",
-    card: "border-green-300 bg-green-50",
-  },
-};
 
 const STATUS_ORDER = Object.keys(STATUS_INFO) as DateDifferenceStatus[];
 const PROBLEM_STATUSES: DateDifferenceStatus[] = [
@@ -296,7 +261,7 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
         </Badge>
       </TableCell>
       <TableCell className="font-mono text-xs whitespace-nowrap">
-        {row.folio_display}
+        <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
       </TableCell>
       <TableCell className="max-w-56 truncate" title={row.cliente}>
         {row.cliente}

@@ -5,6 +5,7 @@ import { SearchQueryProvider } from "@/hooks/use-search-query";
 import { AuthProvider } from "@/hooks/use-auth";
 import SearchBar from "@/components/search-bar";
 import HeaderNav from "@/components/header-nav";
+import { InvoiceDialogProvider } from "@/components/facturas/InvoiceDialog";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,7 +49,9 @@ export default function RootLayout({
                 </button>
               </div>
             </header>
-            <div className="flex-1 flex flex-col">{children}</div>
+            <InvoiceDialogProvider>
+              <div className="flex-1 flex flex-col">{children}</div>
+            </InvoiceDialogProvider>
           </SearchQueryProvider>
         </AuthProvider>
       </body>
