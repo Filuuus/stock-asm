@@ -103,7 +103,7 @@ export default function FacturaView() {
   return (
     <main className="w-full max-w-7xl mx-auto p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-gray-900">Consulta de factura</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Facturas</h1>
         <p className="text-sm text-gray-500">
           Todo lo que Contpaqi sabe de un No. Factura: la factura y sus renglones, los pagos y notas
           de crédito aplicados en Comercial, las pólizas de Contabilidad que la citan, y lo que no

@@ -11,9 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { currency, Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
+import { Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
 import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import type { ClientHistory, ClientInvoice, ClientInvoiceStatus } from "@/types/facturas";
@@ -105,7 +105,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
           <Field label="RFC" value={client.rfc} />
           <Field label="Zona" value={zoneLabel(client.zona)} />
           <Field label="Días de crédito" value={client.dias_credito ? `${client.dias_credito} días` : "Contado"} />
-          <Field label="Límite de crédito" value={client.limite_credito > 0 ? currency(client.limite_credito) : "Sin límite"} />
+          <Field label="Límite de crédito" value={client.limite_credito > 0 ? formatMoney(client.limite_credito) : "Sin límite"} />
           <Field label="Cliente desde" value={formatDay(client.alta)} />
         </div>
       </div>
@@ -113,18 +113,18 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Saldo pendiente"
-          value={currency(summary.saldo_pendiente)}
+          value={formatMoney(summary.saldo_pendiente)}
           sub={plural(summary.facturas_pendientes, "factura", "facturas")}
         />
         <StatCard
           label="Vencido"
-          value={currency(summary.vencido)}
+          value={formatMoney(summary.vencido)}
           sub={plural(summary.facturas_vencidas, "factura vencida", "facturas vencidas")}
           tone={summary.vencido > 0 ? "bad" : undefined}
         />
         <StatCard
           label={summary.since ? "Facturado, últimos 12 meses" : "Facturado, todo el historial"}
-          value={currency(summary.facturado)}
+          value={formatMoney(summary.facturado)}
           sub={plural(summary.facturas, "factura", "facturas")}
         />
         <StatCard
@@ -254,8 +254,8 @@ function ClientInvoiceRow({ row, onOpen }: { row: ClientInvoice; onOpen: (id: nu
       </TableCell>
       <TableCell className="whitespace-nowrap">{formatDay(row.fecha)}</TableCell>
       <TableCell className="whitespace-nowrap">{formatDay(row.vencimiento)}</TableCell>
-      <TableCell className="text-right num">{currency(row.total)}</TableCell>
-      <TableCell className="text-right num">{row.pendiente >= 1 ? currency(row.pendiente) : "-"}</TableCell>
+      <TableCell className="text-right num">{formatMoney(row.total)}</TableCell>
+      <TableCell className="text-right num">{row.pendiente >= 1 ? formatMoney(row.pendiente) : "-"}</TableCell>
       <TableCell className="whitespace-nowrap">
         <Badge variant="outline" className={badge.className}>{badge.label}</Badge>
       </TableCell>

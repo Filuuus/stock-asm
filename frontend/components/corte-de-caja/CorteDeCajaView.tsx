@@ -44,7 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { HIDE_BELOW_LG, HIDE_BELOW_SM } from "@/components/sortable-table";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { dateToISO, formatDay, isoToDate, todayISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
@@ -70,13 +70,6 @@ const METHOD_LABELS: Record<PaymentMethod, string> = {
   TRANSFERENCIA: "Transferencia",
 };
 
-function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 export default function CorteDeCajaView() {
   const { loading: authLoading, isAccounting, isManagement } = useAuth();
@@ -289,10 +282,28 @@ export default function CorteDeCajaView() {
     </Tabs>
   );
 
+  // Title, then the description of the tab being shown, then the tabs -
+  // the same order on every page.
+  const header = (
+    <div className="flex flex-col gap-1">
+      <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
+      <p className="text-sm text-gray-500">
+        {view === "diferencias"
+          ? "Cada pago de cliente en Contpaqi Comercial junto a su póliza en Contabilidad. " +
+            "Los pagos registrados en un mes en Comercial y en otro en Contabilidad se declaran en " +
+            "periodos distintos; también se marcan las pólizas con otro importe o que citan un folio " +
+            "equivocado. Corríjalos en Contpaqi. Un pago aparece en el mes de cualquiera de sus dos fechas."
+          : "Cobranza diaria calculada automáticamente desde el ERP - un renglón por cada pago " +
+            "identificado (incluye abonos parciales). La forma de pago se sugiere según el historial " +
+            "confirmado de cada cliente - confirme las de confianza alta con un clic y elija las demás."}
+      </p>
+    </div>
+  );
+
   if (view === "diferencias") {
     return (
-      <main className="w-full p-4 sm:p-6 flex flex-col gap-6">
-        <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
+        {header}
         {viewTabs}
         <DiferenciasFechaView />
       </main>
@@ -359,17 +370,8 @@ export default function CorteDeCajaView() {
   );
 
   return (
-    <main className="w-full p-4 sm:p-6 flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
-        <p className="text-sm text-gray-500">
-          Cobranza diaria calculada automáticamente desde el ERP - un renglón por cada
-          pago identificado (incluye abonos parciales). La forma de pago se sugiere
-          según el historial confirmado de cada cliente - confirme las de confianza alta con un clic
-          y elija las demás.
-        </p>
-      </div>
-
+    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
+      {header}
       {viewTabs}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -407,7 +409,7 @@ export default function CorteDeCajaView() {
             <Card className="col-span-2 md:col-span-4 lg:col-span-1 border-slate-900">
               <CardHeader className="p-4">
                 <CardDescription>TOTAL CORTE</CardDescription>
-                <CardTitle className="text-xl">{currency(data.cash_drawer_total)}</CardTitle>
+                <CardTitle className="text-xl">{formatMoney(data.cash_drawer_total)}</CardTitle>
                 <p className="text-xs text-gray-400">efectivo + terminal + cheque</p>
               </CardHeader>
             </Card>
@@ -415,7 +417,7 @@ export default function CorteDeCajaView() {
               <Card key={method}>
                 <CardHeader className="p-4">
                   <CardDescription>{METHOD_LABELS[method]}</CardDescription>
-                  <CardTitle className="text-lg sm:text-xl">{currency(data.method_totals[method] ?? 0)}</CardTitle>
+                  <CardTitle className="text-lg sm:text-xl">{formatMoney(data.method_totals[method] ?? 0)}</CardTitle>
                 </CardHeader>
               </Card>
             ))}
@@ -433,7 +435,7 @@ export default function CorteDeCajaView() {
               >
                 <CardHeader className="p-4">
                   <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
-                  <CardTitle className="text-lg sm:text-xl">{currency(data.zone_totals[zone] ?? 0)}</CardTitle>
+                  <CardTitle className="text-lg sm:text-xl">{formatMoney(data.zone_totals[zone] ?? 0)}</CardTitle>
                 </CardHeader>
               </Card>
             ))}
@@ -445,7 +447,7 @@ export default function CorteDeCajaView() {
               <div>
                 <p className="font-medium">
                   {data.unclassified.count} pagos sin forma de pago asignada (
-                  {currency(data.unclassified.total_amount)})
+                  {formatMoney(data.unclassified.total_amount)})
                 </p>
                 <p className="text-amber-700">{data.unclassified.note}</p>
               </div>
@@ -458,7 +460,7 @@ export default function CorteDeCajaView() {
               <div className="flex-1 min-w-64">
                 <p className="font-medium">
                   {data.unconfirmed.count} pagos con forma de pago sin confirmar (
-                  {currency(data.unconfirmed.total_amount)})
+                  {formatMoney(data.unconfirmed.total_amount)})
                 </p>
                 <p className="text-sky-700">{data.unconfirmed.note}</p>
                 <p className="mt-1 flex flex-wrap gap-x-4 text-xs text-sky-700">
@@ -497,7 +499,7 @@ export default function CorteDeCajaView() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
                   {data.sin_poliza.count} pagos en Comercial sin póliza en Contabilidad (
-                  {currency(data.sin_poliza.total_amount)}) - no incluidos en el corte
+                  {formatMoney(data.sin_poliza.total_amount)}) - no incluidos en el corte
                 </p>
                 <p className="text-amber-700">{data.sin_poliza.note}</p>
                 <div className="mt-2 overflow-x-auto">
@@ -529,9 +531,9 @@ export default function CorteDeCajaView() {
                           <td className="pr-4 max-w-56 truncate" title={r.cliente}>
                             <ClientLink clientId={r.client_id} label={r.cliente} />
                           </td>
-                          <td className="pr-4 text-right num">{currency(r.invoice_total)}</td>
+                          <td className="pr-4 text-right num">{formatMoney(r.invoice_total)}</td>
                           <td className="pr-4 text-right num">
-                            {currency(r.amount)}
+                            {formatMoney(r.amount)}
                           </td>
                           <td className="num">{r.pago}</td>
                         </tr>
@@ -594,7 +596,7 @@ export default function CorteDeCajaView() {
                               </span>
                             </span>
                             <span className="num font-semibold text-gray-800">
-                              {currency(subtotal)}
+                              {formatMoney(subtotal)}
                             </span>
                           </div>
                         </TableCell>
@@ -632,7 +634,7 @@ export default function CorteDeCajaView() {
                                 <ClientLink clientId={row.client_id} label={row.cliente} />
                               </TableCell>
                               <TableCell className="text-right num">
-                                {currency(row.amount)}
+                                {formatMoney(row.amount)}
                               </TableCell>
                               <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>
                                 {row.abono ? (

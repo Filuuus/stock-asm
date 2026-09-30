@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
@@ -42,13 +42,6 @@ const FLAG_STYLE: Record<FlagLevel, { box: string; icon: typeof AlertCircle }> =
   info: { box: "border-slate-200 bg-slate-50 text-slate-700", icon: Info },
 };
 
-export function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 export async function getJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path, { cache: "no-store" });
@@ -114,8 +107,8 @@ export function InvoiceList({ results, onSelect }: {
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </TableCell>
               <TableCell className="text-xs">{zoneLabel(r.zona)}</TableCell>
-              <TableCell className="text-right num">{currency(r.total)}</TableCell>
-              <TableCell className="text-right num">{currency(r.pendiente)}</TableCell>
+              <TableCell className="text-right num">{formatMoney(r.total)}</TableCell>
+              <TableCell className="text-right num">{formatMoney(r.pendiente)}</TableCell>
               <TableCell className="whitespace-nowrap">
                 <StatusBadges cancelada={r.cancelada} pendiente={r.pendiente} total={r.total} />
               </TableCell>
@@ -233,27 +226,27 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {/* Balance */}
       <Section title="Cuadre">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label="Total factura" value={currency(balance.total)} />
+          <StatCard label="Total factura" value={formatMoney(balance.total)} />
           <StatCard
             label="Pagado según Comercial"
-            value={currency(balance.pagado_comercial)}
+            value={formatMoney(balance.pagado_comercial)}
             sub={
               <>
-                Pagos del cliente {currency(balance.comercial_cash)}
+                Pagos del cliente {formatMoney(balance.comercial_cash)}
                 {balance.comercial_credit > 0 && (
-                  <> · Notas de crédito y devoluciones {currency(balance.comercial_credit)}</>
+                  <> · Notas de crédito y devoluciones {formatMoney(balance.comercial_credit)}</>
                 )}
-                {balance.comercial_other > 0 && <> · Otros {currency(balance.comercial_other)}</>}
+                {balance.comercial_other > 0 && <> · Otros {formatMoney(balance.comercial_other)}</>}
               </>
             }
           />
           <StatCard
             label="Cobrado según Contabilidad"
-            value={currency(balance.contabilidad_cash)}
+            value={formatMoney(balance.contabilidad_cash)}
             sub={`${balance.polizas_de_cobro} ${balance.polizas_de_cobro === 1 ? "póliza" : "pólizas"} de cobro`}
             tone={cashMismatch && !invoice.cancelada ? "bad" : undefined}
           />
-          <StatCard label="Pendiente" value={currency(balance.pendiente)} />
+          <StatCard label="Pendiente" value={formatMoney(balance.pendiente)} />
         </div>
       </Section>
 
@@ -301,8 +294,8 @@ export function InvoiceDetailView({ detail, onSelect }: {
                       {a.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(a.fecha)}</TableCell>
-                    <TableCell className="text-right num">{currency(a.amount)}</TableCell>
-                    <TableCell className="text-right num">{currency(a.documento_total)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(a.amount)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(a.documento_total)}</TableCell>
                   </TableRow>
                 ))}
                 {detail.unapplied_returns.map((r) => (
@@ -313,7 +306,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
                     <TableCell className="text-right text-xs text-amber-700">No aplicada</TableCell>
-                    <TableCell className="text-right num">{currency(r.total)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(r.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -340,7 +333,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
                   <TableRow key={p.documento_id}>
                     <TableCell className="num">{p.documento}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(p.fecha)}</TableCell>
-                    <TableCell className="text-right num">{currency(p.total)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(p.total)}</TableCell>
                     <TableCell className="text-xs">{p.referencia}</TableCell>
                     <TableCell className="num">
                       {p.applied_to.length ? p.applied_to.join(", ") : "Ninguna factura"}
@@ -383,10 +376,10 @@ export function InvoiceDetailView({ detail, onSelect }: {
                   <TableCell className="num">{l.codigo}</TableCell>
                   <TableCell className="max-w-96 truncate" title={l.producto}>{l.producto}</TableCell>
                   <TableCell className="text-right num">{l.cantidad.toLocaleString("es-MX")}</TableCell>
-                  <TableCell className="text-right num">{currency(l.precio)}</TableCell>
-                  <TableCell className="text-right num">{l.descuento ? currency(l.descuento) : "-"}</TableCell>
-                  <TableCell className="text-right num">{currency(l.iva)}</TableCell>
-                  <TableCell className="text-right num">{currency(l.total)}</TableCell>
+                  <TableCell className="text-right num">{formatMoney(l.precio)}</TableCell>
+                  <TableCell className="text-right num">{l.descuento ? formatMoney(l.descuento) : "-"}</TableCell>
+                  <TableCell className="text-right num">{formatMoney(l.iva)}</TableCell>
+                  <TableCell className="text-right num">{formatMoney(l.total)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -435,7 +428,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
             <div key={i} className="whitespace-nowrap">
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(c.date)}</span>
               <span className="ml-1 text-gray-500">{c.documento}</span>
-              <span className="ml-2 num">{currency(c.amount)}</span>
+              <span className="ml-2 num">{formatMoney(c.amount)}</span>
               {c.applied_date !== c.date && (
                 <span className="block text-gray-400">aplicado a la factura el {formatDay(c.applied_date)}</span>
               )}
@@ -454,7 +447,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
             <div key={i} className="whitespace-nowrap">
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(l.date)}</span>
               <span className="ml-1 text-gray-500">Póliza {l.polizas.join(", ")}</span>
-              <span className="ml-2 num">{currency(l.amount)}</span>
+              <span className="ml-2 num">{formatMoney(l.amount)}</span>
             </div>
           ))
         )}
@@ -495,7 +488,7 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
         <span className="text-gray-500 truncate max-w-72" title={poliza.concepto}>{poliza.concepto}</span>
         {poliza.bank && <span className="text-xs text-gray-500">{poliza.bank}</span>}
         {poliza.is_payment && (
-          <span className="ml-auto num">{currency(poliza.amount)}</span>
+          <span className="ml-auto num">{formatMoney(poliza.amount)}</span>
         )}
         {poliza.is_payment && !poliza.counted && (
           <span className="basis-full pl-8 text-xs text-amber-700">No se cuenta: {poliza.not_counted_reason}</span>
@@ -521,7 +514,7 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
                       <span className="font-mono text-gray-500">{l.codigo}</span> {l.cuenta}
                     </TableCell>
                     <TableCell className="text-xs">{l.tipo}</TableCell>
-                    <TableCell className="text-right num">{currency(l.importe)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(l.importe)}</TableCell>
                     <TableCell className="num">{l.referencia}</TableCell>
                     <TableCell className="text-xs max-w-72 truncate" title={l.concepto}>{l.concepto}</TableCell>
                   </TableRow>

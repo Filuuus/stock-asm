@@ -476,6 +476,15 @@ def _currency(value):
     return f'${value:,.2f}'
 
 
+# "6 ago 2026", same as the screens - spelled out here rather than with
+# strftime('%b'), which follows the server's locale.
+_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+
+def _fecha(value):
+    return f'{value.day} {_MONTHS[value.month - 1]} {value.year}'
+
+
 def _flags(invoice, balance, pairs, applications, referencing_payments, same_folio, polizas):
     """Things to fix in Contpaqi, most serious first."""
     flags = []
@@ -491,8 +500,8 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
         )))
     for pair in pairs:
         if pair['status'] == STATUS_DIFFERENT_MONTH:
-            comercial_dates = ', '.join(i['date'].strftime('%d/%m/%Y') for i in pair['comercial'])
-            ledger_dates = ', '.join(i['date'].strftime('%d/%m/%Y') for i in pair['contabilidad'])
+            comercial_dates = ', '.join(_fecha(i['date']) for i in pair['comercial'])
+            ledger_dates = ', '.join(_fecha(i['date']) for i in pair['contabilidad'])
             flags.append((FLAG_ERROR, (
                 f'Pago en Comercial el {comercial_dates} y póliza el {ledger_dates}: '
                 'se declaran en meses distintos.'
@@ -511,28 +520,28 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
         if pair['status'] == STATUS_COMERCIAL_ONLY:
             c = pair['comercial'][0]
             flags.append((FLAG_WARNING, (
-                f"El pago {c['documento']} del {c['date']:%d/%m/%Y} por {_currency(c['amount'])} "
+                f"El pago {c['documento']} del {_fecha(c['date'])} por {_currency(c['amount'])} "
                 'no tiene póliza en Contabilidad.'
             )))
         elif pair['status'] == STATUS_WRONG_FOLIO and pair['comercial']:
             c, cited = pair['comercial'][0], pair['cited']
             flags.append((FLAG_WARNING, (
-                f"El pago {c['documento']} del {c['date']:%d/%m/%Y} por {_currency(c['amount'])} no tiene póliza "
-                f"que cite esta factura, pero la {cited['documento']} del {cited['date']:%d/%m/%Y} por el mismo "
+                f"El pago {c['documento']} del {_fecha(c['date'])} por {_currency(c['amount'])} no tiene póliza "
+                f"que cite esta factura, pero la {cited['documento']} del {_fecha(cited['date'])} por el mismo "
                 f"monto cita {cited['folio_display']}: posible folio equivocado en la póliza."
             )))
         elif pair['status'] == STATUS_WRONG_FOLIO:
             l, cited = pair['contabilidad'][0], pair['cited']
             flags.append((FLAG_WARNING, (
-                f"La póliza {', '.join(l['polizas'])} del {l['date']:%d/%m/%Y} por {_currency(l['amount'])} cita "
+                f"La póliza {', '.join(l['polizas'])} del {_fecha(l['date'])} por {_currency(l['amount'])} cita "
                 f"esta factura, pero en Comercial ese monto es el pago {cited['documento']} del "
-                f"{cited['date']:%d/%m/%Y} aplicado a {cited['folio_display']}: posible folio equivocado en la póliza."
+                f"{_fecha(cited['date'])} aplicado a {cited['folio_display']}: posible folio equivocado en la póliza."
             )))
         elif pair['status'] == STATUS_DIFFERENT_AMOUNT:
             c, l = pair['comercial'][0], pair['contabilidad'][0]
             flags.append((FLAG_WARNING, (
-                f"El pago {c['documento']} del {c['date']:%d/%m/%Y} es por {_currency(c['amount'])} en Comercial, "
-                f"pero la póliza {', '.join(l['polizas'])} del {l['date']:%d/%m/%Y} es por {_currency(l['amount'])}."
+                f"El pago {c['documento']} del {_fecha(c['date'])} es por {_currency(c['amount'])} en Comercial, "
+                f"pero la póliza {', '.join(l['polizas'])} del {_fecha(l['date'])} es por {_currency(l['amount'])}."
             )))
         elif pair['status'] == STATUS_CONTABILIDAD_ONLY:
             l = pair['contabilidad'][0]
@@ -541,7 +550,7 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
                 if p['counted'] and p['label'] not in l['polizas'] and p['fecha'] == l['date'] and p['amount'] == l['amount']
             ), None)
             flags.append((FLAG_WARNING, (
-                f"La póliza {', '.join(l['polizas'])} del {l['date']:%d/%m/%Y} por {_currency(l['amount'])} "
+                f"La póliza {', '.join(l['polizas'])} del {_fecha(l['date'])} por {_currency(l['amount'])} "
                 + (f'repite la fecha y el importe de la póliza {twin}: posible póliza duplicada.' if twin
                    else 'no tiene un pago aplicado en Comercial por ese monto.')
             )))
@@ -560,7 +569,7 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
     for p in referencing_payments:
         applied_to = ', '.join(p['applied_to']) or 'ninguna factura'
         flags.append((FLAG_INFO, (
-            f"{p['tipo']} {p['documento']} del {p['fecha']:%d/%m/%Y} menciona este folio en su referencia, "
+            f"{p['tipo']} {p['documento']} del {_fecha(p['fecha'])} menciona este folio en su referencia, "
             f'pero Comercial lo aplicó a {applied_to}.'
         )))
     for p in polizas:

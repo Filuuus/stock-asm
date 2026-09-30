@@ -19,7 +19,7 @@ import ClientLink from "@/components/facturas/ClientLink";
 import { MonthControl } from "@/components/date-controls";
 import { currentMonthISO, dateToISO, formatDay, isoToDate } from "@/lib/dates";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import type {
   DateDifferenceRow,
@@ -36,13 +36,6 @@ const PROBLEM_STATUSES: DateDifferenceStatus[] = [
   "solo_contabilidad",
 ];
 
-function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 function monthKey(iso: string | null) {
   return iso ? iso.slice(0, 7) : null;
@@ -112,14 +105,6 @@ export default function DiferenciasFechaView() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-sm text-gray-500">
-        Cada pago de cliente en Contpaqi Comercial junto a su póliza en
-        Contabilidad. Los pagos registrados en un mes en Comercial y en otro en
-        Contabilidad se declaran en periodos distintos; también se marcan las
-        pólizas con otro importe o que citan un folio equivocado. Corríjalos en
-        Contpaqi. Un pago aparece en el mes de cualquiera de sus dos fechas.
-      </p>
-
       <div className="flex items-center gap-2">
         <MonthControl month={month} onChange={setMonth} />
         {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
@@ -156,7 +141,7 @@ export default function DiferenciasFechaView() {
                     {data.totals[status].count}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {currency(data.totals[status].total_amount)}
+                    {formatMoney(data.totals[status].total_amount)}
                   </p>
                 </button>
               );
@@ -237,7 +222,7 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
           </span>
           <span className="ml-1 text-gray-500">{c.documento}</span>
           {row.comercial.length > 1 && (
-            <span className="ml-1 text-gray-500">{currency(c.amount)}</span>
+            <span className="ml-1 text-gray-500">{formatMoney(c.amount)}</span>
           )}
           {c.applied_date !== c.date && (
             <span className="block text-gray-400">
@@ -270,7 +255,7 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
             </span>
           )}
           {row.contabilidad.length > 1 && (
-            <span className="ml-1 text-gray-500">{currency(l.amount)}</span>
+            <span className="ml-1 text-gray-500">{formatMoney(l.amount)}</span>
           )}
         </div>
       ))
@@ -290,7 +275,7 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
         <TableCell className={cn("max-w-56 truncate", HIDE_BELOW_MD)} title={row.cliente}>
           <ClientLink clientId={row.client_id} label={row.cliente} />
         </TableCell>
-        <TableCell className="text-right num">{currency(row.amount)}</TableCell>
+        <TableCell className="text-right num">{formatMoney(row.amount)}</TableCell>
         <TableCell className={cn("min-w-44", HIDE_BELOW_LG)}>{comercialInfo}</TableCell>
         <TableCell className={cn("min-w-44", HIDE_BELOW_LG)}>{contabilidadInfo}</TableCell>
         <TableCell className={cn("text-right whitespace-nowrap", HIDE_BELOW_SM)}>

@@ -317,7 +317,7 @@ export default function UsersView() {
 
   if (!authLoading && !isWorker) {
     return (
-      <main className="max-w-4xl mx-auto w-full p-4 sm:p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             Debe iniciar sesión para ver esta página.
@@ -332,7 +332,7 @@ export default function UsersView() {
 
   if (!authLoading && !isManagement) {
     return (
-      <main className="max-w-4xl mx-auto w-full p-4 sm:p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             No tiene permiso para ver esta página.
@@ -343,7 +343,7 @@ export default function UsersView() {
   }
 
   return (
-    <main className="max-w-4xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
+    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>

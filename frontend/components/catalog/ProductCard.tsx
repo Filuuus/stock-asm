@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { Product } from "@/types/api";
+import { formatMoney } from "@/lib/utils";
 
 export default function ProductCard({ product }: { product: Product }) {
   const images = product.images;
@@ -58,7 +59,7 @@ export default function ProductCard({ product }: { product: Product }) {
         {product.price_visible && product.CPRECIO1 !== null ? (
           product.CPRECIO1 > 0 ? (
             <span className="mt-2 text-lg font-bold text-gray-900">
-              ${product.CPRECIO1.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+              {formatMoney(product.CPRECIO1)}
             </span>
           ) : (
             <span className="mt-2 text-sm font-medium text-gray-400">Sin precio</span>

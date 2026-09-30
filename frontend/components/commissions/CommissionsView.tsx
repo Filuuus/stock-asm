@@ -42,7 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { CommissionLine, CommissionsSummary, InvoiceSearchResult, WarningInvoice, Zone } from "@/types/commissions";
@@ -116,7 +116,7 @@ function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: s
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </td>
               <td className="pr-4 whitespace-nowrap">{ZONE_LABELS[r.zone] ?? r.zone}</td>
-              <td className="text-right num">{currency(r.total)}</td>
+              <td className="text-right num">{formatMoney(r.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -125,13 +125,6 @@ function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: s
   );
 }
 
-function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 function quantity(value: number) {
   return value.toLocaleString("es-MX", { maximumFractionDigits: 2 });
@@ -411,9 +404,7 @@ export default function CommissionsView() {
   return (
     <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Comisiones por Zona
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900">Comisiones</h1>
         <p className="text-sm text-gray-500">
           Cálculo automático a partir de facturas pagadas en su totalidad -
           borrador para revisión, no es el pago oficial.
@@ -441,7 +432,7 @@ export default function CommissionsView() {
                 Total de comisiones, {formatDay(data.date_from)} a {formatDay(data.date_to)}
               </CardDescription>
               <CardTitle className="text-3xl">
-                {currency(totalCommission)}
+                {formatMoney(totalCommission)}
               </CardTitle>
             </CardHeader>
           </Card>
@@ -459,7 +450,7 @@ export default function CommissionsView() {
                 <CardHeader className="p-4">
                   <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
                   <CardTitle className="text-lg sm:text-xl">
-                    {currency(data.zone_totals[zone] ?? 0)}
+                    {formatMoney(data.zone_totals[zone] ?? 0)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -472,7 +463,7 @@ export default function CommissionsView() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
                   {data.unresolved_payment_date.count} facturas pagadas en Comercial este mes, aún
-                  sin póliza en Contabilidad ({currency(data.unresolved_payment_date.total_amount)})
+                  sin póliza en Contabilidad ({formatMoney(data.unresolved_payment_date.total_amount)})
                 </p>
                 <p className="text-amber-700">
                   {data.unresolved_payment_date.note}
@@ -488,7 +479,7 @@ export default function CommissionsView() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium">
                   {data.credit_noted.count} facturas liquidadas por nota de
-                  crédito este mes ({currency(data.credit_noted.total_amount)})
+                  crédito este mes ({formatMoney(data.credit_noted.total_amount)})
                 </p>
                 <p className="text-slate-600">{data.credit_noted.note}</p>
                 <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
@@ -597,7 +588,7 @@ export default function CommissionsView() {
                             {group.lines.length}
                           </TableCell>
                           <TableCell className="text-right num font-medium">
-                            {currency(group.commission_total)}
+                            {formatMoney(group.commission_total)}
                             {group.manual && (
                               <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-100 text-amber-800">
                                 Manual
@@ -698,17 +689,17 @@ export default function CommissionsView() {
                                       </TableCell>
                                       <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>
                                         {line.unit_amount != null
-                                          ? currency(line.unit_amount)
+                                          ? formatMoney(line.unit_amount)
                                           : "-"}
                                       </TableCell>
                                       <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
-                                        {currency(line.net_amount)}
+                                        {formatMoney(line.net_amount)}
                                       </TableCell>
                                       <TableCell className="text-right num">
                                         {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
                                       </TableCell>
                                       <TableCell className="text-right num lg:pr-8">
-                                        {currency(line.commission)}
+                                        {formatMoney(line.commission)}
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -774,7 +765,7 @@ export default function CommissionsView() {
                   >
                     <span className="truncate">{invoice.cliente}</span>
                     <span className="ml-2 shrink-0 num text-gray-500">
-                      {currency(invoice.total)}
+                      {formatMoney(invoice.total)}
                     </span>
                   </button>
                 ))}
