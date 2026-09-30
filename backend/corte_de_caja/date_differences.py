@@ -172,7 +172,7 @@ def _match_wrong_folios(pairs, facturas_by_id):
     stays on the invoice Comercial applied the payment to; cited_invoice_id
     is the one the poliza names."""
     only_ledger = [p for p in pairs if p['status'] == STATUS_CONTABILIDAD_ONLY]
-    for p in pairs:
+    for p in list(pairs):  # a copy: joined rows are removed from pairs below
         if p['status'] != STATUS_COMERCIAL_ONLY:
             continue
         c = p['comercial'][0]
