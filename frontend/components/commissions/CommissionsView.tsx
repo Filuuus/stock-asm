@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
-import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_SM, SortableHead, SortColumn, useSort } from "@/components/sortable-table";
 import { MonthControl } from "@/components/date-controls";
 import { currentMonthISO, formatDay } from "@/lib/dates";
 import { ZONE_LABELS } from "@/lib/zones";
@@ -74,6 +74,7 @@ const CATEGORY_BADGE: Record<string, string> = {
 interface InvoiceGroup {
   invoice_id: number;
   folio: number;
+  folio_display: string;
   client_id: number;
   cliente: string;
   zone: Zone;
@@ -108,14 +109,14 @@ function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: s
           {rows.map((r) => (
             <tr key={r.invoice_id}>
               <td className="pr-4 whitespace-nowrap">{formatDay(r.date)}</td>
-              <td className="pr-4 font-mono whitespace-nowrap">
+              <td className="pr-4 num">
                 <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
               </td>
               <td className="pr-4 max-w-56 truncate" title={r.cliente}>
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </td>
               <td className="pr-4 whitespace-nowrap">{ZONE_LABELS[r.zone] ?? r.zone}</td>
-              <td className="text-right font-mono whitespace-nowrap">{currency(r.total)}</td>
+              <td className="text-right num">{currency(r.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -155,6 +156,7 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
       group = {
         invoice_id: line.invoice_id,
         folio: line.folio,
+        folio_display: line.folio_display,
         client_id: line.client_id,
         cliente: line.cliente,
         zone: line.zone,
@@ -378,7 +380,7 @@ export default function CommissionsView() {
     if (!q) return groups;
     return groups.filter(
       (g) =>
-        `${g.cliente} ${g.folio}`.toLowerCase().includes(q) ||
+        `${g.cliente} ${g.folio} ${g.folio_display}`.toLowerCase().includes(q) ||
         g.lines.some((l) =>
           `${l.producto_nombre} ${l.producto_codigo ?? ""}`.toLowerCase().includes(q),
         ),
@@ -393,7 +395,7 @@ export default function CommissionsView() {
 
   if (!authLoading && !isWorker) {
     return (
-      <main className="max-w-7xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             Debe iniciar sesión para ver las comisiones.
@@ -407,7 +409,7 @@ export default function CommissionsView() {
   }
 
   return (
-    <main className="max-w-7xl mx-auto w-full p-6 flex flex-col gap-6">
+    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-gray-900">
           Comisiones por Zona
@@ -512,7 +514,7 @@ export default function CommissionsView() {
               </div>
               <div className="flex items-center gap-2">
                 {isManagement && (
-                  <Button size="sm" variant="outline" onClick={openAddDialog}>
+                  <Button size="sm" variant="outline" onClick={openAddDialog} className="shrink-0">
                     <Plus className="w-4 h-4" />
                     Agregar factura
                   </Button>
@@ -521,7 +523,7 @@ export default function CommissionsView() {
                   placeholder="Buscar cliente, producto o folio..."
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="w-full sm:w-72"
+                  className="min-w-0 flex-1 sm:w-72 sm:flex-none"
                 />
               </div>
             </div>
@@ -530,18 +532,18 @@ export default function CommissionsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8" />
+                    <TableHead className="w-8 px-2 sm:px-3" />
                     {(
                       [
                         ["folio", "Folio"],
                         ["cliente", "Cliente"],
-                        ["zona", "Zona"],
-                        ["paid_date", "Fecha de pago"],
-                        ["days_late", "Días tarde", "right"],
-                        ["items", "Productos", "right"],
+                        ["zona", "Zona", undefined, HIDE_BELOW_LG],
+                        ["paid_date", "Fecha de pago", undefined, HIDE_BELOW_SM],
+                        ["days_late", "Días tarde", "right", HIDE_BELOW_LG],
+                        ["items", "Productos", "right", HIDE_BELOW_LG],
                         ["commission", "Comisión", "right"],
-                      ] as [InvoiceSortKey, string, "right"?][]
-                    ).map(([key, label, align]) => (
+                      ] as [InvoiceSortKey, string, "right"?, string?][]
+                    ).map(([key, label, align, className]) => (
                       <SortableHead
                         key={key}
                         label={label}
@@ -550,9 +552,10 @@ export default function CommissionsView() {
                         sortDir={sortDir}
                         onSort={toggleSort}
                         align={align}
+                        className={className}
                       />
                     ))}
-                    {isManagement && <TableHead className="w-28" />}
+                    {isManagement && <TableHead className={cn("w-28", HIDE_BELOW_SM)} />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -568,32 +571,32 @@ export default function CommissionsView() {
                           )}
                           onClick={() => toggleExpanded(group.invoice_id)}
                         >
-                          <TableCell>
+                          <TableCell className="px-2 sm:px-3">
                             {isOpen ? (
                               <ChevronDown className="w-4 h-4 text-gray-400" />
                             ) : (
                               <ChevronRight className="w-4 h-4 text-gray-400" />
                             )}
                           </TableCell>
-                          <TableCell className={cn("font-mono text-xs", group.excluded && "line-through")}>
-                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio} />
+                          <TableCell className={cn("num", group.excluded && "line-through")}>
+                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio_display} />
                           </TableCell>
-                          <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
+                          <TableCell className={cn("max-w-28 sm:max-w-56 truncate", group.excluded && "line-through")}>
                             <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600 whitespace-nowrap">
+                          <TableCell className={cn("text-gray-600 whitespace-nowrap", HIDE_BELOW_LG)}>
                             {ZONE_LABELS[group.zone] ?? group.zone}
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600">
+                          <TableCell className={cn("text-gray-600 whitespace-nowrap", HIDE_BELOW_SM)}>
                             {formatDay(group.paid_date)}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-xs">
+                          <TableCell className={cn("text-right text-gray-600", HIDE_BELOW_LG)}>
                             {group.days_late > 0 ? group.days_late : "-"}
                           </TableCell>
-                          <TableCell className="text-right text-xs text-gray-600">
+                          <TableCell className={cn("text-right text-gray-600", HIDE_BELOW_LG)}>
                             {group.lines.length}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-medium">
+                          <TableCell className="text-right num font-medium">
                             {currency(group.commission_total)}
                             {group.manual && (
                               <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-100 text-amber-800">
@@ -602,11 +605,12 @@ export default function CommissionsView() {
                             )}
                           </TableCell>
                           {isManagement && (
-                            <TableCell onClick={(e) => e.stopPropagation()}>
+                            <TableCell className={HIDE_BELOW_SM} onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 className="text-xs"
+                                title={group.excluded || group.manual ? "Restaurar" : "Excluir"}
                                 onClick={() => handleToggleExclude(group)}
                               >
                                 {group.excluded || group.manual ? (
@@ -627,22 +631,44 @@ export default function CommissionsView() {
                         {isOpen && (
                           <TableRow key={`${group.invoice_id}-detail`}>
                             <TableCell colSpan={isManagement ? 9 : 8} className="bg-gray-50 p-0">
+                              {/* Columns hidden at this width show here instead. */}
+                              <div className="flex items-center justify-between gap-2 px-4 pt-3 text-xs text-gray-600 lg:hidden">
+                                <p>
+                                  {ZONE_LABELS[group.zone] ?? group.zone} · 
+                                  <span className="sm:hidden">Pagada el {formatDay(group.paid_date)} · </span>
+                                  {group.days_late > 0 ? `${group.days_late} días tarde` : "A tiempo"}
+                                </p>
+                                {isManagement && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs sm:hidden"
+                                    onClick={() => handleToggleExclude(group)}
+                                  >
+                                    {group.excluded || group.manual ? (
+                                      <><RotateCcw className="w-3.5 h-3.5" />Restaurar</>
+                                    ) : (
+                                      <><Ban className="w-3.5 h-3.5" />Excluir</>
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
                               <Table>
                                 <TableHeader>
                                   <TableRow className="hover:bg-transparent">
-                                    <TableHead className="pl-14">Producto</TableHead>
-                                    <TableHead>Categoría</TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className="pl-4 lg:pl-14">Producto</TableHead>
+                                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>Categoría</TableHead>
+                                    <TableHead className={cn("text-right", HIDE_BELOW_LG)}>
                                       Cantidad
                                     </TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className={cn("text-right whitespace-nowrap", HIDE_BELOW_LG)}>
                                       Precio unit.
                                     </TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className={cn("text-right whitespace-nowrap", HIDE_BELOW_SM)}>
                                       Monto neto
                                     </TableHead>
                                     <TableHead className="text-right">Tasa</TableHead>
-                                    <TableHead className="text-right pr-8">
+                                    <TableHead className="text-right lg:pr-8">
                                       Comisión
                                     </TableHead>
                                   </TableRow>
@@ -653,35 +679,35 @@ export default function CommissionsView() {
                                       key={`${line.invoice_id}-${line.producto_codigo}-${i}`}
                                       className="hover:bg-transparent"
                                     >
-                                      <TableCell className="pl-14 max-w-64 truncate text-sm">
+                                      <TableCell className="pl-4 lg:pl-14 min-w-40 sm:max-w-48 lg:max-w-64 sm:truncate">
                                         {line.producto_nombre}
                                       </TableCell>
-                                      <TableCell>
+                                      <TableCell className={HIDE_BELOW_SM}>
                                         {line.category && (
                                           <Badge
                                             variant="outline"
-                                            className={CATEGORY_BADGE[line.category]}
+                                            className={cn("whitespace-nowrap", CATEGORY_BADGE[line.category])}
                                           >
                                             {CATEGORY_LABELS[line.category] ??
                                               line.category}
                                           </Badge>
                                         )}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>
                                         {line.quantity != null ? quantity(line.quantity) : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>
                                         {line.unit_amount != null
                                           ? currency(line.unit_amount)
                                           : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
                                         {currency(line.net_amount)}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className="text-right num">
                                         {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-sm pr-8">
+                                      <TableCell className="text-right num lg:pr-8">
                                         {currency(line.commission)}
                                       </TableCell>
                                     </TableRow>
@@ -747,7 +773,7 @@ export default function CommissionsView() {
                     )}
                   >
                     <span className="truncate">{invoice.cliente}</span>
-                    <span className="ml-2 shrink-0 font-mono text-xs text-gray-500">
+                    <span className="ml-2 shrink-0 num text-gray-500">
                       {currency(invoice.total)}
                     </span>
                   </button>

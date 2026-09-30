@@ -85,7 +85,7 @@ export default function FacturaView() {
 
   if (!authLoading && !(isAccounting || isManagement)) {
     return (
-      <main className="max-w-7xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             No tiene permiso para consultar facturas.
@@ -101,7 +101,7 @@ export default function FacturaView() {
   const showResultsList = results && !detail && !loading;
 
   return (
-    <main className="w-full max-w-7xl mx-auto p-6 flex flex-col gap-6">
+    <main className="w-full max-w-7xl mx-auto p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-gray-900">Consulta de factura</h1>
         <p className="text-sm text-gray-500">

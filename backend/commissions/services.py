@@ -669,6 +669,7 @@ def _manual_line(base, override):
     return {
         'invoice_id': base['invoice_id'],
         'folio': base['folio'],
+        'folio_display': base['folio_display'],
         'client_id': base.get('client_id'),
         'cliente': base['cliente'],
         'zone': override.zone or base['zone'],
@@ -730,8 +731,10 @@ def _apply_overrides(lines, zone_totals, overrides):
         facturas = {
             f['CIDDOCUMENTO']: f for f in AdmDocumentos.objects.filter(
                 CIDDOCUMENTO__in=[invoice_id for invoice_id, _ in added]
-            ).values('CIDDOCUMENTO', 'CFOLIO', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA')
+            ).values('CIDDOCUMENTO', 'CFOLIO', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA',
+                     'CIDCONCEPTODOCUMENTO')
         }
+        concepto_series = CommissionRepository.fetch_concepto_series()
         for invoice_id, override in added:
             factura = facturas.get(invoice_id)
             if factura is None or not override.zone:
@@ -740,6 +743,7 @@ def _apply_overrides(lines, zone_totals, overrides):
             result_lines.append(_manual_line({
                 'invoice_id': invoice_id,
                 'folio': factura['CFOLIO'],
+                'folio_display': f"{concepto_series.get(factura['CIDCONCEPTODOCUMENTO'], 'F')} {int(factura['CFOLIO'])}",
                 'client_id': factura['CIDCLIENTEPROVEEDOR'],
                 'cliente': factura['CRAZONSOCIAL'],
                 'zone': override.zone,
@@ -913,6 +917,8 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         lines.append({
             'invoice_id': m['CIDDOCUMENTO'],
             'folio': factura['CFOLIO'],
+            # Display only ("F 20844"); `folio` stays the bare number.
+            'folio_display': f"{concepto_series.get(factura['CIDCONCEPTODOCUMENTO'], 'F')} {int(factura['CFOLIO'])}",
             'client_id': factura['CIDCLIENTEPROVEEDOR'],
             'cliente': factura['CRAZONSOCIAL'],
             'zone': zone_code,

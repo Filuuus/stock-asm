@@ -30,7 +30,7 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex flex-1 items-center justify-center p-6">
+    <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Iniciar sesión</CardTitle>

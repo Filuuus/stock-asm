@@ -102,3 +102,10 @@ export function SortableHead<K extends string>({
     </TableHead>
   );
 }
+
+// Secondary columns drop out on narrow screens so the key ones (folio,
+// client, amount) fit without sideways scrolling. Apply the same constant to
+// a column's header and its cells.
+export const HIDE_BELOW_SM = "hidden sm:table-cell";
+export const HIDE_BELOW_MD = "hidden md:table-cell";
+export const HIDE_BELOW_LG = "hidden lg:table-cell";

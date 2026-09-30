@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
 import { MonthControl } from "@/components/date-controls";
@@ -175,16 +176,16 @@ export default function DiferenciasFechaView() {
               />
             </div>
             <div className="overflow-x-auto rounded-lg border bg-white">
-              <Table className="min-w-[1000px]">
+              <Table className="[&_td]:px-2 [&_th]:px-2 lg:[&_td]:px-3 lg:[&_th]:px-3">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="whitespace-nowrap">Estado</TableHead>
                     <TableHead className="whitespace-nowrap">Factura</TableHead>
-                    <TableHead className="whitespace-nowrap">Cliente</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_MD)}>Cliente</TableHead>
                     <TableHead className="text-right whitespace-nowrap">Monto</TableHead>
-                    <TableHead className="whitespace-nowrap">Comercial</TableHead>
-                    <TableHead className="whitespace-nowrap">Contabilidad</TableHead>
-                    <TableHead className="text-right whitespace-nowrap">Diferencia</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>Comercial</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>Contabilidad</TableHead>
+                    <TableHead className={cn("text-right whitespace-nowrap", HIDE_BELOW_SM)}>Diferencia</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -225,94 +226,96 @@ function DifferenceRow({ row }: { row: DateDifferenceRow }) {
   const comercialMonth = monthKey(row.comercial_date);
   const monthMismatch = row.status === "distinto_mes";
 
+  const comercialInfo =
+    row.comercial.length === 0 ? (
+      <span className="text-gray-400">Sin pago aplicado</span>
+    ) : (
+      row.comercial.map((c) => (
+        <div key={`${c.date}${c.documento}${c.amount}`}>
+          <span className={cn("font-medium", monthMismatch && "text-red-700")}>
+            {formatDay(c.date)}
+          </span>
+          <span className="ml-1 text-gray-500">{c.documento}</span>
+          {row.comercial.length > 1 && (
+            <span className="ml-1 text-gray-500">{currency(c.amount)}</span>
+          )}
+          {c.applied_date !== c.date && (
+            <span className="block text-gray-400">
+              aplicado a la factura el {formatDay(c.applied_date)}
+            </span>
+          )}
+        </div>
+      ))
+    );
+
+  const contabilidadInfo =
+    row.contabilidad.length === 0 ? (
+      <span className="text-gray-400">Sin póliza</span>
+    ) : (
+      row.contabilidad.map((l) => (
+        <div key={`${l.date}${l.polizas.join()}${l.amount}`}>
+          <span
+            className={cn(
+              "font-medium",
+              monthMismatch && monthKey(l.date) !== comercialMonth && "text-red-700",
+            )}
+          >
+            {formatDay(l.date)}
+          </span>
+          <span className="ml-1 text-gray-500">Póliza {l.polizas.join(", ")}</span>
+          {row.cited_invoice_id && row.cited_folio_display && (
+            <span className="block text-red-700">
+              cita la factura{" "}
+              <InvoiceLink invoiceId={row.cited_invoice_id} label={row.cited_folio_display} />
+            </span>
+          )}
+          {row.contabilidad.length > 1 && (
+            <span className="ml-1 text-gray-500">{currency(l.amount)}</span>
+          )}
+        </div>
+      ))
+    );
+
   return (
-    <TableRow className="align-top">
-      <TableCell className="whitespace-nowrap">
-        <Badge variant="outline" className={info.badge}>
-          {info.label}
-        </Badge>
-      </TableCell>
-      <TableCell className="font-mono text-xs whitespace-nowrap">
-        <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
-      </TableCell>
-      <TableCell className="max-w-56 truncate" title={row.cliente}>
-        <ClientLink clientId={row.client_id} label={row.cliente} />
-      </TableCell>
-      <TableCell className="text-right font-mono text-xs whitespace-nowrap">
-        {currency(row.amount)}
-      </TableCell>
-      <TableCell className="text-xs">
-        {row.comercial.length === 0 ? (
-          <span className="text-gray-400">Sin pago aplicado</span>
-        ) : (
-          row.comercial.map((c) => (
-            <div
-              key={`${c.date}${c.documento}${c.amount}`}
-              className="whitespace-nowrap"
-            >
-              <span
-                className={cn("font-medium", monthMismatch && "text-red-700")}
-              >
-                {formatDay(c.date)}
-              </span>
-              <span className="ml-1 text-gray-500">{c.documento}</span>
-              {row.comercial.length > 1 && (
-                <span className="ml-1 text-gray-500">{currency(c.amount)}</span>
-              )}
-              {c.applied_date !== c.date && (
-                <span className="block text-gray-400">
-                  aplicado a la factura el {formatDay(c.applied_date)}
-                </span>
-              )}
+    <>
+      <TableRow className="align-top border-b-0 lg:border-b">
+        <TableCell className="whitespace-nowrap">
+          <Badge variant="outline" className={info.badge}>
+            {info.label}
+          </Badge>
+        </TableCell>
+        <TableCell className="num">
+          <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
+        </TableCell>
+        <TableCell className={cn("max-w-56 truncate", HIDE_BELOW_MD)} title={row.cliente}>
+          <ClientLink clientId={row.client_id} label={row.cliente} />
+        </TableCell>
+        <TableCell className="text-right num">{currency(row.amount)}</TableCell>
+        <TableCell className={cn("min-w-44", HIDE_BELOW_LG)}>{comercialInfo}</TableCell>
+        <TableCell className={cn("min-w-44", HIDE_BELOW_LG)}>{contabilidadInfo}</TableCell>
+        <TableCell className={cn("text-right whitespace-nowrap", HIDE_BELOW_SM)}>
+          {row.days_difference === null
+            ? "-"
+            : row.days_difference === 0
+              ? "0 días"
+              : `${row.days_difference > 0 ? "+" : ""}${row.days_difference} ${Math.abs(row.days_difference) === 1 ? "día" : "días"}`}
+        </TableCell>
+      </TableRow>
+      {/* Below desktop the two dates go on a second line instead of two columns. */}
+      <TableRow className="lg:hidden hover:bg-transparent">
+        <TableCell colSpan={7} className="pt-0">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-gray-400">Comercial</p>
+              {comercialInfo}
             </div>
-          ))
-        )}
-      </TableCell>
-      <TableCell className="text-xs">
-        {row.contabilidad.length === 0 ? (
-          <span className="text-gray-400">Sin póliza</span>
-        ) : (
-          row.contabilidad.map((l) => (
-            <div
-              key={`${l.date}${l.polizas.join()}${l.amount}`}
-              className="whitespace-nowrap"
-            >
-              <span
-                className={cn(
-                  "font-medium",
-                  monthMismatch &&
-                    monthKey(l.date) !== comercialMonth &&
-                    "text-red-700",
-                )}
-              >
-                {formatDay(l.date)}
-              </span>
-              <span className="ml-1 text-gray-500">
-                Póliza {l.polizas.join(", ")}
-              </span>
-              {row.cited_invoice_id && row.cited_folio_display && (
-                <span className="block text-red-700">
-                  cita la factura{" "}
-                  <InvoiceLink
-                    invoiceId={row.cited_invoice_id}
-                    label={row.cited_folio_display}
-                  />
-                </span>
-              )}
-              {row.contabilidad.length > 1 && (
-                <span className="ml-1 text-gray-500">{currency(l.amount)}</span>
-              )}
+            <div>
+              <p className="text-xs text-gray-400">Contabilidad</p>
+              {contabilidadInfo}
             </div>
-          ))
-        )}
-      </TableCell>
-      <TableCell className="text-right text-xs whitespace-nowrap">
-        {row.days_difference === null
-          ? "-"
-          : row.days_difference === 0
-            ? "0 días"
-            : `${row.days_difference > 0 ? "+" : ""}${row.days_difference} ${Math.abs(row.days_difference) === 1 ? "día" : "días"}`}
-      </TableCell>
-    </TableRow>
+          </div>
+        </TableCell>
+      </TableRow>
+    </>
   );
 }

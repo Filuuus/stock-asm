@@ -249,13 +249,13 @@ function ClientInvoiceRow({ row, onOpen }: { row: ClientInvoice; onOpen: (id: nu
       onClick={() => onOpen(row.invoice_id)}
       className={cn("cursor-pointer hover:bg-slate-50", row.status === "cancelada" && "text-gray-400")}
     >
-      <TableCell className="font-mono text-xs whitespace-nowrap underline decoration-gray-300 underline-offset-2">
+      <TableCell className="num underline decoration-gray-300 underline-offset-2">
         {row.folio_display}
       </TableCell>
       <TableCell className="whitespace-nowrap">{formatDay(row.fecha)}</TableCell>
       <TableCell className="whitespace-nowrap">{formatDay(row.vencimiento)}</TableCell>
-      <TableCell className="text-right font-mono text-xs whitespace-nowrap">{currency(row.total)}</TableCell>
-      <TableCell className="text-right font-mono text-xs whitespace-nowrap">{row.pendiente >= 1 ? currency(row.pendiente) : "-"}</TableCell>
+      <TableCell className="text-right num">{currency(row.total)}</TableCell>
+      <TableCell className="text-right num">{row.pendiente >= 1 ? currency(row.pendiente) : "-"}</TableCell>
       <TableCell className="whitespace-nowrap">
         <Badge variant="outline" className={badge.className}>{badge.label}</Badge>
       </TableCell>

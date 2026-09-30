@@ -106,7 +106,7 @@ export function InvoiceList({ results, onSelect }: {
               onClick={() => onSelect(r.invoice_id)}
               className="cursor-pointer hover:bg-slate-50"
             >
-              <TableCell className="font-mono text-xs whitespace-nowrap">
+              <TableCell className="num">
                 {r.folio_display}
               </TableCell>
               <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
@@ -114,8 +114,8 @@ export function InvoiceList({ results, onSelect }: {
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </TableCell>
               <TableCell className="text-xs">{zoneLabel(r.zona)}</TableCell>
-              <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
-              <TableCell className="text-right font-mono text-xs">{currency(r.pendiente)}</TableCell>
+              <TableCell className="text-right num">{currency(r.total)}</TableCell>
+              <TableCell className="text-right num">{currency(r.pendiente)}</TableCell>
               <TableCell className="whitespace-nowrap">
                 <StatusBadges cancelada={r.cancelada} pendiente={r.pendiente} total={r.total} />
               </TableCell>
@@ -297,23 +297,23 @@ export function InvoiceDetailView({ detail, onSelect }: {
                 {credits.map((a) => (
                   <TableRow key={`a${a.documento_id}`}>
                     <TableCell className="whitespace-nowrap">
-                      {a.tipo} <span className="font-mono text-xs text-gray-500">{a.documento}</span>
+                      {a.tipo} <span className="num text-gray-500">{a.documento}</span>
                       {a.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(a.fecha)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(a.amount)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(a.documento_total)}</TableCell>
+                    <TableCell className="text-right num">{currency(a.amount)}</TableCell>
+                    <TableCell className="text-right num">{currency(a.documento_total)}</TableCell>
                   </TableRow>
                 ))}
                 {detail.unapplied_returns.map((r) => (
                   <TableRow key={`r${r.documento_id}`}>
                     <TableCell className="whitespace-nowrap">
-                      {r.tipo} <span className="font-mono text-xs text-gray-500">{r.documento}</span>
+                      {r.tipo} <span className="num text-gray-500">{r.documento}</span>
                       {r.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
                     <TableCell className="text-right text-xs text-amber-700">No aplicada</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
+                    <TableCell className="text-right num">{currency(r.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -338,11 +338,11 @@ export function InvoiceDetailView({ detail, onSelect }: {
               <TableBody>
                 {detail.referencing_payments.map((p) => (
                   <TableRow key={p.documento_id}>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">{p.documento}</TableCell>
+                    <TableCell className="num">{p.documento}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(p.fecha)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(p.total)}</TableCell>
+                    <TableCell className="text-right num">{currency(p.total)}</TableCell>
                     <TableCell className="text-xs">{p.referencia}</TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell className="num">
                       {p.applied_to.length ? p.applied_to.join(", ") : "Ninguna factura"}
                     </TableCell>
                   </TableRow>
@@ -380,13 +380,13 @@ export function InvoiceDetailView({ detail, onSelect }: {
             <TableBody>
               {detail.lines.map((l) => (
                 <TableRow key={l.numero}>
-                  <TableCell className="font-mono text-xs whitespace-nowrap">{l.codigo}</TableCell>
+                  <TableCell className="num">{l.codigo}</TableCell>
                   <TableCell className="max-w-96 truncate" title={l.producto}>{l.producto}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{l.cantidad.toLocaleString("es-MX")}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.precio)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{l.descuento ? currency(l.descuento) : "-"}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.iva)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.total)}</TableCell>
+                  <TableCell className="text-right num">{l.cantidad.toLocaleString("es-MX")}</TableCell>
+                  <TableCell className="text-right num">{currency(l.precio)}</TableCell>
+                  <TableCell className="text-right num">{l.descuento ? currency(l.descuento) : "-"}</TableCell>
+                  <TableCell className="text-right num">{currency(l.iva)}</TableCell>
+                  <TableCell className="text-right num">{currency(l.total)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -435,7 +435,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
             <div key={i} className="whitespace-nowrap">
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(c.date)}</span>
               <span className="ml-1 text-gray-500">{c.documento}</span>
-              <span className="ml-2 font-mono">{currency(c.amount)}</span>
+              <span className="ml-2 num">{currency(c.amount)}</span>
               {c.applied_date !== c.date && (
                 <span className="block text-gray-400">aplicado a la factura el {formatDay(c.applied_date)}</span>
               )}
@@ -454,7 +454,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
             <div key={i} className="whitespace-nowrap">
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(l.date)}</span>
               <span className="ml-1 text-gray-500">Póliza {l.polizas.join(", ")}</span>
-              <span className="ml-2 font-mono">{currency(l.amount)}</span>
+              <span className="ml-2 num">{currency(l.amount)}</span>
             </div>
           ))
         )}
@@ -495,7 +495,7 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
         <span className="text-gray-500 truncate max-w-72" title={poliza.concepto}>{poliza.concepto}</span>
         {poliza.bank && <span className="text-xs text-gray-500">{poliza.bank}</span>}
         {poliza.is_payment && (
-          <span className="ml-auto font-mono text-xs">{currency(poliza.amount)}</span>
+          <span className="ml-auto num">{currency(poliza.amount)}</span>
         )}
         {poliza.is_payment && !poliza.counted && (
           <span className="basis-full pl-8 text-xs text-amber-700">No se cuenta: {poliza.not_counted_reason}</span>
@@ -521,8 +521,8 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
                       <span className="font-mono text-gray-500">{l.codigo}</span> {l.cuenta}
                     </TableCell>
                     <TableCell className="text-xs">{l.tipo}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(l.importe)}</TableCell>
-                    <TableCell className="font-mono text-xs">{l.referencia}</TableCell>
+                    <TableCell className="text-right num">{currency(l.importe)}</TableCell>
+                    <TableCell className="num">{l.referencia}</TableCell>
                     <TableCell className="text-xs max-w-72 truncate" title={l.concepto}>{l.concepto}</TableCell>
                   </TableRow>
                 ))}

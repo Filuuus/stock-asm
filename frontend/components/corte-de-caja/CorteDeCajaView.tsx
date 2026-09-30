@@ -43,6 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { HIDE_BELOW_LG, HIDE_BELOW_SM } from "@/components/sortable-table";
 import { cn } from "@/lib/utils";
 import { dateToISO, formatDay, isoToDate, todayISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
@@ -266,7 +267,7 @@ export default function CorteDeCajaView() {
 
   if (!authLoading && !canUse) {
     return (
-      <main className="max-w-7xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             {authLoading ? "" : "No tiene permiso para ver el Corte de Caja."}
@@ -290,7 +291,7 @@ export default function CorteDeCajaView() {
 
   if (view === "diferencias") {
     return (
-      <main className="w-full p-6 flex flex-col gap-6">
+      <main className="w-full p-4 sm:p-6 flex flex-col gap-6">
         <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
         {viewTabs}
         <DiferenciasFechaView />
@@ -298,8 +299,67 @@ export default function CorteDeCajaView() {
     );
   }
 
+  // Payment-method picker: in its own column from sm up, inside the
+  // expanded row on phones.
+  const methodPicker = (row: CorteDeCajaRow) => (
+    <div className="flex items-center gap-1">
+      <select
+        value={row.payment_method}
+        onChange={(e) => handleMethodChange(row, e.target.value)}
+        className={cn(
+          "h-8 rounded-md border px-2 text-xs",
+          row.payment_method_confirmed
+            ? "border-input bg-background"
+            : row.suggestion_confidence === "alta"
+              ? "border-emerald-300 bg-emerald-50"
+              : row.suggestion_confidence === "media"
+                ? "border-sky-300 bg-sky-50"
+                : "border-amber-400 bg-amber-50",
+        )}
+        title={
+          row.payment_method && !row.payment_method_confirmed
+            ? `Sin confirmar - ${row.suggestion_reason}`
+            : undefined
+        }
+      >
+        <option value="">Sin clasificar</option>
+        {(Object.keys(METHOD_LABELS) as PaymentMethod[]).map((m) => (
+          <option key={m} value={m}>
+            {METHOD_LABELS[m]}
+          </option>
+        ))}
+      </select>
+      {row.payment_method && !row.payment_method_confirmed && (
+        <span
+          className={cn(
+            "shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide",
+            row.suggestion_confidence === "alta"
+              ? "text-emerald-700"
+              : row.suggestion_confidence === "media"
+                ? "text-sky-700"
+                : "text-amber-700",
+          )}
+          title={row.suggestion_reason}
+        >
+          {row.suggestion_confidence === "baja" ? "elegir" : row.suggestion_confidence}
+        </span>
+      )}
+      {row.payment_method && !row.payment_method_confirmed && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="px-1.5 h-8"
+          title="Confirmar sugerencia"
+          onClick={() => handleMethodChange(row, row.payment_method)}
+        >
+          <Check className="w-3.5 h-3.5 text-sky-600" />
+        </Button>
+      )}
+    </div>
+  );
+
   return (
-    <main className="w-full p-6 flex flex-col gap-6">
+    <main className="w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-gray-900">Corte de Caja</h1>
         <p className="text-sm text-gray-500">
@@ -457,7 +517,7 @@ export default function CorteDeCajaView() {
                       {data.sin_poliza.rows.map((r) => (
                         <tr key={`${r.invoice_id}-${r.comercial_date}-${r.pago}`}>
                           <td className="pr-4 whitespace-nowrap">{formatDay(r.comercial_date)}</td>
-                          <td className="pr-4 font-mono whitespace-nowrap">
+                          <td className="pr-4 num">
                             <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
                           </td>
                           <td
@@ -469,11 +529,11 @@ export default function CorteDeCajaView() {
                           <td className="pr-4 max-w-56 truncate" title={r.cliente}>
                             <ClientLink clientId={r.client_id} label={r.cliente} />
                           </td>
-                          <td className="pr-4 text-right font-mono whitespace-nowrap">{currency(r.invoice_total)}</td>
-                          <td className="pr-4 text-right font-mono whitespace-nowrap">
+                          <td className="pr-4 text-right num">{currency(r.invoice_total)}</td>
+                          <td className="pr-4 text-right num">
                             {currency(r.amount)}
                           </td>
-                          <td className="font-mono whitespace-nowrap">{r.pago}</td>
+                          <td className="num">{r.pago}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -506,18 +566,19 @@ export default function CorteDeCajaView() {
             </div>
 
             <div className="rounded-lg border bg-white overflow-x-auto">
-              <Table className="min-w-[1100px]">
+              {/* Tighter cell padding below desktop so the key columns fit. */}
+              <Table className="[&_td]:px-2 [&_th]:px-2 lg:[&_td]:px-3 lg:[&_th]:px-3">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
                     <TableHead className="w-8" />
-                    <TableHead className="whitespace-nowrap">Fecha</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>Fecha</TableHead>
                     <TableHead className="whitespace-nowrap">Folio</TableHead>
                     <TableHead className="whitespace-nowrap">Cliente</TableHead>
                     <TableHead className="whitespace-nowrap text-right">Monto</TableHead>
-                    <TableHead className="whitespace-nowrap">Tipo</TableHead>
-                    <TableHead className="whitespace-nowrap">Forma de pago</TableHead>
-                    <TableHead className="whitespace-nowrap">Nota</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>Tipo</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>Forma de pago</TableHead>
+                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>Nota</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -532,7 +593,7 @@ export default function CorteDeCajaView() {
                                 ({groupRows.length})
                               </span>
                             </span>
-                            <span className="font-mono text-sm font-semibold text-gray-800">
+                            <span className="num font-semibold text-gray-800">
                               {currency(subtotal)}
                             </span>
                           </div>
@@ -561,19 +622,19 @@ export default function CorteDeCajaView() {
                                   title={row.reviewed ? `Revisado por ${row.reviewed_by ?? "?"}` : "Marcar como revisado"}
                                 />
                               </TableCell>
-                              <TableCell className="text-xs text-gray-600 whitespace-nowrap">{formatDay(row.event_date)}</TableCell>
+                              <TableCell className={cn("text-gray-600 whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(row.event_date)}</TableCell>
                               <TableCell
-                                className={cn("font-mono text-xs whitespace-nowrap", row.excluded && "line-through")}
+                                className={cn("num", row.excluded && "line-through")}
                               >
                                 <InvoiceLink invoiceId={row.invoice_id} label={row.folio_display} />
                               </TableCell>
-                              <TableCell className={cn("max-w-48 truncate", row.excluded && "line-through")}>
+                              <TableCell className={cn("max-w-[6.5rem] sm:max-w-36 lg:max-w-48 truncate", row.excluded && "line-through")}>
                                 <ClientLink clientId={row.client_id} label={row.cliente} />
                               </TableCell>
-                              <TableCell className="text-right font-mono text-xs whitespace-nowrap">
+                              <TableCell className="text-right num">
                                 {currency(row.amount)}
                               </TableCell>
-                              <TableCell className="whitespace-nowrap">
+                              <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>
                                 {row.abono ? (
                                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                                     Abono
@@ -584,66 +645,13 @@ export default function CorteDeCajaView() {
                                   </Badge>
                                 )}
                               </TableCell>
-                              <TableCell onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center gap-1">
-                                  <select
-                                    value={row.payment_method}
-                                    onChange={(e) => handleMethodChange(row, e.target.value)}
-                                    className={cn(
-                                      "h-8 rounded-md border px-2 text-xs",
-                                      row.payment_method_confirmed
-                                        ? "border-input bg-background"
-                                        : row.suggestion_confidence === "alta"
-                                          ? "border-emerald-300 bg-emerald-50"
-                                          : row.suggestion_confidence === "media"
-                                            ? "border-sky-300 bg-sky-50"
-                                            : "border-amber-400 bg-amber-50",
-                                    )}
-                                    title={
-                                      row.payment_method && !row.payment_method_confirmed
-                                        ? `Sin confirmar - ${row.suggestion_reason}`
-                                        : undefined
-                                    }
-                                  >
-                                    <option value="">Sin clasificar</option>
-                                    {(Object.keys(METHOD_LABELS) as PaymentMethod[]).map((m) => (
-                                      <option key={m} value={m}>
-                                        {METHOD_LABELS[m]}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {row.payment_method && !row.payment_method_confirmed && (
-                                    <span
-                                      className={cn(
-                                        "shrink-0 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide",
-                                        row.suggestion_confidence === "alta"
-                                          ? "text-emerald-700"
-                                          : row.suggestion_confidence === "media"
-                                            ? "text-sky-700"
-                                            : "text-amber-700",
-                                      )}
-                                      title={row.suggestion_reason}
-                                    >
-                                      {row.suggestion_confidence === "baja" ? "elegir" : row.suggestion_confidence}
-                                    </span>
-                                  )}
-                                  {row.payment_method && !row.payment_method_confirmed && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="px-1.5 h-8"
-                                      title="Confirmar sugerencia"
-                                      onClick={() => handleMethodChange(row, row.payment_method)}
-                                    >
-                                      <Check className="w-3.5 h-3.5 text-sky-600" />
-                                    </Button>
-                                  )}
-                                </div>
+                              <TableCell className={HIDE_BELOW_SM} onClick={(e) => e.stopPropagation()}>
+                                {methodPicker(row)}
                               </TableCell>
-                              <TableCell onClick={(e) => e.stopPropagation()}>
+                              <TableCell className={HIDE_BELOW_LG} onClick={(e) => e.stopPropagation()}>
                                 <div className="flex items-center gap-1">
                                   <span
-                                    className="max-w-32 truncate text-xs text-gray-600"
+                                    className="max-w-32 truncate text-gray-600"
                                     title={row.note || undefined}
                                   >
                                     {row.note || "-"}
@@ -658,7 +666,30 @@ export default function CorteDeCajaView() {
                               <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
                                 <TableCell />
                                 <TableCell colSpan={8} className="py-3">
-                                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs sm:grid-cols-3">
+                                  <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs sm:grid-cols-3">
+                                    {/* Columns hidden at this width show here instead. */}
+                                    <div className="col-span-2 sm:hidden">
+                                      <p className="mb-1 text-gray-400">Forma de pago</p>
+                                      {methodPicker(row)}
+                                    </div>
+                                    <div className="sm:hidden">
+                                      <p className="text-gray-400">Fecha</p>
+                                      <p className="text-gray-700">{formatDay(row.event_date)}</p>
+                                    </div>
+                                    <div className="lg:hidden">
+                                      <p className="text-gray-400">Tipo</p>
+                                      <p className="text-gray-700">{row.abono ? "Abono" : "Completo"}</p>
+                                    </div>
+                                    <div className="lg:hidden">
+                                      <p className="text-gray-400">Nota</p>
+                                      <button
+                                        onClick={() => openEditDialog(row)}
+                                        className="flex items-center gap-1 text-left text-gray-700 hover:text-gray-900"
+                                      >
+                                        {row.note || "-"}
+                                        <Pencil className="w-3 h-3 shrink-0 text-gray-400" />
+                                      </button>
+                                    </div>
                                     <div>
                                       <p className="text-gray-400">Categoría</p>
                                       <p className="text-gray-700">
