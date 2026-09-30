@@ -5,6 +5,7 @@ export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "B_MIPRO" | "B_
 export interface CommissionLine {
   invoice_id: number;
   folio: number;
+  folio_display: string; // "F 20844"
   // Bare ERP client id - opens the client history (see ClientLink).
   client_id: number;
   cliente: string;

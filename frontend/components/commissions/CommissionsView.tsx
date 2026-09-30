@@ -2,11 +2,9 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   Ban,
   ChevronDown,
   ChevronRight,
-  Info,
   Loader2,
   Plus,
   RotateCcw,
@@ -18,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
-import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_SM, SortableHead, SortColumn, useSort, EmptyRow } from "@/components/sortable-table";
 import { MonthControl } from "@/components/date-controls";
 import { currentMonthISO, formatDay } from "@/lib/dates";
 import { ZONE_LABELS } from "@/lib/zones";
@@ -42,7 +40,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney, plural } from "@/lib/utils";
+import { Notice, NoticeList } from "@/components/notice";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { CommissionLine, CommissionsSummary, InvoiceSearchResult, WarningInvoice, Zone } from "@/types/commissions";
@@ -74,6 +73,7 @@ const CATEGORY_BADGE: Record<string, string> = {
 interface InvoiceGroup {
   invoice_id: number;
   folio: number;
+  folio_display: string;
   client_id: number;
   cliente: string;
   zone: Zone;
@@ -93,44 +93,20 @@ const COMMISSION_ZONES = (Object.keys(ZONE_LABELS) as Zone[]).filter((z) => z !=
 // Invoices listed inside a warning: date, invoice, client, zone, total.
 function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: string }) {
   return (
-    <div className="mt-2 overflow-x-auto">
-      <table className="text-xs">
-        <thead className="text-left opacity-80">
-          <tr>
-            <th className="pr-4 font-medium">{dateLabel}</th>
-            <th className="pr-4 font-medium">Factura</th>
-            <th className="pr-4 font-medium">Cliente</th>
-            <th className="pr-4 font-medium">Zona</th>
-            <th className="font-medium text-right">Total factura</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.invoice_id}>
-              <td className="pr-4 whitespace-nowrap">{formatDay(r.date)}</td>
-              <td className="pr-4 font-mono whitespace-nowrap">
-                <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
-              </td>
-              <td className="pr-4 max-w-56 truncate" title={r.cliente}>
-                <ClientLink clientId={r.client_id} label={r.cliente} />
-              </td>
-              <td className="pr-4 whitespace-nowrap">{ZONE_LABELS[r.zone] ?? r.zone}</td>
-              <td className="text-right font-mono whitespace-nowrap">{currency(r.total)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <NoticeList
+      rows={rows}
+      rowKey={(r) => r.invoice_id}
+      columns={[
+        { label: "Factura", cell: (r) => <span className="num"><InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} /></span> },
+        { label: "Cliente", cell: (r) => <ClientLink clientId={r.client_id} label={r.cliente} /> },
+        { label: dateLabel, cell: (r) => formatDay(r.date) },
+        { label: "Zona", cell: (r) => ZONE_LABELS[r.zone] ?? r.zone },
+        { label: "Total", cell: (r) => <span className="num">{formatMoney(r.total)}</span>, align: "right" },
+      ]}
+    />
   );
 }
 
-function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 function quantity(value: number) {
   return value.toLocaleString("es-MX", { maximumFractionDigits: 2 });
@@ -155,6 +131,7 @@ function groupByInvoice(lines: CommissionLine[]): InvoiceGroup[] {
       group = {
         invoice_id: line.invoice_id,
         folio: line.folio,
+        folio_display: line.folio_display,
         client_id: line.client_id,
         cliente: line.cliente,
         zone: line.zone,
@@ -378,7 +355,7 @@ export default function CommissionsView() {
     if (!q) return groups;
     return groups.filter(
       (g) =>
-        `${g.cliente} ${g.folio}`.toLowerCase().includes(q) ||
+        `${g.cliente} ${g.folio} ${g.folio_display}`.toLowerCase().includes(q) ||
         g.lines.some((l) =>
           `${l.producto_nombre} ${l.producto_codigo ?? ""}`.toLowerCase().includes(q),
         ),
@@ -393,7 +370,7 @@ export default function CommissionsView() {
 
   if (!authLoading && !isWorker) {
     return (
-      <main className="max-w-7xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             Debe iniciar sesión para ver las comisiones.
@@ -407,11 +384,9 @@ export default function CommissionsView() {
   }
 
   return (
-    <main className="max-w-7xl mx-auto w-full p-6 flex flex-col gap-6">
+    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Comisiones por Zona
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900">Comisiones</h1>
         <p className="text-sm text-gray-500">
           Cálculo automático a partir de facturas pagadas en su totalidad -
           borrador para revisión, no es el pago oficial.
@@ -425,26 +400,23 @@ export default function CommissionsView() {
         )}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
+      {/* Old results stay visible, faded, while the next ones load. */}
       {data && !error && (
-        <>
+        <div className={cn("flex flex-col gap-6 transition-opacity", loading && "pointer-events-none opacity-50")}>
           <Card>
             <CardHeader>
               <CardDescription>
                 Total de comisiones, {formatDay(data.date_from)} a {formatDay(data.date_to)}
               </CardDescription>
               <CardTitle className="text-3xl">
-                {currency(totalCommission)}
+                {formatMoney(totalCommission)}
               </CardTitle>
             </CardHeader>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {COMMISSION_ZONES.map((zone) => (
               <Card
                 key={zone}
@@ -456,8 +428,8 @@ export default function CommissionsView() {
               >
                 <CardHeader className="p-4">
                   <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
-                  <CardTitle className="text-xl">
-                    {currency(data.zone_totals[zone] ?? 0)}
+                  <CardTitle className="text-lg sm:text-xl">
+                    {formatMoney(data.zone_totals[zone] ?? 0)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -465,39 +437,31 @@ export default function CommissionsView() {
           </div>
 
           {data.unresolved_payment_date.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">
-                  {data.unresolved_payment_date.count} facturas pagadas en Comercial este mes, aún
-                  sin póliza en Contabilidad ({currency(data.unresolved_payment_date.total_amount)})
-                </p>
-                <p className="text-amber-700">
-                  {data.unresolved_payment_date.note}
-                </p>
-                <InvoiceList rows={data.unresolved_payment_date.rows} dateLabel="Pago en Comercial" />
-              </div>
-            </div>
+            <Notice
+              tone="warning"
+              title={`${plural(data.unresolved_payment_date.count, "factura pagada", "facturas pagadas")} en Comercial, aún sin póliza en Contabilidad (${formatMoney(data.unresolved_payment_date.total_amount)})`}
+              summary="No entran en los totales hasta que se registre la póliza."
+            >
+              <p>{data.unresolved_payment_date.note}</p>
+              <InvoiceList rows={data.unresolved_payment_date.rows} dateLabel="Pago en Comercial" />
+            </Notice>
           )}
 
           {data.credit_noted.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">
-                  {data.credit_noted.count} facturas liquidadas por nota de
-                  crédito este mes ({currency(data.credit_noted.total_amount)})
-                </p>
-                <p className="text-slate-600">{data.credit_noted.note}</p>
-                <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
-              </div>
-            </div>
+            <Notice
+              tone="info"
+              title={`${plural(data.credit_noted.count, "factura liquidada", "facturas liquidadas")} por nota de crédito este mes (${formatMoney(data.credit_noted.total_amount)})`}
+              summary="No generan comisión."
+            >
+              <p>{data.credit_noted.note}</p>
+              <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
+            </Notice>
           )}
 
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
                   Facturas ({invoiceGroups.length})
                 </h2>
                 {selectedZone && (
@@ -512,7 +476,7 @@ export default function CommissionsView() {
               </div>
               <div className="flex items-center gap-2">
                 {isManagement && (
-                  <Button size="sm" variant="outline" onClick={openAddDialog}>
+                  <Button size="sm" variant="outline" onClick={openAddDialog} className="shrink-0">
                     <Plus className="w-4 h-4" />
                     Agregar factura
                   </Button>
@@ -521,7 +485,7 @@ export default function CommissionsView() {
                   placeholder="Buscar cliente, producto o folio..."
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="w-72"
+                  className="min-w-0 flex-1 sm:w-72 sm:flex-none"
                 />
               </div>
             </div>
@@ -530,18 +494,18 @@ export default function CommissionsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8" />
+                    <TableHead className="w-8 px-2 sm:px-3" />
                     {(
                       [
                         ["folio", "Folio"],
                         ["cliente", "Cliente"],
-                        ["zona", "Zona"],
-                        ["paid_date", "Fecha de pago"],
-                        ["days_late", "Días tarde", "right"],
-                        ["items", "Productos", "right"],
+                        ["zona", "Zona", undefined, HIDE_BELOW_LG],
+                        ["paid_date", "Fecha de pago", undefined, HIDE_BELOW_SM],
+                        ["days_late", "Días tarde", "right", HIDE_BELOW_LG],
+                        ["items", "Productos", "right", HIDE_BELOW_LG],
                         ["commission", "Comisión", "right"],
-                      ] as [InvoiceSortKey, string, "right"?][]
-                    ).map(([key, label, align]) => (
+                      ] as [InvoiceSortKey, string, "right"?, string?][]
+                    ).map(([key, label, align, className]) => (
                       <SortableHead
                         key={key}
                         label={label}
@@ -550,9 +514,10 @@ export default function CommissionsView() {
                         sortDir={sortDir}
                         onSort={toggleSort}
                         align={align}
+                        className={className}
                       />
                     ))}
-                    {isManagement && <TableHead className="w-28" />}
+                    {isManagement && <TableHead className={cn("w-28", HIDE_BELOW_SM)} />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -568,33 +533,33 @@ export default function CommissionsView() {
                           )}
                           onClick={() => toggleExpanded(group.invoice_id)}
                         >
-                          <TableCell>
+                          <TableCell className="px-2 sm:px-3">
                             {isOpen ? (
                               <ChevronDown className="w-4 h-4 text-gray-400" />
                             ) : (
                               <ChevronRight className="w-4 h-4 text-gray-400" />
                             )}
                           </TableCell>
-                          <TableCell className={cn("font-mono text-xs", group.excluded && "line-through")}>
-                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio} />
+                          <TableCell className={cn("num", group.excluded && "line-through")}>
+                            <InvoiceLink invoiceId={group.invoice_id} label={group.folio_display} />
                           </TableCell>
-                          <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
+                          <TableCell className={cn("max-w-28 sm:max-w-56 truncate", group.excluded && "line-through")}>
                             <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600 whitespace-nowrap">
+                          <TableCell className={cn("text-gray-600 whitespace-nowrap", HIDE_BELOW_LG)}>
                             {ZONE_LABELS[group.zone] ?? group.zone}
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600">
+                          <TableCell className={cn("text-gray-600 whitespace-nowrap", HIDE_BELOW_SM)}>
                             {formatDay(group.paid_date)}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-xs">
+                          <TableCell className={cn("text-right text-gray-600", HIDE_BELOW_LG)}>
                             {group.days_late > 0 ? group.days_late : "-"}
                           </TableCell>
-                          <TableCell className="text-right text-xs text-gray-600">
+                          <TableCell className={cn("text-right text-gray-600", HIDE_BELOW_LG)}>
                             {group.lines.length}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-medium">
-                            {currency(group.commission_total)}
+                          <TableCell className="text-right num font-medium">
+                            {formatMoney(group.commission_total)}
                             {group.manual && (
                               <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-100 text-amber-800">
                                 Manual
@@ -602,11 +567,12 @@ export default function CommissionsView() {
                             )}
                           </TableCell>
                           {isManagement && (
-                            <TableCell onClick={(e) => e.stopPropagation()}>
+                            <TableCell className={HIDE_BELOW_SM} onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 className="text-xs"
+                                title={group.excluded || group.manual ? "Restaurar" : "Excluir"}
                                 onClick={() => handleToggleExclude(group)}
                               >
                                 {group.excluded || group.manual ? (
@@ -627,22 +593,44 @@ export default function CommissionsView() {
                         {isOpen && (
                           <TableRow key={`${group.invoice_id}-detail`}>
                             <TableCell colSpan={isManagement ? 9 : 8} className="bg-gray-50 p-0">
+                              {/* Columns hidden at this width show here instead. */}
+                              <div className="flex items-center justify-between gap-2 px-4 pt-3 text-xs text-gray-600 lg:hidden">
+                                <p>
+                                  {ZONE_LABELS[group.zone] ?? group.zone} · 
+                                  <span className="sm:hidden">Pagada el {formatDay(group.paid_date)} · </span>
+                                  {group.days_late > 0 ? `${group.days_late} días tarde` : "A tiempo"}
+                                </p>
+                                {isManagement && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs sm:hidden"
+                                    onClick={() => handleToggleExclude(group)}
+                                  >
+                                    {group.excluded || group.manual ? (
+                                      <><RotateCcw className="w-3.5 h-3.5" />Restaurar</>
+                                    ) : (
+                                      <><Ban className="w-3.5 h-3.5" />Excluir</>
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
                               <Table>
                                 <TableHeader>
                                   <TableRow className="hover:bg-transparent">
-                                    <TableHead className="pl-14">Producto</TableHead>
-                                    <TableHead>Categoría</TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className="pl-4 lg:pl-14">Producto</TableHead>
+                                    <TableHead className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>Categoría</TableHead>
+                                    <TableHead className={cn("text-right", HIDE_BELOW_LG)}>
                                       Cantidad
                                     </TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className={cn("text-right whitespace-nowrap", HIDE_BELOW_LG)}>
                                       Precio unit.
                                     </TableHead>
-                                    <TableHead className="text-right">
+                                    <TableHead className={cn("text-right whitespace-nowrap", HIDE_BELOW_SM)}>
                                       Monto neto
                                     </TableHead>
                                     <TableHead className="text-right">Tasa</TableHead>
-                                    <TableHead className="text-right pr-8">
+                                    <TableHead className="text-right lg:pr-8">
                                       Comisión
                                     </TableHead>
                                   </TableRow>
@@ -653,36 +641,36 @@ export default function CommissionsView() {
                                       key={`${line.invoice_id}-${line.producto_codigo}-${i}`}
                                       className="hover:bg-transparent"
                                     >
-                                      <TableCell className="pl-14 max-w-64 truncate text-sm">
+                                      <TableCell className="pl-4 lg:pl-14 min-w-40 sm:max-w-48 lg:max-w-64 sm:truncate">
                                         {line.producto_nombre}
                                       </TableCell>
-                                      <TableCell>
+                                      <TableCell className={HIDE_BELOW_SM}>
                                         {line.category && (
                                           <Badge
                                             variant="outline"
-                                            className={CATEGORY_BADGE[line.category]}
+                                            className={cn("whitespace-nowrap", CATEGORY_BADGE[line.category])}
                                           >
                                             {CATEGORY_LABELS[line.category] ??
                                               line.category}
                                           </Badge>
                                         )}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>
                                         {line.quantity != null ? quantity(line.quantity) : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>
                                         {line.unit_amount != null
-                                          ? currency(line.unit_amount)
+                                          ? formatMoney(line.unit_amount)
                                           : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
-                                        {currency(line.net_amount)}
+                                      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                                        {formatMoney(line.net_amount)}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-xs">
+                                      <TableCell className="text-right num">
                                         {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
                                       </TableCell>
-                                      <TableCell className="text-right font-mono text-sm pr-8">
-                                        {currency(line.commission)}
+                                      <TableCell className="text-right num lg:pr-8">
+                                        {formatMoney(line.commission)}
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -694,21 +682,12 @@ export default function CommissionsView() {
                       </Fragment>
                     );
                   })}
-                  {invoiceGroups.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={isManagement ? 9 : 8}
-                        className="text-center text-sm text-gray-500 py-8"
-                      >
-                        Sin resultados para este período.
-                      </TableCell>
-                    </TableRow>
-                  )}
+                  {invoiceGroups.length === 0 && <EmptyRow colSpan={isManagement ? 9 : 8}>Sin facturas que mostrar.</EmptyRow>}
                 </TableBody>
               </Table>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -747,8 +726,8 @@ export default function CommissionsView() {
                     )}
                   >
                     <span className="truncate">{invoice.cliente}</span>
-                    <span className="ml-2 shrink-0 font-mono text-xs text-gray-500">
-                      {currency(invoice.total)}
+                    <span className="ml-2 shrink-0 num text-gray-500">
+                      {formatMoney(invoice.total)}
                     </span>
                   </button>
                 ))}

@@ -1,5 +1,6 @@
 "use client";
 
+import { Notice } from "@/components/notice";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ExternalLink, Loader2 } from "lucide-react";
@@ -108,7 +109,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
   return (
     <Dialog open={view !== null} onOpenChange={(open) => !open && close()}>
       <DialogContent className="max-w-6xl w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto bg-gray-50 grid-cols-[minmax(0,1fr)]">
-        <DialogHeader className="pr-8">
+        <DialogHeader className="pr-8 text-left">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               {canGoBack && (
@@ -118,7 +119,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
                 </Button>
               )}
               <DialogTitle>
-                {view?.kind === "client" ? "Historial del cliente" : "Consulta de factura"}
+                {view?.kind === "client" ? "Historial del cliente" : "Factura"}
               </DialogTitle>
             </div>
             {invoice && (
@@ -137,11 +138,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
           </DialogDescription>
         </DialogHeader>
 
-        {error && !data && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+        {error && !data && <Notice tone="error" summary={error} />}
         {!data && loadingPath === path && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />

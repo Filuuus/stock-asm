@@ -1,14 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Info,
-} from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -19,14 +12,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
-import { cn } from "@/lib/utils";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import { cn, formatMoney } from "@/lib/utils";
+import { Notice } from "@/components/notice";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
 import ClientLink from "@/components/facturas/ClientLink";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import type {
-  FlagLevel,
   InvoiceDetail,
   InvoiceSearchResult,
   PaymentPair,
@@ -36,19 +30,7 @@ import type {
 // Everything about one invoice - shared by the Consulta de factura page and
 // the invoice dialog any other screen opens (see InvoiceDialog).
 
-const FLAG_STYLE: Record<FlagLevel, { box: string; icon: typeof AlertCircle }> = {
-  error: { box: "border-red-200 bg-red-50 text-red-800", icon: AlertCircle },
-  warning: { box: "border-amber-200 bg-amber-50 text-amber-800", icon: AlertTriangle },
-  info: { box: "border-slate-200 bg-slate-50 text-slate-700", icon: Info },
-};
 
-export function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
 
 export async function getJson<T>(path: string): Promise<T> {
   const res = await apiFetch(path, { cache: "no-store" });
@@ -87,15 +69,15 @@ export function InvoiceList({ results, onSelect }: {
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border bg-white">
-      <Table className="min-w-[800px]">
+      <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Factura</TableHead>
-            <TableHead>Fecha</TableHead>
-            <TableHead>Cliente</TableHead>
-            <TableHead>Zona</TableHead>
+            <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
+            <TableHead className={HIDE_BELOW_MD}>Cliente</TableHead>
+            <TableHead className={HIDE_BELOW_LG}>Zona</TableHead>
             <TableHead className="text-right">Total</TableHead>
-            <TableHead className="text-right">Pendiente</TableHead>
+            <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Pendiente</TableHead>
             <TableHead>Estado</TableHead>
           </TableRow>
         </TableHeader>
@@ -106,16 +88,16 @@ export function InvoiceList({ results, onSelect }: {
               onClick={() => onSelect(r.invoice_id)}
               className="cursor-pointer hover:bg-slate-50"
             >
-              <TableCell className="font-mono text-xs whitespace-nowrap">
+              <TableCell className="num">
                 {r.folio_display}
               </TableCell>
-              <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
-              <TableCell className="max-w-72 truncate" title={r.cliente}>
+              <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(r.fecha)}</TableCell>
+              <TableCell className={cn("max-w-72 truncate", HIDE_BELOW_MD)} title={r.cliente}>
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </TableCell>
-              <TableCell className="text-xs">{zoneLabel(r.zona)}</TableCell>
-              <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
-              <TableCell className="text-right font-mono text-xs">{currency(r.pendiente)}</TableCell>
+              <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>{zoneLabel(r.zona)}</TableCell>
+              <TableCell className="text-right num">{formatMoney(r.total)}</TableCell>
+              <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.pendiente)}</TableCell>
               <TableCell className="whitespace-nowrap">
                 <StatusBadges cancelada={r.cancelada} pendiente={r.pendiente} total={r.total} />
               </TableCell>
@@ -197,7 +179,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <Field label="Cliente" value={<ClientLink clientId={invoice.client_id} label={invoice.cliente} />} />
-          <Field label="RFC" value={invoice.rfc} />
+          <Field label="RFC" value={invoice.rfc && <span className="whitespace-nowrap">{invoice.rfc}</span>} />
           <Field label="Zona" value={zoneLabel(invoice.zona)} />
           <Field label="Capturó" value={invoice.usuario} />
           <Field label="Fecha" value={formatDay(invoice.fecha)} />
@@ -209,64 +191,57 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       {/* What to fix */}
       {flags.length === 0 ? (
-        <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          Comercial y Contabilidad cuadran: cada pago tiene su póliza, con la misma fecha e importe.
-        </div>
+        <Notice
+          tone="ok"
+          summary="Comercial y Contabilidad cuadran: cada pago tiene su póliza, con la misma fecha e importe."
+        />
       ) : (
         <Section title="Revisar en Contpaqi" count={flags.length}>
-          <ul className="flex flex-col gap-2">
-            {flags.map((flag, i) => {
-              const style = FLAG_STYLE[flag.level];
-              const Icon = style.icon;
-              return (
-                <li key={i} className={cn("flex items-start gap-2 rounded-lg border px-4 py-2.5 text-sm", style.box)}>
-                  <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>{flag.text}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="flex flex-col gap-2">
+            {flags.map((flag, i) => (
+              <Notice key={i} tone={flag.level} summary={flag.text} />
+            ))}
+          </div>
         </Section>
       )}
 
       {/* Balance */}
       <Section title="Cuadre">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label="Total factura" value={currency(balance.total)} />
+          <StatCard label="Total factura" value={formatMoney(balance.total)} />
           <StatCard
             label="Pagado según Comercial"
-            value={currency(balance.pagado_comercial)}
+            value={formatMoney(balance.pagado_comercial)}
             sub={
               <>
-                Pagos del cliente {currency(balance.comercial_cash)}
+                Pagos del cliente {formatMoney(balance.comercial_cash)}
                 {balance.comercial_credit > 0 && (
-                  <> · Notas de crédito y devoluciones {currency(balance.comercial_credit)}</>
+                  <> · Notas de crédito y devoluciones {formatMoney(balance.comercial_credit)}</>
                 )}
-                {balance.comercial_other > 0 && <> · Otros {currency(balance.comercial_other)}</>}
+                {balance.comercial_other > 0 && <> · Otros {formatMoney(balance.comercial_other)}</>}
               </>
             }
           />
           <StatCard
             label="Cobrado según Contabilidad"
-            value={currency(balance.contabilidad_cash)}
+            value={formatMoney(balance.contabilidad_cash)}
             sub={`${balance.polizas_de_cobro} ${balance.polizas_de_cobro === 1 ? "póliza" : "pólizas"} de cobro`}
             tone={cashMismatch && !invoice.cancelada ? "bad" : undefined}
           />
-          <StatCard label="Pendiente" value={currency(balance.pendiente)} />
+          <StatCard label="Pendiente" value={formatMoney(balance.pendiente)} />
         </div>
       </Section>
 
       {/* Payments: Comercial vs Contabilidad */}
       <Section title="Pagos: Comercial y Contabilidad" count={detail.payments.length}>
         {detail.payments.length === 0 ? (
-          <p className="text-sm text-gray-500">Ningún pago del cliente registrado.</p>
+          <p className="text-sm text-gray-500">Sin pagos del cliente.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[800px]">
+            <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Estado</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Estado</TableHead>
                   <TableHead>Comercial</TableHead>
                   <TableHead>Contabilidad</TableHead>
                 </TableRow>
@@ -284,36 +259,36 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {(credits.length > 0 || detail.unapplied_returns.length > 0) && (
         <Section title="Notas de crédito y devoluciones" count={credits.length + detail.unapplied_returns.length}>
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[700px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Documento</TableHead>
-                  <TableHead>Fecha</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
                   <TableHead className="text-right">Aplicado a esta factura</TableHead>
-                  <TableHead className="text-right">Total del documento</TableHead>
+                  <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Total del documento</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {credits.map((a) => (
                   <TableRow key={`a${a.documento_id}`}>
                     <TableCell className="whitespace-nowrap">
-                      {a.tipo} <span className="font-mono text-xs text-gray-500">{a.documento}</span>
+                      {a.tipo} <span className="num text-gray-500">{a.documento}</span>
                       {a.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(a.fecha)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(a.amount)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(a.documento_total)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(a.fecha)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(a.amount)}</TableCell>
+                    <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(a.documento_total)}</TableCell>
                   </TableRow>
                 ))}
                 {detail.unapplied_returns.map((r) => (
                   <TableRow key={`r${r.documento_id}`}>
                     <TableCell className="whitespace-nowrap">
-                      {r.tipo} <span className="font-mono text-xs text-gray-500">{r.documento}</span>
+                      {r.tipo} <span className="num text-gray-500">{r.documento}</span>
                       {r.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
-                    <TableCell className="text-right text-xs text-amber-700">No aplicada</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(r.total)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(r.fecha)}</TableCell>
+                    <TableCell className="text-right text-amber-700">No aplicada</TableCell>
+                    <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -325,24 +300,24 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {detail.referencing_payments.length > 0 && (
         <Section title="Pagos que mencionan este folio, aplicados a otra factura" count={detail.referencing_payments.length}>
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[700px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Pago</TableHead>
-                  <TableHead>Fecha</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
                   <TableHead className="text-right">Importe</TableHead>
-                  <TableHead>Referencia</TableHead>
+                  <TableHead className={HIDE_BELOW_MD}>Referencia</TableHead>
                   <TableHead>Aplicado a</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {detail.referencing_payments.map((p) => (
                   <TableRow key={p.documento_id}>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">{p.documento}</TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(p.fecha)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(p.total)}</TableCell>
-                    <TableCell className="text-xs">{p.referencia}</TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell className="num">{p.documento}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(p.fecha)}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(p.total)}</TableCell>
+                    <TableCell className={HIDE_BELOW_MD}>{p.referencia}</TableCell>
+                    <TableCell className="num">
                       {p.applied_to.length ? p.applied_to.join(", ") : "Ninguna factura"}
                     </TableCell>
                   </TableRow>
@@ -355,7 +330,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       <Section title="Pólizas de cobro que citan la factura" count={paymentPolizas.length}>
         {paymentPolizas.length === 0 ? (
-          <p className="text-sm text-gray-500">Ninguna póliza de cobro cita esta factura.</p>
+          <p className="text-sm text-gray-500">Sin pólizas de cobro que citen esta factura.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {paymentPolizas.map((p) => <PolizaCard key={p.poliza_id} poliza={p} />)}
@@ -365,28 +340,28 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       <Section title="Renglones" count={detail.lines.length}>
         <div className="overflow-x-auto rounded-lg border bg-white">
-          <Table className="min-w-[900px]">
+          <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Código</TableHead>
+                <TableHead className={HIDE_BELOW_MD}>Código</TableHead>
                 <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
-                <TableHead className="text-right">Descuento</TableHead>
-                <TableHead className="text-right">IVA</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cantidad</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>Precio</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>Descuento</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>IVA</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {detail.lines.map((l) => (
                 <TableRow key={l.numero}>
-                  <TableCell className="font-mono text-xs whitespace-nowrap">{l.codigo}</TableCell>
-                  <TableCell className="max-w-96 truncate" title={l.producto}>{l.producto}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{l.cantidad.toLocaleString("es-MX")}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.precio)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{l.descuento ? currency(l.descuento) : "-"}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.iva)}</TableCell>
-                  <TableCell className="text-right font-mono text-xs">{currency(l.total)}</TableCell>
+                  <TableCell className={cn("num", HIDE_BELOW_MD)}>{l.codigo}</TableCell>
+                  <TableCell className="min-w-40 sm:max-w-96 sm:truncate" title={l.producto}>{l.producto}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{l.cantidad.toLocaleString("es-MX")}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{formatMoney(l.precio)}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{l.descuento ? formatMoney(l.descuento) : "-"}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{formatMoney(l.iva)}</TableCell>
+                  <TableCell className="text-right num">{formatMoney(l.total)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -419,12 +394,16 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
   const highlight = pair.status === "distinto_mes" || pair.status === "monto_distinto";
   return (
     <TableRow className="align-top">
-      <TableCell className="whitespace-nowrap">
+      <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>
         <Badge variant="outline" className={info.badge} title={info.description}>
           {info.label}
         </Badge>
       </TableCell>
-      <TableCell className="text-xs">
+      <TableCell className="min-w-36">
+        {/* Phones: the status sits on top of the Comercial column. */}
+        <Badge variant="outline" className={cn("mb-1 sm:hidden", info.badge)}>
+          {info.label}
+        </Badge>
         {pair.comercial.length === 0 ? (
           <>
             <span className="text-gray-400">Sin pago aplicado</span>
@@ -432,10 +411,10 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           </>
         ) : (
           pair.comercial.map((c, i) => (
-            <div key={i} className="whitespace-nowrap">
+            <div key={i}>
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(c.date)}</span>
               <span className="ml-1 text-gray-500">{c.documento}</span>
-              <span className="ml-2 font-mono">{currency(c.amount)}</span>
+              <span className="ml-2 num">{formatMoney(c.amount)}</span>
               {c.applied_date !== c.date && (
                 <span className="block text-gray-400">aplicado a la factura el {formatDay(c.applied_date)}</span>
               )}
@@ -443,7 +422,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           ))
         )}
       </TableCell>
-      <TableCell className="text-xs">
+      <TableCell className="min-w-36">
         {pair.contabilidad.length === 0 ? (
           <>
             <span className="text-gray-400">Sin póliza</span>
@@ -451,10 +430,10 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           </>
         ) : (
           pair.contabilidad.map((l, i) => (
-            <div key={i} className="whitespace-nowrap">
+            <div key={i}>
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(l.date)}</span>
               <span className="ml-1 text-gray-500">Póliza {l.polizas.join(", ")}</span>
-              <span className="ml-2 font-mono">{currency(l.amount)}</span>
+              <span className="ml-2 num">{formatMoney(l.amount)}</span>
             </div>
           ))
         )}
@@ -495,7 +474,7 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
         <span className="text-gray-500 truncate max-w-72" title={poliza.concepto}>{poliza.concepto}</span>
         {poliza.bank && <span className="text-xs text-gray-500">{poliza.bank}</span>}
         {poliza.is_payment && (
-          <span className="ml-auto font-mono text-xs">{currency(poliza.amount)}</span>
+          <span className="ml-auto num">{formatMoney(poliza.amount)}</span>
         )}
         {poliza.is_payment && !poliza.counted && (
           <span className="basis-full pl-8 text-xs text-amber-700">No se cuenta: {poliza.not_counted_reason}</span>
@@ -504,26 +483,26 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
       {open && (
         <div className="border-t px-4 py-3 flex flex-col gap-2">
           <div className="overflow-x-auto">
-            <Table className="min-w-[800px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cuenta</TableHead>
-                  <TableHead>Tipo</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Tipo</TableHead>
                   <TableHead className="text-right">Importe</TableHead>
-                  <TableHead>Referencia</TableHead>
-                  <TableHead>Concepto</TableHead>
+                  <TableHead className={HIDE_BELOW_MD}>Referencia</TableHead>
+                  <TableHead className={HIDE_BELOW_LG}>Concepto</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.map((l) => (
                   <TableRow key={l.numero} className={cn(l.cites_invoice && "bg-sky-50/60")}>
-                    <TableCell className="text-xs">
-                      <span className="font-mono text-gray-500">{l.codigo}</span> {l.cuenta}
+                    <TableCell className="min-w-40">
+                      <span className="num text-gray-500">{l.codigo}</span> {l.cuenta}
                     </TableCell>
-                    <TableCell className="text-xs">{l.tipo}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{currency(l.importe)}</TableCell>
-                    <TableCell className="font-mono text-xs">{l.referencia}</TableCell>
-                    <TableCell className="text-xs max-w-72 truncate" title={l.concepto}>{l.concepto}</TableCell>
+                    <TableCell className={HIDE_BELOW_SM}>{l.tipo}</TableCell>
+                    <TableCell className="text-right num">{formatMoney(l.importe)}</TableCell>
+                    <TableCell className={cn("num", HIDE_BELOW_MD)}>{l.referencia}</TableCell>
+                    <TableCell className={cn("max-w-72 truncate", HIDE_BELOW_LG)} title={l.concepto}>{l.concepto}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

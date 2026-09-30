@@ -10,7 +10,7 @@ export default function SearchBar() {
   if (usePathname() !== "/") return null;
 
   return (
-    <div className="flex items-center bg-white rounded-lg px-3 py-1.5 w-full sm:w-1/3 max-w-md order-last sm:order-none text-slate-500">
+    <div className="flex items-center bg-white rounded-lg px-3 py-1.5 w-full sm:w-auto sm:flex-1 sm:min-w-48 max-w-md order-last sm:order-none text-slate-500">
       <Search className="w-4 h-4 mr-2 flex-shrink-0" />
       <input
         type="text"

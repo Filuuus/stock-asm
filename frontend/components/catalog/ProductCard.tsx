@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { Product } from "@/types/api";
+import { formatMoney } from "@/lib/utils";
 
 export default function ProductCard({ product }: { product: Product }) {
   const images = product.images;
@@ -17,13 +18,15 @@ export default function ProductCard({ product }: { product: Product }) {
   const imgSrc = failed || !activeImage ? "/placeholder.svg" : `/products/${activeImage.file}`;
 
   return (
-    <div className="flex flex-col items-start rounded-xl border border-gray-200 bg-white p-4 transition-shadow hover:shadow-md">
-      <div className="relative flex h-40 w-full items-center justify-center overflow-hidden rounded-lg bg-gray-50">
+    <div className="flex flex-col items-start rounded-xl border border-gray-200 bg-white p-3 sm:p-4 transition-shadow hover:shadow-md">
+      {/* Square box, photo cropped to fill it, so every card lines up. */}
+      <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-50">
         <Image
           src={imgSrc}
           alt={product.CNOMBREPRODUCTO}
           fill
-          className="object-contain"
+          sizes="(min-width: 1280px) 20vw, (min-width: 1024px) 25vw, 50vw"
+          className="object-cover"
           onError={() => setFailed(true)}
         />
         {images.length > 1 && (
@@ -56,9 +59,13 @@ export default function ProductCard({ product }: { product: Product }) {
         </h3>
         <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
         {product.price_visible && product.CPRECIO1 !== null ? (
-          <span className="mt-2 text-lg font-bold text-gray-900">
-            ${product.CPRECIO1.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
-          </span>
+          product.CPRECIO1 > 0 ? (
+            <span className="mt-2 text-lg font-bold text-gray-900">
+              {formatMoney(product.CPRECIO1)}
+            </span>
+          ) : (
+            <span className="mt-2 text-sm font-medium text-gray-400">Sin precio</span>
+          )
         ) : (
           <span className="mt-2 text-xs font-medium text-gray-400">
             Precio disponible para personal

@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
 import CatalogFilters, { BrandOption } from "@/components/catalog/CatalogFilters";
 import { useSearchQuery } from "@/hooks/use-search-query";
@@ -21,6 +23,8 @@ export default function CatalogView({ products }: { products: Product[] }) {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
+  // Phones start with the filters folded away so products show first.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const brands: BrandOption[] = useMemo(() => {
     const counts = new Map<string, number>();
@@ -93,9 +97,24 @@ export default function CatalogView({ products }: { products: Product[] }) {
     return result;
   }, [products, selectedBrands, minPrice, maxPrice, sortMode, query]);
 
+  const activeFilters = selectedBrands.size + (minPrice ? 1 : 0) + (maxPrice ? 1 : 0);
+
   return (
-    <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-8 p-6">
+    <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-4 md:gap-8 p-4 sm:p-6">
+      <button
+        type="button"
+        onClick={() => setFiltersOpen((o) => !o)}
+        aria-expanded={filtersOpen}
+        className="md:hidden flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700"
+      >
+        <span>
+          Filtros
+          {activeFilters > 0 && <span className="ml-1.5 text-gray-400">({activeFilters})</span>}
+        </span>
+        <ChevronDown className={cn("w-4 h-4 transition-transform", filtersOpen && "rotate-180")} />
+      </button>
       <CatalogFilters
+        className={filtersOpen ? "block" : "hidden md:block"}
         brands={brands}
         selectedBrands={selectedBrands}
         onToggleBrand={toggleBrand}
@@ -106,12 +125,12 @@ export default function CatalogView({ products }: { products: Product[] }) {
       />
 
       <div className="flex-1 flex flex-col">
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
           <span className="text-sm text-gray-500 font-medium">
             Mostrando {filtered.length} productos
           </span>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
-            <span>Ordenar por:</span>
+            <span className="whitespace-nowrap">Ordenar por:</span>
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
@@ -125,14 +144,14 @@ export default function CatalogView({ products }: { products: Product[] }) {
         </div>
 
         {filtered.length > 0 ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
             {filtered.map((product) => (
               <ProductCard key={product.CIDPRODUCTO} product={product} />
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
-            <p className="text-sm font-medium text-gray-700">No hay productos disponibles</p>
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white py-8 text-center">
+            <p className="text-sm text-gray-500">Sin productos que mostrar.</p>
           </div>
         )}
       </div>

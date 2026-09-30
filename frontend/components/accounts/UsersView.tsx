@@ -1,5 +1,7 @@
 "use client";
 
+import { Notice } from "@/components/notice";
+import { EmptyRow } from "@/components/sortable-table";
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, Plus, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -317,7 +319,7 @@ export default function UsersView() {
 
   if (!authLoading && !isWorker) {
     return (
-      <main className="max-w-4xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             Debe iniciar sesión para ver esta página.
@@ -332,7 +334,7 @@ export default function UsersView() {
 
   if (!authLoading && !isManagement) {
     return (
-      <main className="max-w-4xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             No tiene permiso para ver esta página.
@@ -343,8 +345,8 @@ export default function UsersView() {
   }
 
   return (
-    <main className="max-w-4xl mx-auto w-full p-6 flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
           <p className="text-sm text-gray-500">
@@ -358,11 +360,7 @@ export default function UsersView() {
       </div>
 
       {(loading || authLoading) && <Loader2 className="w-5 h-5 animate-spin text-gray-400" />}
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       <div className="rounded-lg border bg-white">
         <Table>
@@ -381,7 +379,7 @@ export default function UsersView() {
               const isSelf = u.username === currentUser?.username;
               return (
                 <TableRow key={u.id}>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-medium whitespace-nowrap">
                     {u.username}
                     {isSelf && <span className="ml-2 text-xs text-gray-400">(usted)</span>}
                   </TableCell>
@@ -405,7 +403,7 @@ export default function UsersView() {
                       onCheckedChange={(checked) => handleActiveChange(u, checked)}
                     />
                   </TableCell>
-                  <TableCell className="text-xs text-gray-500">
+                  <TableCell className="text-xs text-gray-500 whitespace-nowrap">
                     {formatDateTime(u.last_login)}
                   </TableCell>
                   <TableCell>
@@ -422,13 +420,7 @@ export default function UsersView() {
                 </TableRow>
               );
             })}
-            {users.length === 0 && !loading && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-sm text-gray-500 py-8">
-                  Sin usuarios.
-                </TableCell>
-              </TableRow>
-            )}
+            {users.length === 0 && !loading && <EmptyRow colSpan={6}>Sin usuarios que mostrar.</EmptyRow>}
           </TableBody>
         </Table>
       </div>
@@ -451,13 +443,7 @@ export default function UsersView() {
                   </TableCell>
                 </TableRow>
               ))}
-              {auditLog.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={2} className="text-center text-sm text-gray-500 py-8">
-                    Sin actividad todavía.
-                  </TableCell>
-                </TableRow>
-              )}
+              {auditLog.length === 0 && <EmptyRow colSpan={2}>Sin actividad todavía.</EmptyRow>}
             </TableBody>
           </Table>
         </div>

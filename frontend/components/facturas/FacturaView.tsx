@@ -1,5 +1,6 @@
 "use client";
 
+import { Notice } from "@/components/notice";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Search } from "lucide-react";
@@ -85,7 +86,7 @@ export default function FacturaView() {
 
   if (!authLoading && !(isAccounting || isManagement)) {
     return (
-      <main className="max-w-7xl mx-auto w-full p-6">
+      <main className="max-w-7xl mx-auto w-full p-4 sm:p-6">
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-gray-700">
             No tiene permiso para consultar facturas.
@@ -101,9 +102,9 @@ export default function FacturaView() {
   const showResultsList = results && !detail && !loading;
 
   return (
-    <main className="w-full max-w-7xl mx-auto p-6 flex flex-col gap-6">
+    <main className="w-full max-w-7xl mx-auto p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-gray-900">Consulta de factura</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Facturas</h1>
         <p className="text-sm text-gray-500">
           Todo lo que Contpaqi sabe de un No. Factura: la factura y sus renglones, los pagos y notas
           de crédito aplicados en Comercial, las pólizas de Contabilidad que la citan, y lo que no
@@ -126,11 +127,7 @@ export default function FacturaView() {
         {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
       </form>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       {showResultsList && (
         <SearchResults
@@ -155,8 +152,8 @@ function SearchResults({ results, onSelect }: {
 }) {
   if (results.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-gray-300 bg-white py-10 text-center text-sm text-gray-500">
-        No hay facturas con ese folio.
+      <div className="rounded-lg border border-dashed border-gray-300 bg-white py-8 text-center text-sm text-gray-500">
+        Sin facturas con ese folio.
       </div>
     );
   }

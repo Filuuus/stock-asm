@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { addDays, format, isSameDay } from "date-fns";
+import { addDays, addMonths, format, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { currentMonthISO, dateToISO, formatDay, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 
 // The platform's date pickers: one look for all of them - an outline button
@@ -31,6 +32,9 @@ export function DateRangeControl({
     from: isoToDate(dateFrom),
     to: isoToDate(dateTo),
   });
+
+  const isMobile = useIsMobile();
+  const lastMonth = pending?.to ?? pending?.from ?? isoToDate(dateTo);
 
   const handleOpenChange = (next: boolean) => {
     if (next) {
@@ -75,8 +79,10 @@ export function DateRangeControl({
             mode="range"
             selected={pending}
             onSelect={setPending}
-            defaultMonth={pending?.to ?? pending?.from}
-            numberOfMonths={2}
+            // One month on phones; otherwise the selected month and the one
+            // before it, never an empty future month.
+            defaultMonth={isMobile ? lastMonth : addMonths(lastMonth, -1)}
+            numberOfMonths={isMobile ? 1 : 2}
             locale={es}
           />
           <div className="flex items-center justify-between">

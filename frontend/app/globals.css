@@ -118,3 +118,11 @@
     white-space: pre;
   }
 }
+
+@layer components {
+  /* Folios and amounts in tables: monospace so digits line up, sized to sit
+     level with the surrounding text-sm cells. */
+  .num {
+    @apply font-mono text-[13px] tabular-nums whitespace-nowrap;
+  }
+}
