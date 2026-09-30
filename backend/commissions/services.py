@@ -934,7 +934,7 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             'count': len(puntoventa_unassigned),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in puntoventa_unassigned), Decimal('0')),
             'note': (
-                'Facturas de Punto de Venta cuyo cliente aún no tiene zona asignada (Zona 1 o Zona 2): '
+                'Facturas de Punto de Venta cuyo cliente aún no tiene zona asignada (Zona 1, Zona 2 u Oficina): '
                 'su comisión no se paga a nadie hasta asignarla en el admin (PuntoVentaClientZone).'
             ),
         },

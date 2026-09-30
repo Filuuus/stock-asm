@@ -65,7 +65,8 @@ class PuntoVentaClientZone(models.Model):
     in source control. The admin looks the name up live from the ERP
     (AdmClientes) for display instead of caching it here.
     """
-    ZONE_CHOICES = [('ZONA1', 'Zona 1'), ('ZONA2', 'Zona 2')]
+    # Oficina owns some of these clients too (management, 2026-09-30).
+    ZONE_CHOICES = [('ZONA1', 'Zona 1'), ('ZONA2', 'Zona 2'), ('OFICINA', 'Oficina')]
 
     # Not a real ForeignKey: mirrors AdmClientes.CIDCLIENTEPROVEEDOR in the
     # ERP (a separate, read-only database) rather than referencing it.
