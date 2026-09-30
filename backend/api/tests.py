@@ -1,3 +1,42 @@
-from django.test import TestCase
+"""SimpleTestCase only: a database test would make Django try to create a
+test database on the ERP server."""
 
-# Create your tests here.
+from unittest.mock import patch
+
+from django.test import SimpleTestCase
+
+from .services import InventoryRepository, get_inventory_catalog
+
+
+def producto(pid, code, stock_units):
+    return {
+        'CIDPRODUCTO': pid, 'CCODIGOPRODUCTO': code, 'CNOMBREPRODUCTO': 'PEZONERA',
+        'CPRECIO1': 100.0, 'CTEXTOEXTRA1': None, 'CIDVALORCLASIFICACION1': 1,
+        'CIDVALORCLASIFICACION2': 2, 'CTIPOPRODUCTO': 1,
+    }, stock_units
+
+
+class InventoryCatalogTests(SimpleTestCase):
+    def catalog(self, is_worker):
+        rows = [producto(1, 'A', 5.0), producto(2, 'B', 0.0), producto(3, 'C', -1.0)]
+        with patch('api.services.cache') as cache, \
+                patch.object(InventoryRepository, 'fetch_inventory', return_value=[r for r, _ in rows]), \
+                patch.object(InventoryRepository, 'fetch_brand_names', return_value={1: 'GEA', 2: '(Ninguna)'}), \
+                patch.object(InventoryRepository, 'fetch_stock', return_value={r['CIDPRODUCTO']: s for r, s in rows}), \
+                patch.object(InventoryRepository, 'fetch_units_sold', return_value={1: 3.0, 2: 9.0, 3: -1.0}), \
+                patch('api.services.get_images_by_codes', return_value={}), \
+                patch('api.services.get_public_price_codes', return_value=set()):
+            cache.get.return_value = None
+            return {p['CIDPRODUCTO']: p for p in get_inventory_catalog(is_worker)}
+
+    def test_staff_see_units_public_only_availability(self):
+        staff, public = self.catalog(True), self.catalog(False)
+        self.assertEqual([staff[i]['stock'] for i in (1, 2, 3)], [5.0, 0.0, -1.0])
+        self.assertEqual([public[i]['stock'] for i in (1, 2, 3)], [None, None, None])
+        self.assertEqual([public[i]['in_stock'] for i in (1, 2, 3)], [True, False, False])
+
+    def test_category_line_and_sales_rank(self):
+        staff = self.catalog(True)
+        self.assertEqual(staff[1]['category'], 'R')
+        self.assertIsNone(staff[1]['line'])  # "(Ninguna)" means no line
+        self.assertEqual([staff[i]['sold_rank'] for i in (1, 2, 3)], [2, 1, None])
