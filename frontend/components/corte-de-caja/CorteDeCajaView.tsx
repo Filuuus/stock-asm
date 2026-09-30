@@ -57,6 +57,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   R_CHEM: "Refacciones (Químicos)",
   R_FAN: "Refacciones (Ventiladores)",
   B: "Bionat",
+  B_MIPRO: "Bionat (Mipro)",
+  B_BOVI: "Bionat (Bovifit)",
   S: "Servicios",
 };
 

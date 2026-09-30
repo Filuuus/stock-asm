@@ -53,6 +53,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   R_CHEM: "Refacciones (Químicos)",
   R_FAN: "Refacciones (Ventiladores)",
   B: "Bionat",
+  B_MIPRO: "Bionat (Mipro)",
+  B_BOVI: "Bionat (Bovifit)",
   S: "Servicios",
   ZERO: "Sin comisión",
 };
@@ -63,6 +65,8 @@ const CATEGORY_BADGE: Record<string, string> = {
   R_CHEM: "bg-cyan-100 text-cyan-800 border-cyan-200",
   R_FAN: "bg-indigo-100 text-indigo-800 border-indigo-200",
   B: "bg-green-100 text-green-800 border-green-200",
+  B_MIPRO: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  B_BOVI: "bg-lime-100 text-lime-800 border-lime-200",
   S: "bg-purple-100 text-purple-800 border-purple-200",
   ZERO: "bg-gray-100 text-gray-600 border-gray-200",
 };

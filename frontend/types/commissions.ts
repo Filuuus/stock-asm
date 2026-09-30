@@ -1,6 +1,6 @@
 export type Zone = "ZONA1" | "ZONA2" | "OFICINA" | "SERVICIOS" | "PUNTOVENTA";
 
-export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "S" | "ZERO";
+export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "B_MIPRO" | "B_BOVI" | "S" | "ZERO";
 
 export interface CommissionLine {
   invoice_id: number;

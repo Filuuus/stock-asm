@@ -65,6 +65,21 @@ NORTHWEST_RUBBER_CODE_PREFIX = '4999-1115-'
 # finer product-line field) cleanly does, with no other chemical-sounding
 # values found in that slot's full taxonomy.
 CHEMICAL_CLASSIFICATIONS = {'DETERGENTES NACIONALES', 'DETERGENTES SURGE'}
+# Chemicals the ERP files under another classification. THERATRATE SELLADOR
+# CONCENTRADO 208 LTS is the one product of the 7751-0040- family filed as
+# 'REFACCIONES SURGE'; management confirmed 2026-09-30 it pays 4% like the
+# other Theratrate. PEROXYSAN RS 25 LT is filed the same way (its 200 LT
+# size is under DETERGENTES SURGE); management's sheet pays it 4% and
+# management confirmed it is a chemical. Remove each once it is reclassified
+# in Contpaqi.
+CHEMICAL_PRODUCT_CODES = {'7751-0040-160', '4652-0001-030'}
+# Two Bionat lines with their own rate (confirmed by management 2026-09-30,
+# and read from their sheet: 35 of 35 and 8 of 8 rows): the MIPRO mineral
+# premixes pay 1% and BOVIFIT 4%, instead of Bionat's 2%. "MIPRO ENERGIZER"
+# is not a premix - the sheet pays it the normal 2%.
+MIPRO_NAME_MARKER = 'MIPRO'
+MIPRO_NAME_EXCEPTION = 'ENERGIZER'
+BOVIFIT_NAME_MARKER = 'BOVIFIT'
 # Fans: span multiple suppliers AND multiple classification-2 values, so
 # neither field detects them - the product name is the only consistent
 # signal.
@@ -584,6 +599,12 @@ def _paid_dates_from_ledger(facturas, accepted, cash_due=None):
 def _classify_line(producto, brand_names, zero_codes):
     if producto['CCODIGOPRODUCTO'] in zero_codes:
         return 'ZERO'
+    name = (producto['CNOMBREPRODUCTO'] or '').upper()
+    # By name, not supplier: one MIPRO product is filed under another supplier.
+    if MIPRO_NAME_MARKER in name and MIPRO_NAME_EXCEPTION not in name:
+        return 'B_MIPRO'
+    if BOVIFIT_NAME_MARKER in name:
+        return 'B_BOVI'
     if brand_names.get(producto['CIDVALORCLASIFICACION1']) == BIONAT_SUPPLIER_NAME:
         return 'B'
     if producto['CTIPOPRODUCTO'] == SERVICE_PRODUCT_TYPE:
@@ -591,9 +612,10 @@ def _classify_line(producto, brand_names, zero_codes):
     if brand_names.get(producto['CIDVALORCLASIFICACION1']) == NORTHWEST_RUBBER_SUPPLIER_NAME or \
             producto['CCODIGOPRODUCTO'].startswith(NORTHWEST_RUBBER_CODE_PREFIX):
         return 'R_NW'
-    if brand_names.get(producto['CIDVALORCLASIFICACION2']) in CHEMICAL_CLASSIFICATIONS:
+    if brand_names.get(producto['CIDVALORCLASIFICACION2']) in CHEMICAL_CLASSIFICATIONS or \
+            producto['CCODIGOPRODUCTO'] in CHEMICAL_PRODUCT_CODES:
         return 'R_CHEM'
-    if FAN_NAME_MARKER in (producto['CNOMBREPRODUCTO'] or '').upper():
+    if FAN_NAME_MARKER in name:
         return 'R_FAN'
     # Default/fallback: covers R itself, EQ (no automatic detection rule
     # exists yet - deferred by management until there's a draft to look at),

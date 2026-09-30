@@ -148,10 +148,16 @@ class RateTests(SimpleTestCase):
         cases = [
             (producto(codigo='ZERO-1', brand=1), 'ZERO'),
             (producto(brand=1, tipo=3), 'B'),
+            (producto(brand=1, nombre='MIPRO 250 HM 25 KG'), 'B_MIPRO'),
+            (producto(brand=4, nombre='MIPRO BULL 150 MONENSINA / C 25 KG'), 'B_MIPRO'),  # filed under another supplier
+            (producto(brand=1, nombre='MIPRO ENERGIZER 4 KG'), 'B'),
+            (producto(brand=1, nombre='BOVIFIT BEBIDA PARA DESPUES DEL PARTO 1 KG'), 'B_BOVI'),
+            (producto(codigo='4652-0001-030', nombre='PEROXYSAN RS 25 LT'), 'R_CHEM'),
             (producto(tipo=3), 'S'),
             (producto(brand=2), 'R_NW'),
             (producto(codigo='4999-1115-0001'), 'R_NW'),
             (producto(line2=3), 'R_CHEM'),
+            (producto(codigo='7751-0040-160'), 'R_CHEM'),  # Theratrate concentrate, misfiled in the ERP
             (producto(nombre='Ventilador 52"'), 'R_FAN'),
             (producto(), 'R'),
         ]
