@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, plural } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
 import CatalogFilters, {
   EMPTY_FILTERS,
   Filters,
+  hasPrice,
   matches,
   normalize,
   priceBreaks,
@@ -14,7 +15,14 @@ import CatalogFilters, {
 import { useSearchQuery } from "@/hooks/use-search-query";
 import { Product } from "@/types/api";
 
-type SortMode = "relevance" | "price-asc" | "price-desc";
+type SortMode = "relevance" | "best-sellers" | "price-asc" | "price-desc";
+
+export const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: "relevance", label: "Más relevantes" },
+  { value: "best-sellers", label: "Más vendidos" },
+  { value: "price-asc", label: "Menor precio" },
+  { value: "price-desc", label: "Mayor precio" },
+];
 
 export default function CatalogView({ products }: { products: Product[] }) {
   const { query } = useSearchQuery();
@@ -30,26 +38,30 @@ export default function CatalogView({ products }: { products: Product[] }) {
   const filtered = useMemo(() => {
     let result = products.filter((product) => matches(product, filters, normalizedQuery));
 
-    if (sortMode === "price-asc" || sortMode === "price-desc") {
-      // Hidden prices (null) always sort last, regardless of direction -
-      // there's no real value to compare them by.
-      const direction = sortMode === "price-asc" ? 1 : -1;
-      result = [...result].sort((a, b) => {
-        if (a.CPRECIO1 === null) return b.CPRECIO1 === null ? 0 : 1;
-        if (b.CPRECIO1 === null) return -1;
+    // Relevance with a search: exact code, then name starting with it, then the rest.
+    const relevance = (p: Product) => {
+      if (!normalizedQuery) return 0;
+      if (normalize(p.CCODIGOPRODUCTO) === normalizedQuery) return 0;
+      if (normalize(p.CNOMBREPRODUCTO).startsWith(normalizedQuery)) return 1;
+      return 2;
+    };
+    const direction = sortMode === "price-desc" ? -1 : 1;
+    // Every sort puts $0 products after the priced ones; ties keep the ERP order.
+    result = [...result].sort((a, b) => {
+      const priced = Number(!hasPrice(a)) - Number(!hasPrice(b));
+      if (priced) return priced;
+      if (sortMode === "best-sellers") {
+        return (a.sold_rank ?? Infinity) - (b.sold_rank ?? Infinity) || relevance(a) - relevance(b);
+      }
+      if (sortMode === "price-asc" || sortMode === "price-desc") {
+        // Hidden prices have no value to compare - they go after the shown ones.
+        if (a.CPRECIO1 === null || b.CPRECIO1 === null) {
+          return Number(a.CPRECIO1 === null) - Number(b.CPRECIO1 === null);
+        }
         return (a.CPRECIO1 - b.CPRECIO1) * direction;
-      });
-    } else if (normalizedQuery) {
-      // Relevance: exact code match, then name starting with the query, then the rest.
-      const rank = (product: Product) => {
-        const code = normalize(product.CCODIGOPRODUCTO);
-        const name = normalize(product.CNOMBREPRODUCTO);
-        if (code === normalizedQuery) return 0;
-        if (name.startsWith(normalizedQuery)) return 1;
-        return 2;
-      };
-      result = [...result].sort((a, b) => rank(a) - rank(b));
-    }
+      }
+      return relevance(a) - relevance(b);
+    });
 
     return result;
   }, [products, filters, sortMode, normalizedQuery]);
@@ -83,22 +95,25 @@ export default function CatalogView({ products }: { products: Product[] }) {
       />
 
       <div className="flex-1 flex flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
-          <span className="text-sm text-gray-500 font-medium">
-            Mostrando {filtered.length} productos
+        {/* The count lives in the filter column; phones fold that away. */}
+        <div className="mb-4 flex items-center justify-between gap-3 md:justify-end">
+          <span className="whitespace-nowrap text-sm text-gray-500 md:hidden">
+            {plural(filtered.length, "resultado", "resultados")}
           </span>
-          <div className="flex items-center space-x-2 text-sm text-gray-600">
-            <span className="whitespace-nowrap">Ordenar por:</span>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <span className="whitespace-nowrap">Ordenar por</span>
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
-              className="border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none"
+              className="rounded border-none bg-transparent py-1 pl-1 pr-7 text-sm font-medium text-blue-600 focus:ring-2 focus:ring-blue-500"
             >
-              <option value="relevance">Relevancia</option>
-              <option value="price-asc">Precio: Menor a Mayor</option>
-              <option value="price-desc">Precio: Mayor a Menor</option>
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
-          </div>
+          </label>
         </div>
 
         {filtered.length > 0 ? (
