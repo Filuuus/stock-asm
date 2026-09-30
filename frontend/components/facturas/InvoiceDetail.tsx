@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
 import { cn, formatMoney } from "@/lib/utils";
 import { Notice } from "@/components/notice";
 import { formatDay } from "@/lib/dates";
@@ -68,15 +69,15 @@ export function InvoiceList({ results, onSelect }: {
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border bg-white">
-      <Table className="min-w-[800px]">
+      <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Factura</TableHead>
-            <TableHead>Fecha</TableHead>
-            <TableHead>Cliente</TableHead>
-            <TableHead>Zona</TableHead>
+            <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
+            <TableHead className={HIDE_BELOW_MD}>Cliente</TableHead>
+            <TableHead className={HIDE_BELOW_LG}>Zona</TableHead>
             <TableHead className="text-right">Total</TableHead>
-            <TableHead className="text-right">Pendiente</TableHead>
+            <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Pendiente</TableHead>
             <TableHead>Estado</TableHead>
           </TableRow>
         </TableHeader>
@@ -90,13 +91,13 @@ export function InvoiceList({ results, onSelect }: {
               <TableCell className="num">
                 {r.folio_display}
               </TableCell>
-              <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
-              <TableCell className="max-w-72 truncate" title={r.cliente}>
+              <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(r.fecha)}</TableCell>
+              <TableCell className={cn("max-w-72 truncate", HIDE_BELOW_MD)} title={r.cliente}>
                 <ClientLink clientId={r.client_id} label={r.cliente} />
               </TableCell>
-              <TableCell className="text-xs">{zoneLabel(r.zona)}</TableCell>
+              <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_LG)}>{zoneLabel(r.zona)}</TableCell>
               <TableCell className="text-right num">{formatMoney(r.total)}</TableCell>
-              <TableCell className="text-right num">{formatMoney(r.pendiente)}</TableCell>
+              <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.pendiente)}</TableCell>
               <TableCell className="whitespace-nowrap">
                 <StatusBadges cancelada={r.cancelada} pendiente={r.pendiente} total={r.total} />
               </TableCell>
@@ -178,7 +179,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <Field label="Cliente" value={<ClientLink clientId={invoice.client_id} label={invoice.cliente} />} />
-          <Field label="RFC" value={invoice.rfc} />
+          <Field label="RFC" value={invoice.rfc && <span className="whitespace-nowrap">{invoice.rfc}</span>} />
           <Field label="Zona" value={zoneLabel(invoice.zona)} />
           <Field label="Capturó" value={invoice.usuario} />
           <Field label="Fecha" value={formatDay(invoice.fecha)} />
@@ -237,10 +238,10 @@ export function InvoiceDetailView({ detail, onSelect }: {
           <p className="text-sm text-gray-500">Ningún pago del cliente registrado.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[800px]">
+            <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Estado</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Estado</TableHead>
                   <TableHead>Comercial</TableHead>
                   <TableHead>Contabilidad</TableHead>
                 </TableRow>
@@ -258,13 +259,13 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {(credits.length > 0 || detail.unapplied_returns.length > 0) && (
         <Section title="Notas de crédito y devoluciones" count={credits.length + detail.unapplied_returns.length}>
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[700px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Documento</TableHead>
-                  <TableHead>Fecha</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
                   <TableHead className="text-right">Aplicado a esta factura</TableHead>
-                  <TableHead className="text-right">Total del documento</TableHead>
+                  <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Total del documento</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -274,9 +275,9 @@ export function InvoiceDetailView({ detail, onSelect }: {
                       {a.tipo} <span className="num text-gray-500">{a.documento}</span>
                       {a.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(a.fecha)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(a.fecha)}</TableCell>
                     <TableCell className="text-right num">{formatMoney(a.amount)}</TableCell>
-                    <TableCell className="text-right num">{formatMoney(a.documento_total)}</TableCell>
+                    <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(a.documento_total)}</TableCell>
                   </TableRow>
                 ))}
                 {detail.unapplied_returns.map((r) => (
@@ -285,9 +286,9 @@ export function InvoiceDetailView({ detail, onSelect }: {
                       {r.tipo} <span className="num text-gray-500">{r.documento}</span>
                       {r.cancelado && <span className="ml-1 text-xs text-red-700">(cancelado)</span>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(r.fecha)}</TableCell>
-                    <TableCell className="text-right text-xs text-amber-700">No aplicada</TableCell>
-                    <TableCell className="text-right num">{formatMoney(r.total)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(r.fecha)}</TableCell>
+                    <TableCell className="text-right text-amber-700">No aplicada</TableCell>
+                    <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -299,13 +300,13 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {detail.referencing_payments.length > 0 && (
         <Section title="Pagos que mencionan este folio, aplicados a otra factura" count={detail.referencing_payments.length}>
           <div className="overflow-x-auto rounded-lg border bg-white">
-            <Table className="min-w-[700px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Pago</TableHead>
-                  <TableHead>Fecha</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Fecha</TableHead>
                   <TableHead className="text-right">Importe</TableHead>
-                  <TableHead>Referencia</TableHead>
+                  <TableHead className={HIDE_BELOW_MD}>Referencia</TableHead>
                   <TableHead>Aplicado a</TableHead>
                 </TableRow>
               </TableHeader>
@@ -313,9 +314,9 @@ export function InvoiceDetailView({ detail, onSelect }: {
                 {detail.referencing_payments.map((p) => (
                   <TableRow key={p.documento_id}>
                     <TableCell className="num">{p.documento}</TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDay(p.fecha)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(p.fecha)}</TableCell>
                     <TableCell className="text-right num">{formatMoney(p.total)}</TableCell>
-                    <TableCell className="text-xs">{p.referencia}</TableCell>
+                    <TableCell className={HIDE_BELOW_MD}>{p.referencia}</TableCell>
                     <TableCell className="num">
                       {p.applied_to.length ? p.applied_to.join(", ") : "Ninguna factura"}
                     </TableCell>
@@ -339,27 +340,27 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       <Section title="Renglones" count={detail.lines.length}>
         <div className="overflow-x-auto rounded-lg border bg-white">
-          <Table className="min-w-[900px]">
+          <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Código</TableHead>
+                <TableHead className={HIDE_BELOW_MD}>Código</TableHead>
                 <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-right">Precio</TableHead>
-                <TableHead className="text-right">Descuento</TableHead>
-                <TableHead className="text-right">IVA</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cantidad</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>Precio</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>Descuento</TableHead>
+                <TableHead className={cn("text-right", HIDE_BELOW_LG)}>IVA</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {detail.lines.map((l) => (
                 <TableRow key={l.numero}>
-                  <TableCell className="num">{l.codigo}</TableCell>
-                  <TableCell className="max-w-96 truncate" title={l.producto}>{l.producto}</TableCell>
-                  <TableCell className="text-right num">{l.cantidad.toLocaleString("es-MX")}</TableCell>
-                  <TableCell className="text-right num">{formatMoney(l.precio)}</TableCell>
-                  <TableCell className="text-right num">{l.descuento ? formatMoney(l.descuento) : "-"}</TableCell>
-                  <TableCell className="text-right num">{formatMoney(l.iva)}</TableCell>
+                  <TableCell className={cn("num", HIDE_BELOW_MD)}>{l.codigo}</TableCell>
+                  <TableCell className="min-w-40 sm:max-w-96 sm:truncate" title={l.producto}>{l.producto}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{l.cantidad.toLocaleString("es-MX")}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{formatMoney(l.precio)}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{l.descuento ? formatMoney(l.descuento) : "-"}</TableCell>
+                  <TableCell className={cn("text-right num", HIDE_BELOW_LG)}>{formatMoney(l.iva)}</TableCell>
                   <TableCell className="text-right num">{formatMoney(l.total)}</TableCell>
                 </TableRow>
               ))}
@@ -393,12 +394,16 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
   const highlight = pair.status === "distinto_mes" || pair.status === "monto_distinto";
   return (
     <TableRow className="align-top">
-      <TableCell className="whitespace-nowrap">
+      <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>
         <Badge variant="outline" className={info.badge} title={info.description}>
           {info.label}
         </Badge>
       </TableCell>
-      <TableCell className="text-xs">
+      <TableCell className="min-w-36">
+        {/* Phones: the status sits on top of the Comercial column. */}
+        <Badge variant="outline" className={cn("mb-1 sm:hidden", info.badge)}>
+          {info.label}
+        </Badge>
         {pair.comercial.length === 0 ? (
           <>
             <span className="text-gray-400">Sin pago aplicado</span>
@@ -406,7 +411,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           </>
         ) : (
           pair.comercial.map((c, i) => (
-            <div key={i} className="whitespace-nowrap">
+            <div key={i}>
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(c.date)}</span>
               <span className="ml-1 text-gray-500">{c.documento}</span>
               <span className="ml-2 num">{formatMoney(c.amount)}</span>
@@ -417,7 +422,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           ))
         )}
       </TableCell>
-      <TableCell className="text-xs">
+      <TableCell className="min-w-36">
         {pair.contabilidad.length === 0 ? (
           <>
             <span className="text-gray-400">Sin póliza</span>
@@ -425,7 +430,7 @@ function PaymentPairRow({ pair }: { pair: PaymentPair }) {
           </>
         ) : (
           pair.contabilidad.map((l, i) => (
-            <div key={i} className="whitespace-nowrap">
+            <div key={i}>
               <span className={cn("font-medium", highlight && "text-red-700")}>{formatDay(l.date)}</span>
               <span className="ml-1 text-gray-500">Póliza {l.polizas.join(", ")}</span>
               <span className="ml-2 num">{formatMoney(l.amount)}</span>
@@ -478,26 +483,26 @@ function PolizaCard({ poliza }: { poliza: Poliza }) {
       {open && (
         <div className="border-t px-4 py-3 flex flex-col gap-2">
           <div className="overflow-x-auto">
-            <Table className="min-w-[800px]">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cuenta</TableHead>
-                  <TableHead>Tipo</TableHead>
+                  <TableHead className={HIDE_BELOW_SM}>Tipo</TableHead>
                   <TableHead className="text-right">Importe</TableHead>
-                  <TableHead>Referencia</TableHead>
-                  <TableHead>Concepto</TableHead>
+                  <TableHead className={HIDE_BELOW_MD}>Referencia</TableHead>
+                  <TableHead className={HIDE_BELOW_LG}>Concepto</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.map((l) => (
                   <TableRow key={l.numero} className={cn(l.cites_invoice && "bg-sky-50/60")}>
-                    <TableCell className="text-xs">
-                      <span className="font-mono text-gray-500">{l.codigo}</span> {l.cuenta}
+                    <TableCell className="min-w-40">
+                      <span className="num text-gray-500">{l.codigo}</span> {l.cuenta}
                     </TableCell>
-                    <TableCell className="text-xs">{l.tipo}</TableCell>
+                    <TableCell className={HIDE_BELOW_SM}>{l.tipo}</TableCell>
                     <TableCell className="text-right num">{formatMoney(l.importe)}</TableCell>
-                    <TableCell className="num">{l.referencia}</TableCell>
-                    <TableCell className="text-xs max-w-72 truncate" title={l.concepto}>{l.concepto}</TableCell>
+                    <TableCell className={cn("num", HIDE_BELOW_MD)}>{l.referencia}</TableCell>
+                    <TableCell className={cn("max-w-72 truncate", HIDE_BELOW_LG)} title={l.concepto}>{l.concepto}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

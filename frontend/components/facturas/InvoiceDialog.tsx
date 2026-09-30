@@ -109,7 +109,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
   return (
     <Dialog open={view !== null} onOpenChange={(open) => !open && close()}>
       <DialogContent className="max-w-6xl w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto bg-gray-50 grid-cols-[minmax(0,1fr)]">
-        <DialogHeader className="pr-8">
+        <DialogHeader className="pr-8 text-left">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               {canGoBack && (
@@ -119,7 +119,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
                 </Button>
               )}
               <DialogTitle>
-                {view?.kind === "client" ? "Historial del cliente" : "Consulta de factura"}
+                {view?.kind === "client" ? "Historial del cliente" : "Factura"}
               </DialogTitle>
             </div>
             {invoice && (

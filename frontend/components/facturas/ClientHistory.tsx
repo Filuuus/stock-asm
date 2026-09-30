@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Notice } from "@/components/notice";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
-import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, SortColumn, useSort } from "@/components/sortable-table";
 import { cn, formatMoney, plural } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
@@ -56,16 +57,18 @@ const SORT_COLUMNS: Record<SortKey, SortColumn<ClientInvoice>> = {
   cuadra: { value: (r) => (r.cuadra ? 1 : 0), first: "asc" },
 };
 
-const SORT_HEADERS: [SortKey, string, "right"?][] = [
+// Narrow screens keep folio, total and status; the row opens the full
+// invoice for the rest.
+const SORT_HEADERS: [SortKey, string, "right"?, string?][] = [
   ["folio", "Factura"],
-  ["fecha", "Fecha"],
-  ["vencimiento", "Vencimiento"],
+  ["fecha", "Fecha", undefined, HIDE_BELOW_SM],
+  ["vencimiento", "Vencimiento", undefined, HIDE_BELOW_MD],
   ["total", "Total", "right"],
-  ["pendiente", "Pendiente", "right"],
+  ["pendiente", "Pendiente", "right", HIDE_BELOW_SM],
   ["status", "Estado"],
-  ["paid_date", "Pagada (póliza)"],
-  ["days_late", "Atraso", "right"],
-  ["cuadra", "Cuadre"],
+  ["paid_date", "Pagada (póliza)", undefined, HIDE_BELOW_LG],
+  ["days_late", "Atraso", "right", HIDE_BELOW_LG],
+  ["cuadra", "Cuadre", undefined, HIDE_BELOW_LG],
 ];
 
 const byNewest = (a: ClientInvoice, b: ClientInvoice) =>
@@ -100,7 +103,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
           <Field label="Cuenta" value={client.codigo} />
-          <Field label="RFC" value={client.rfc} />
+          <Field label="RFC" value={client.rfc && <span className="whitespace-nowrap">{client.rfc}</span>} />
           <Field label="Zona" value={zoneLabel(client.zona)} />
           <Field label="Días de crédito" value={client.dias_credito ? `${client.dias_credito} días` : "Contado"} />
           <Field label="Límite de crédito" value={client.limite_credito > 0 ? formatMoney(client.limite_credito) : "Sin límite"} />
@@ -155,34 +158,27 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
 
       <Section title="Facturas" count={rows.length}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-1">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                onClick={() => setFilter(f.key)}
-                aria-pressed={filter === f.key}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-xs font-medium",
-                  filter === f.key ? "border-slate-900 bg-slate-900 text-white" : "bg-white text-gray-700 hover:bg-gray-50",
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+          <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)} className="max-w-full overflow-x-auto">
+            <TabsList>
+              {FILTERS.map((f) => (
+                <TabsTrigger key={f.key} value={f.key}>
+                  {f.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           <Input
             placeholder="Buscar folio..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="max-w-48 bg-white"
+            className="w-full bg-white sm:w-48"
           />
         </div>
         <div className="overflow-x-auto rounded-lg border bg-white">
-          <Table className="min-w-[950px]">
+          <Table className="[&_td]:px-2 [&_th]:px-2 lg:[&_td]:px-3 lg:[&_th]:px-3">
             <TableHeader>
               <TableRow>
-                {SORT_HEADERS.map(([key, label, align]) => (
+                {SORT_HEADERS.map(([key, label, align, className]) => (
                   <SortableHead
                     key={key}
                     label={label}
@@ -191,6 +187,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
                     sortDir={sortDir}
                     onSort={toggle}
                     align={align}
+                    className={className}
                   />
                 ))}
               </TableRow>
@@ -251,16 +248,16 @@ function ClientInvoiceRow({ row, onOpen }: { row: ClientInvoice; onOpen: (id: nu
       <TableCell className="num underline decoration-gray-300 underline-offset-2">
         {row.folio_display}
       </TableCell>
-      <TableCell className="whitespace-nowrap">{formatDay(row.fecha)}</TableCell>
-      <TableCell className="whitespace-nowrap">{formatDay(row.vencimiento)}</TableCell>
+      <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_SM)}>{formatDay(row.fecha)}</TableCell>
+      <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_MD)}>{formatDay(row.vencimiento)}</TableCell>
       <TableCell className="text-right num">{formatMoney(row.total)}</TableCell>
-      <TableCell className="text-right num">{row.pendiente >= 1 ? formatMoney(row.pendiente) : "-"}</TableCell>
+      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{row.pendiente >= 1 ? formatMoney(row.pendiente) : "-"}</TableCell>
       <TableCell className="whitespace-nowrap">
         <Badge variant="outline" className={badge.className}>{badge.label}</Badge>
       </TableCell>
-      <TableCell className="whitespace-nowrap text-sm"><PaidCell row={row} /></TableCell>
-      <TableCell className="whitespace-nowrap text-right text-sm"><LateCell row={row} /></TableCell>
-      <TableCell className="text-sm">
+      <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_LG)}><PaidCell row={row} /></TableCell>
+      <TableCell className={cn("whitespace-nowrap text-right", HIDE_BELOW_LG)}><LateCell row={row} /></TableCell>
+      <TableCell className={HIDE_BELOW_LG}>
         {row.cuadra ? (
           <Check className="w-4 h-4 text-green-600" />
         ) : (
