@@ -2,11 +2,9 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   Ban,
   ChevronDown,
   ChevronRight,
-  Info,
   Loader2,
   Plus,
   RotateCcw,
@@ -42,7 +40,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, plural } from "@/lib/utils";
+import { Notice, NoticeList } from "@/components/notice";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { CommissionLine, CommissionsSummary, InvoiceSearchResult, WarningInvoice, Zone } from "@/types/commissions";
@@ -94,34 +93,17 @@ const COMMISSION_ZONES = (Object.keys(ZONE_LABELS) as Zone[]).filter((z) => z !=
 // Invoices listed inside a warning: date, invoice, client, zone, total.
 function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: string }) {
   return (
-    <div className="mt-2 overflow-x-auto">
-      <table className="text-xs">
-        <thead className="text-left opacity-80">
-          <tr>
-            <th className="pr-4 font-medium">{dateLabel}</th>
-            <th className="pr-4 font-medium">Factura</th>
-            <th className="pr-4 font-medium">Cliente</th>
-            <th className="pr-4 font-medium">Zona</th>
-            <th className="font-medium text-right">Total factura</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.invoice_id}>
-              <td className="pr-4 whitespace-nowrap">{formatDay(r.date)}</td>
-              <td className="pr-4 num">
-                <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
-              </td>
-              <td className="pr-4 max-w-56 truncate" title={r.cliente}>
-                <ClientLink clientId={r.client_id} label={r.cliente} />
-              </td>
-              <td className="pr-4 whitespace-nowrap">{ZONE_LABELS[r.zone] ?? r.zone}</td>
-              <td className="text-right num">{formatMoney(r.total)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <NoticeList
+      rows={rows}
+      rowKey={(r) => r.invoice_id}
+      columns={[
+        { label: "Factura", cell: (r) => <span className="num"><InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} /></span> },
+        { label: "Cliente", cell: (r) => <ClientLink clientId={r.client_id} label={r.cliente} /> },
+        { label: dateLabel, cell: (r) => formatDay(r.date) },
+        { label: "Zona", cell: (r) => ZONE_LABELS[r.zone] ?? r.zone },
+        { label: "Total", cell: (r) => <span className="num">{formatMoney(r.total)}</span>, align: "right" },
+      ]}
+    />
   );
 }
 
@@ -418,11 +400,7 @@ export default function CommissionsView() {
         )}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       {data && !error && (
         <>
@@ -458,33 +436,25 @@ export default function CommissionsView() {
           </div>
 
           {data.unresolved_payment_date.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">
-                  {data.unresolved_payment_date.count} facturas pagadas en Comercial este mes, aún
-                  sin póliza en Contabilidad ({formatMoney(data.unresolved_payment_date.total_amount)})
-                </p>
-                <p className="text-amber-700">
-                  {data.unresolved_payment_date.note}
-                </p>
-                <InvoiceList rows={data.unresolved_payment_date.rows} dateLabel="Pago en Comercial" />
-              </div>
-            </div>
+            <Notice
+              tone="warning"
+              title={`${plural(data.unresolved_payment_date.count, "factura pagada", "facturas pagadas")} en Comercial, aún sin póliza en Contabilidad (${formatMoney(data.unresolved_payment_date.total_amount)})`}
+              summary="No entran en los totales hasta que se registre la póliza."
+            >
+              <p>{data.unresolved_payment_date.note}</p>
+              <InvoiceList rows={data.unresolved_payment_date.rows} dateLabel="Pago en Comercial" />
+            </Notice>
           )}
 
           {data.credit_noted.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">
-                  {data.credit_noted.count} facturas liquidadas por nota de
-                  crédito este mes ({formatMoney(data.credit_noted.total_amount)})
-                </p>
-                <p className="text-slate-600">{data.credit_noted.note}</p>
-                <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
-              </div>
-            </div>
+            <Notice
+              tone="info"
+              title={`${plural(data.credit_noted.count, "factura liquidada", "facturas liquidadas")} por nota de crédito este mes (${formatMoney(data.credit_noted.total_amount)})`}
+              summary="No generan comisión."
+            >
+              <p>{data.credit_noted.note}</p>
+              <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
+            </Notice>
           )}
 
           <div className="flex flex-col gap-3">

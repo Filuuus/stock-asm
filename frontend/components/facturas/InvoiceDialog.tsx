@@ -1,5 +1,6 @@
 "use client";
 
+import { Notice } from "@/components/notice";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ExternalLink, Loader2 } from "lucide-react";
@@ -137,11 +138,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
           </DialogDescription>
         </DialogHeader>
 
-        {error && !data && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+        {error && !data && <Notice tone="error" summary={error} />}
         {!data && loadingPath === path && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />

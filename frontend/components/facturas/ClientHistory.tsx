@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/notice";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -13,7 +15,7 @@ import {
 } from "@/components/ui/table";
 import { Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
 import { SortableHead, SortColumn, useSort } from "@/components/sortable-table";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, plural } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import type { ClientHistory, ClientInvoice, ClientInvoiceStatus } from "@/types/facturas";
@@ -68,10 +70,6 @@ const SORT_HEADERS: [SortKey, string, "right"?][] = [
 
 const byNewest = (a: ClientInvoice, b: ClientInvoice) =>
   b.fecha.localeCompare(a.fecha) || folioNumber(b) - folioNumber(a);
-
-function plural(n: number, one: string, many: string) {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
   history: ClientHistory;
@@ -143,15 +141,16 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
       </div>
 
       {summary.no_cuadran > 0 && (
-        <button
-          type="button"
-          onClick={() => setFilter("no_cuadran")}
-          className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-left text-sm text-amber-800 hover:bg-amber-100"
-        >
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          {plural(summary.no_cuadran, "factura no cuadra", "facturas no cuadran")} entre los pagos de
-          Comercial y las pólizas de Contabilidad. Ábrala para ver qué corregir en Contpaqi.
-        </button>
+        <Notice
+          tone="warning"
+          title={`${plural(summary.no_cuadran, "factura no cuadra", "facturas no cuadran")} entre Comercial y Contabilidad`}
+          summary="Abra cada una para ver qué corregir en Contpaqi."
+          action={
+            <Button size="sm" variant="outline" className="h-7 bg-white text-xs" onClick={() => setFilter("no_cuadran")}>
+              Ver solo esas facturas
+            </Button>
+          }
+        />
       )}
 
       <Section title="Facturas" count={rows.length}>

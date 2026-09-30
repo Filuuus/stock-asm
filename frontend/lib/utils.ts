@@ -13,3 +13,8 @@ export function formatMoney(value: number) {
     maximumFractionDigits: 2,
   });
 }
+
+// "1 factura", "3 facturas"
+export function plural(n: number, one: string, many: string) {
+  return `${n} ${n === 1 ? one : many}`;
+}

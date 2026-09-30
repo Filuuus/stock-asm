@@ -1,5 +1,6 @@
 "use client";
 
+import { Notice } from "@/components/notice";
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, Plus, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -358,11 +359,7 @@ export default function UsersView() {
       </div>
 
       {(loading || authLoading) && <Loader2 className="w-5 h-5 animate-spin text-gray-400" />}
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       <div className="rounded-lg border bg-white">
         <Table>

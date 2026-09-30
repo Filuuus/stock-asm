@@ -1,5 +1,6 @@
 "use client";
 
+import { Notice } from "@/components/notice";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Search } from "lucide-react";
@@ -126,11 +127,7 @@ export default function FacturaView() {
         {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
       </form>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       {showResultsList && (
         <SearchResults

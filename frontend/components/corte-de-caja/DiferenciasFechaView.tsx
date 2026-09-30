@@ -20,6 +20,7 @@ import { MonthControl } from "@/components/date-controls";
 import { currentMonthISO, dateToISO, formatDay, isoToDate } from "@/lib/dates";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn, formatMoney } from "@/lib/utils";
+import { Notice } from "@/components/notice";
 import { apiFetch } from "@/lib/api";
 import type {
   DateDifferenceRow,
@@ -110,11 +111,7 @@ export default function DiferenciasFechaView() {
         {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       {data && (
         <>

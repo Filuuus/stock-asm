@@ -1,14 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Info,
-} from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -20,13 +13,13 @@ import {
 } from "@/components/ui/table";
 import { STATUS_INFO } from "@/components/corte-de-caja/date-difference-status";
 import { cn, formatMoney } from "@/lib/utils";
+import { Notice } from "@/components/notice";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
 import ClientLink from "@/components/facturas/ClientLink";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import type {
-  FlagLevel,
   InvoiceDetail,
   InvoiceSearchResult,
   PaymentPair,
@@ -36,11 +29,6 @@ import type {
 // Everything about one invoice - shared by the Consulta de factura page and
 // the invoice dialog any other screen opens (see InvoiceDialog).
 
-const FLAG_STYLE: Record<FlagLevel, { box: string; icon: typeof AlertCircle }> = {
-  error: { box: "border-red-200 bg-red-50 text-red-800", icon: AlertCircle },
-  warning: { box: "border-amber-200 bg-amber-50 text-amber-800", icon: AlertTriangle },
-  info: { box: "border-slate-200 bg-slate-50 text-slate-700", icon: Info },
-};
 
 
 export async function getJson<T>(path: string): Promise<T> {
@@ -202,24 +190,17 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       {/* What to fix */}
       {flags.length === 0 ? (
-        <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          Comercial y Contabilidad cuadran: cada pago tiene su póliza, con la misma fecha e importe.
-        </div>
+        <Notice
+          tone="ok"
+          summary="Comercial y Contabilidad cuadran: cada pago tiene su póliza, con la misma fecha e importe."
+        />
       ) : (
         <Section title="Revisar en Contpaqi" count={flags.length}>
-          <ul className="flex flex-col gap-2">
-            {flags.map((flag, i) => {
-              const style = FLAG_STYLE[flag.level];
-              const Icon = style.icon;
-              return (
-                <li key={i} className={cn("flex items-start gap-2 rounded-lg border px-4 py-2.5 text-sm", style.box)}>
-                  <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>{flag.text}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="flex flex-col gap-2">
+            {flags.map((flag, i) => (
+              <Notice key={i} tone={flag.level} summary={flag.text} />
+            ))}
+          </div>
         </Section>
       )}
 

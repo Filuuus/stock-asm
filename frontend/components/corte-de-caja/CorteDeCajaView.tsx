@@ -3,11 +3,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { addDays } from "date-fns";
 import {
-  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
-  Info,
   Loader2,
   Pencil,
   X,
@@ -44,7 +42,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { HIDE_BELOW_LG, HIDE_BELOW_SM } from "@/components/sortable-table";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, plural } from "@/lib/utils";
+import { Notice, NoticeList } from "@/components/notice";
 import { dateToISO, formatDay, isoToDate, todayISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
 import { apiFetch } from "@/lib/api";
@@ -397,11 +396,7 @@ export default function CorteDeCajaView() {
         )}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="error" summary={error} />}
 
       {data && !error && (
         <>
@@ -442,107 +437,78 @@ export default function CorteDeCajaView() {
           </div>
 
           {data.unclassified.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">
-                  {data.unclassified.count} pagos sin forma de pago asignada (
-                  {formatMoney(data.unclassified.total_amount)})
-                </p>
-                <p className="text-amber-700">{data.unclassified.note}</p>
-              </div>
-            </div>
+            <Notice
+              tone="warning"
+              title={`${plural(data.unclassified.count, "pago", "pagos")} sin forma de pago (${formatMoney(data.unclassified.total_amount)})`}
+              summary="Clasifíquelos para que entren en los totales."
+            >
+              <p>{data.unclassified.note}</p>
+            </Notice>
           )}
 
           {data.unconfirmed.count > 0 && (
-            <div className="flex flex-wrap items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-              <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-64">
-                <p className="font-medium">
-                  {data.unconfirmed.count} pagos con forma de pago sin confirmar (
-                  {formatMoney(data.unconfirmed.total_amount)})
-                </p>
-                <p className="text-sky-700">{data.unconfirmed.note}</p>
-                <p className="mt-1 flex flex-wrap gap-x-4 text-xs text-sky-700">
-                  <span>
-                    <b>{data.suggestions.alta.count}</b> confianza alta
-                  </span>
-                  <span>
-                    <b>{data.suggestions.media.count}</b> confianza media
-                  </span>
-                  <span>
-                    <b>{data.suggestions.baja.count}</b> por elegir (sin historial suficiente)
-                  </span>
-                </p>
-              </div>
-              {data.suggestions.alta.count > 0 && (
-                <Button
-                  size="sm"
-                  onClick={handleConfirmHighConfidence}
-                  disabled={confirmingBulk}
-                  title="Confirma solo las sugerencias de confianza alta de este rango de fechas"
-                >
-                  {confirmingBulk ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  ) : (
-                    <Check className="w-4 h-4 mr-1" />
-                  )}
-                  Confirmar las {data.suggestions.alta.count} de confianza alta
-                </Button>
-              )}
-            </div>
+            <Notice
+              tone="info"
+              title={`${plural(data.unconfirmed.count, "pago", "pagos")} con forma de pago sin confirmar (${formatMoney(data.unconfirmed.total_amount)})`}
+              summary={
+                `${data.suggestions.alta.count} de confianza alta, ${data.suggestions.media.count} media, ` +
+                `${data.suggestions.baja.count} por elegir (sin historial suficiente).`
+              }
+              action={
+                data.suggestions.alta.count > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={handleConfirmHighConfidence}
+                    disabled={confirmingBulk}
+                    title="Confirma solo las sugerencias de confianza alta de este rango de fechas"
+                  >
+                    {confirmingBulk ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                    ) : (
+                      <Check className="w-4 h-4 mr-1" />
+                    )}
+                    Confirmar las {data.suggestions.alta.count} de confianza alta
+                  </Button>
+                )
+              }
+            >
+              <p>{data.unconfirmed.note}</p>
+            </Notice>
           )}
 
           {data.sin_poliza.count > 0 && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">
-                  {data.sin_poliza.count} pagos en Comercial sin póliza en Contabilidad (
-                  {formatMoney(data.sin_poliza.total_amount)}) - no incluidos en el corte
-                </p>
-                <p className="text-amber-700">{data.sin_poliza.note}</p>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="text-xs">
-                    <thead className="text-left text-amber-700">
-                      <tr>
-                        <th className="pr-4 font-medium">Fecha en Comercial</th>
-                        <th className="pr-4 font-medium">Factura</th>
-                        <th className="pr-4 font-medium">Fecha factura</th>
-                        <th className="pr-4 font-medium">Cliente</th>
-                        <th className="pr-4 font-medium text-right">Total factura</th>
-                        <th className="pr-4 font-medium text-right">Monto del pago</th>
-                        <th className="font-medium">Pago en Comercial</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.sin_poliza.rows.map((r) => (
-                        <tr key={`${r.invoice_id}-${r.comercial_date}-${r.pago}`}>
-                          <td className="pr-4 whitespace-nowrap">{formatDay(r.comercial_date)}</td>
-                          <td className="pr-4 num">
-                            <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
-                          </td>
-                          <td
-                            className={cn("pr-4 whitespace-nowrap", r.invoice_date > r.comercial_date && "font-medium text-red-700")}
-                            title={r.invoice_date > r.comercial_date ? "El pago es anterior a la factura: revisar en Comercial a qué factura se aplicó" : undefined}
-                          >
-                            {formatDay(r.invoice_date)}
-                          </td>
-                          <td className="pr-4 max-w-56 truncate" title={r.cliente}>
-                            <ClientLink clientId={r.client_id} label={r.cliente} />
-                          </td>
-                          <td className="pr-4 text-right num">{formatMoney(r.invoice_total)}</td>
-                          <td className="pr-4 text-right num">
-                            {formatMoney(r.amount)}
-                          </td>
-                          <td className="num">{r.pago}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <Notice
+              tone="warning"
+              title={`${plural(data.sin_poliza.count, "pago", "pagos")} en Comercial sin póliza en Contabilidad (${formatMoney(data.sin_poliza.total_amount)})`}
+              summary="No se incluyen en el corte hasta que se registre la póliza en Contpaqi."
+            >
+              <p>{data.sin_poliza.note}</p>
+              <NoticeList
+                rows={data.sin_poliza.rows}
+                rowKey={(r) => `${r.invoice_id}-${r.comercial_date}-${r.pago}`}
+                columns={[
+                  { label: "Factura", cell: (r) => <span className="num"><InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} /></span> },
+                  { label: "Cliente", cell: (r) => <ClientLink clientId={r.client_id} label={r.cliente} /> },
+                  { label: "Pago en Comercial", cell: (r) => `${formatDay(r.comercial_date)} · ${r.pago}` },
+                  {
+                    label: "Fecha factura",
+                    cell: (r) =>
+                      r.invoice_date > r.comercial_date ? (
+                        <span
+                          className="font-medium text-red-700"
+                          title="El pago es anterior a la factura: revisar en Comercial a qué factura se aplicó"
+                        >
+                          {formatDay(r.invoice_date)}
+                        </span>
+                      ) : (
+                        formatDay(r.invoice_date)
+                      ),
+                  },
+                  { label: "Total factura", cell: (r) => <span className="num">{formatMoney(r.invoice_total)}</span>, align: "right" },
+                  { label: "Monto del pago", cell: (r) => <span className="num">{formatMoney(r.amount)}</span>, align: "right" },
+                ]}
+              />
+            </Notice>
           )}
 
           <div className="flex flex-col gap-3">
