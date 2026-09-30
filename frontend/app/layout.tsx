@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SearchQueryProvider } from "@/hooks/use-search-query";
 import { AuthProvider } from "@/hooks/use-auth";
@@ -36,11 +37,9 @@ export default function RootLayout({
         <AuthProvider>
           <SearchQueryProvider>
             <header className="bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
-              <div className="text-lg font-bold whitespace-nowrap">Agropecuaria Santa María</div>
+              <Link href="/" className="text-lg font-bold whitespace-nowrap">Agropecuaria Santa María</Link>
               <SearchBar />
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <HeaderNav />
-              </div>
+              <HeaderNav />
             </header>
             <InvoiceDialogProvider>
               <div className="flex-1 flex flex-col">{children}</div>

@@ -344,7 +344,7 @@ export default function UsersView() {
 
   return (
     <main className="max-w-4xl mx-auto w-full p-6 flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
           <p className="text-sm text-gray-500">
@@ -381,7 +381,7 @@ export default function UsersView() {
               const isSelf = u.username === currentUser?.username;
               return (
                 <TableRow key={u.id}>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-medium whitespace-nowrap">
                     {u.username}
                     {isSelf && <span className="ml-2 text-xs text-gray-400">(usted)</span>}
                   </TableCell>
@@ -405,7 +405,7 @@ export default function UsersView() {
                       onCheckedChange={(checked) => handleActiveChange(u, checked)}
                     />
                   </TableCell>
-                  <TableCell className="text-xs text-gray-500">
+                  <TableCell className="text-xs text-gray-500 whitespace-nowrap">
                     {formatDateTime(u.last_login)}
                   </TableCell>
                   <TableCell>

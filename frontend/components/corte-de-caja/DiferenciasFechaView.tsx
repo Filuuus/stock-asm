@@ -163,15 +163,15 @@ export default function DiferenciasFechaView() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-gray-900">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
                 Pagos ({rows.length})
               </h2>
               <Input
                 placeholder="Buscar cliente o folio..."
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                className="max-w-xs"
+                className="w-full sm:w-72"
               />
             </div>
             <div className="overflow-x-auto rounded-lg border bg-white">

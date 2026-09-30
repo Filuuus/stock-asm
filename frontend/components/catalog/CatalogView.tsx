@@ -106,12 +106,12 @@ export default function CatalogView({ products }: { products: Product[] }) {
       />
 
       <div className="flex-1 flex flex-col">
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200">
           <span className="text-sm text-gray-500 font-medium">
             Mostrando {filtered.length} productos
           </span>
           <div className="flex items-center space-x-2 text-sm text-gray-600">
-            <span>Ordenar por:</span>
+            <span className="whitespace-nowrap">Ordenar por:</span>
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}

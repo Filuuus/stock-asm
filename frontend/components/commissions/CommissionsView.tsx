@@ -495,9 +495,9 @@ export default function CommissionsView() {
           )}
 
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
                   Facturas ({invoiceGroups.length})
                 </h2>
                 {selectedZone && (
@@ -521,7 +521,7 @@ export default function CommissionsView() {
                   placeholder="Buscar cliente, producto o folio..."
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="w-72"
+                  className="w-full sm:w-72"
                 />
               </div>
             </div>
