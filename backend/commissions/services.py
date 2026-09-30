@@ -65,6 +65,21 @@ NORTHWEST_RUBBER_CODE_PREFIX = '4999-1115-'
 # finer product-line field) cleanly does, with no other chemical-sounding
 # values found in that slot's full taxonomy.
 CHEMICAL_CLASSIFICATIONS = {'DETERGENTES NACIONALES', 'DETERGENTES SURGE'}
+# Chemicals the ERP files under another classification. THERATRATE SELLADOR
+# CONCENTRADO 208 LTS is the one product of the 7751-0040- family filed as
+# 'REFACCIONES SURGE'; management confirmed 2026-09-30 it pays 4% like the
+# other Theratrate. PEROXYSAN RS 25 LT is filed the same way (its 200 LT
+# size is under DETERGENTES SURGE); management's sheet pays it 4% and
+# management confirmed it is a chemical. Remove each once it is reclassified
+# in Contpaqi.
+CHEMICAL_PRODUCT_CODES = {'7751-0040-160', '4652-0001-030'}
+# Two Bionat lines with their own rate (confirmed by management 2026-09-30,
+# and read from their sheet: 35 of 35 and 8 of 8 rows): the MIPRO mineral
+# premixes pay 1% and BOVIFIT 4%, instead of Bionat's 2%. "MIPRO ENERGIZER"
+# is not a premix - the sheet pays it the normal 2%.
+MIPRO_NAME_MARKER = 'MIPRO'
+MIPRO_NAME_EXCEPTION = 'ENERGIZER'
+BOVIFIT_NAME_MARKER = 'BOVIFIT'
 # Fans: span multiple suppliers AND multiple classification-2 values, so
 # neither field detects them - the product name is the only consistent
 # signal.
@@ -99,8 +114,8 @@ PUNTOVENTA_RATE_CODE = 'PUNTOVENTA'
 # all - not in the totals, not in the manual-review bucket. Found on folio
 # 19892 (invoiced Mar 20 on 90-day terms, paid Aug 13 - 54 days late, still
 # 2%); 16 invoices ($153k of sales) paid in 2026 were affected. Resolution is
-# window-independent (see fetch_payment_docs), so a wider floor only costs
-# query size.
+# window-independent (the ledger is read through today), so a wider floor
+# only costs query size.
 DEFAULT_LOOKBACK_DAYS = 365
 
 # Ledger lines naming this generic public-sales account can't be tied to one
@@ -171,45 +186,17 @@ class CommissionRepository:
         return CommissionRepository.fetch_scoped_facturas(floor_date, date_to)
 
     @staticmethod
-    def fetch_payment_docs(floor_date):
-        # Only corte_de_caja reads these now (commissions dates come from the
-        # ledger alone since 2026-09-28). Searched from the invoice lookback
-        # floor through TODAY - never capped at the report's date_to. Capping
-        # it there was a real bug when commissions still used this: for an
-        # invoice settled via several installments in different months, the
-        # old Comercial-side resolver took the latest payment found
-        # *within the queried window*, so querying December only saw the
-        # December installment (resolved paid_date = December), querying
-        # January then saw December+January (resolved paid_date = January),
-        # and querying February saw all three - the same invoice's full
-        # commission got recomputed and counted again in EVERY month that
-        # contained a referencing payment. Searching through today instead
-        # of date_to means the resolved paid_date is the true, final one
-        # and doesn't change depending on which month is being viewed - an
-        # invoice can only ever land in exactly one month's totals. Found
-        # 2026-09-15 from a report showing the same invoice generating
-        # commission in three different months.
-        return list(
-            AdmDocumentos.objects.filter(
-                CIDDOCUMENTODE__in=PAGO_DOC_TYPES,
-                CFECHA__date__gte=floor_date,
-                CFECHA__date__lte=date.today(),
-            ).exclude(CREFERENCIA__isnull=True).exclude(CREFERENCIA='').values(
-                'CFECHA', 'CIDCLIENTEPROVEEDOR', 'CREFERENCIA', 'CTOTAL',
-            )
-        )
-
-    @staticmethod
     def fetch_settlements(floor_date):
         """How Contpaqi Comercial settled each Factura dated since floor_date,
         from its exact payment-to-invoice record (admAsocCargosAbonos, see
         fetch_comercial_applications): {invoice_id: {'cash': applied by
-        customer payments, 'credit': applied by credit notes and returns}}.
+        customer payments, 'credit': applied by credit notes and returns,
+        'credit_date': the last day a credit note or return was applied}}.
         """
         with connections['erp'].cursor() as cursor:
             cursor.execute(
                 """
-                SELECT a.CIDDOCUMENTOCARGO, ab.CIDDOCUMENTODE, SUM(a.CIMPORTEABONO)
+                SELECT a.CIDDOCUMENTOCARGO, ab.CIDDOCUMENTODE, SUM(a.CIMPORTEABONO), MAX(a.CFECHAABONOCARGO)
                 FROM admAsocCargosAbonos a
                 JOIN admDocumentos ab ON ab.CIDDOCUMENTO = a.CIDDOCUMENTOABONO
                 JOIN admDocumentos ca ON ca.CIDDOCUMENTO = a.CIDDOCUMENTOCARGO
@@ -219,9 +206,14 @@ class CommissionRepository:
                 """,
                 [FACTURA_DOC_TYPE, floor_date, PAGO_CLIENTE_DOC_TYPE, NOTA_CREDITO_DOC_TYPE, DEVOLUCION_DOC_TYPE],
             )
-            settlements = defaultdict(lambda: {'cash': 0.0, 'credit': 0.0})
-            for invoice_id, doc_type, amount in cursor.fetchall():
-                settlements[invoice_id]['cash' if doc_type == PAGO_CLIENTE_DOC_TYPE else 'credit'] += amount or 0
+            settlements = defaultdict(lambda: {'cash': 0.0, 'credit': 0.0, 'credit_date': None})
+            for invoice_id, doc_type, amount, applied in cursor.fetchall():
+                s = settlements[invoice_id]
+                if doc_type == PAGO_CLIENTE_DOC_TYPE:
+                    s['cash'] += amount or 0
+                else:
+                    s['credit'] += amount or 0
+                    s['credit_date'] = max(filter(None, [s['credit_date'], applied.date() if applied else None]), default=None)
             return settlements
 
     @staticmethod
@@ -613,6 +605,12 @@ def _paid_dates_from_ledger(facturas, accepted, cash_due=None):
 def _classify_line(producto, brand_names, zero_codes):
     if producto['CCODIGOPRODUCTO'] in zero_codes:
         return 'ZERO'
+    name = (producto['CNOMBREPRODUCTO'] or '').upper()
+    # By name, not supplier: one MIPRO product is filed under another supplier.
+    if MIPRO_NAME_MARKER in name and MIPRO_NAME_EXCEPTION not in name:
+        return 'B_MIPRO'
+    if BOVIFIT_NAME_MARKER in name:
+        return 'B_BOVI'
     if brand_names.get(producto['CIDVALORCLASIFICACION1']) == BIONAT_SUPPLIER_NAME:
         return 'B'
     if producto['CTIPOPRODUCTO'] == SERVICE_PRODUCT_TYPE:
@@ -620,9 +618,10 @@ def _classify_line(producto, brand_names, zero_codes):
     if brand_names.get(producto['CIDVALORCLASIFICACION1']) == NORTHWEST_RUBBER_SUPPLIER_NAME or \
             producto['CCODIGOPRODUCTO'].startswith(NORTHWEST_RUBBER_CODE_PREFIX):
         return 'R_NW'
-    if brand_names.get(producto['CIDVALORCLASIFICACION2']) in CHEMICAL_CLASSIFICATIONS:
+    if brand_names.get(producto['CIDVALORCLASIFICACION2']) in CHEMICAL_CLASSIFICATIONS or \
+            producto['CCODIGOPRODUCTO'] in CHEMICAL_PRODUCT_CODES:
         return 'R_CHEM'
-    if FAN_NAME_MARKER in (producto['CNOMBREPRODUCTO'] or '').upper():
+    if FAN_NAME_MARKER in name:
         return 'R_FAN'
     # Default/fallback: covers R itself, EQ (no automatic detection rule
     # exists yet - deferred by management until there's a draft to look at),
@@ -646,13 +645,16 @@ def _effective_rate(rate_row, days_late):
     late already costs one full decay step, the next step only lands once
     another 7 days pass (day 8), and so on - so weeks_completed is a
     ceiling, not days_late / 7. Confirmed by management, 2026-09-15.
+
+    A category can also lose a one-off late_penalty as soon as it is late
+    (see CommissionCategoryRate.late_penalty).
     """
     if rate_row is None:
         return Decimal('0')
     if days_late <= 0:
         return rate_row.base_rate
     weeks_completed = -(-days_late // 7)  # ceiling division for positive ints
-    decayed = rate_row.base_rate - (rate_row.decay_rate_per_week * weeks_completed)
+    decayed = rate_row.base_rate - rate_row.late_penalty - (rate_row.decay_rate_per_week * weeks_completed)
     return max(decayed, Decimal('0'))
 
 
@@ -783,8 +785,14 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         s = settlements.get(f['CIDDOCUMENTO'])
         return s is not None and s['cash'] < LEDGER_FULL_PAYMENT_TOLERANCE and s['credit'] >= LEDGER_FULL_PAYMENT_TOLERANCE
 
-    credit_noted = [f for f in all_facturas if settled_without_money(f)]
     facturas = [f for f in all_facturas if not settled_without_money(f)]
+    # Only listed for the month the credit note was applied in (all of them
+    # stay out of the totals). Until 2026-09-30 the warning listed every one
+    # in the 12-month lookback, the same 10 invoices every month.
+    credit_noted = [
+        f for f in all_facturas
+        if settled_without_money(f) and date_from <= (settlements[f['CIDDOCUMENTO']]['credit_date'] or date.min) <= date_to
+    ]
 
     # Punto de Venta invoices are subdistributor clients, not office walk-ins
     # (confirmed by management 2026-09-19) - their commission belongs to
@@ -835,7 +843,23 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         invoice_id for invoice_id, paid_date in paid_dates.items()
         if date_from <= paid_date.date() <= date_to
     ]
-    unresolved = [f for f in facturas if f['CIDDOCUMENTO'] not in paid_dates]
+    # Invoices Comercial shows as paid this month (last customer payment
+    # dated in [date_from, date_to]) whose payment Contabilidad hasn't
+    # registered in full yet - what the accountant still has to capture for
+    # the month to close. Until 2026-09-30 this listed every undated invoice
+    # of the 12-month lookback (19-40 on the last day of September, most of
+    # them long past the point of earning anything); older ones are in the
+    # Corte de Caja's Discrepancias tab.
+    last_comercial_payment = {}
+    for invoice_id, _, payment_date, _, amount, _, _ in CommissionRepository.fetch_comercial_applications(floor_date):
+        if abs(amount or 0) >= LEDGER_FULL_PAYMENT_TOLERANCE:
+            day = payment_date.date()
+            last_comercial_payment[invoice_id] = max(last_comercial_payment.get(invoice_id, day), day)
+    unresolved = [
+        f for f in facturas
+        if f['CIDDOCUMENTO'] not in paid_dates
+        and date_from <= last_comercial_payment.get(f['CIDDOCUMENTO'], date.min) <= date_to
+    ]
 
     movimientos = CommissionRepository.fetch_movimientos(in_period_ids)
     product_ids = {m['CIDPRODUCTO'] for m in movimientos}
@@ -918,27 +942,49 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         'unresolved_payment_date': {
             'count': len(unresolved),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in unresolved), Decimal('0')),
+            'rows': sorted((
+                {
+                    'invoice_id': f['CIDDOCUMENTO'],
+                    'folio_display': f"{concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F')} {int(f['CFOLIO'])}",
+                    'client_id': f['CIDCLIENTEPROVEEDOR'],
+                    'cliente': f['CRAZONSOCIAL'],
+                    'zone': puntoventa_zone_override.get(f['CIDDOCUMENTO']) or agent_codes.get(f['CIDAGENTE']),
+                    'total': Decimal(str(f['CTOTAL'])),
+                    'date': last_comercial_payment[f['CIDDOCUMENTO']],
+                }
+                for f in unresolved
+            ), key=lambda r: (r['date'], r['folio_display'])),
             'note': (
-                'Facturas saldadas en Comercial cuyo pago Contabilidad no registra completo: sin fecha '
-                'oficial de pago, así que no entran en los totales. Revíselas en Contpaqi (casi siempre '
-                'falta una póliza o cita otro folio). Incluye facturas emitidas desde 12 meses antes '
-                'de este mes, no solo las de este mes.'
+                'Pagadas en Comercial este mes, pero Contabilidad aún no registra la póliza del pago '
+                'completo: no entran en los totales hasta que se registre. Al cerrar el mes esta lista '
+                'debería quedar vacía.'
             ),
         },
         'credit_noted': {
             'count': len(credit_noted),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in credit_noted), Decimal('0')),
+            'rows': sorted((
+                {
+                    'invoice_id': f['CIDDOCUMENTO'],
+                    'folio_display': f"{concepto_series.get(f['CIDCONCEPTODOCUMENTO'], 'F')} {int(f['CFOLIO'])}",
+                    'client_id': f['CIDCLIENTEPROVEEDOR'],
+                    'cliente': f['CRAZONSOCIAL'],
+                    'zone': agent_codes.get(f['CIDAGENTE']),
+                    'total': Decimal(str(f['CTOTAL'])),
+                    'date': settlements[f['CIDDOCUMENTO']]['credit_date'],
+                }
+                for f in credit_noted
+            ), key=lambda r: (r['date'], r['folio_display'])),
             'note': (
-                'Facturas saldadas solo con notas de crédito o devoluciones, sin pago en dinero: no '
-                'generan comisión (confirmado por gerencia). Incluye facturas emitidas desde 12 meses '
-                'antes de este mes, no solo las de este mes.'
+                'Facturas saldadas este mes solo con notas de crédito o devoluciones, sin pago en dinero: '
+                'no generan comisión (confirmado por gerencia).'
             ),
         },
         'puntoventa_unassigned': {
             'count': len(puntoventa_unassigned),
             'total_amount': sum((Decimal(str(f['CTOTAL'])) for f in puntoventa_unassigned), Decimal('0')),
             'note': (
-                'Facturas de Punto de Venta cuyo cliente aún no tiene zona asignada (Zona 1 o Zona 2): '
+                'Facturas de Punto de Venta cuyo cliente aún no tiene zona asignada (Zona 1, Zona 2 u Oficina): '
                 'su comisión no se paga a nadie hasta asignarla en el admin (PuntoVentaClientZone).'
             ),
         },

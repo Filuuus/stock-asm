@@ -79,11 +79,10 @@ export interface SinPolizaRow {
   // A payment dated before its own invoice usually means a wrong reference.
   invoice_date: string;
   invoice_total: number;
+  // What Comercial applied to this invoice (admAsocCargosAbonos).
   amount: number;
-  referencia: string;
-  // How many other invoices the same Comercial payment names - its amount is
-  // the whole payment, not this invoice's share.
-  shared_with: number;
+  // The Comercial payment document, series + folio (e.g. "BBV 19686").
+  pago: string;
 }
 
 export interface SinPolizaInfo {
@@ -106,10 +105,16 @@ export interface CorteDeCajaSummary {
   sin_poliza: SinPolizaInfo;
 }
 
-// "Diferencias de fecha" tab: each customer payment with its Contpaqi
-// Comercial date next to its Contabilidad (poliza) date.
+// "Discrepancias" tab: each customer payment with its Contpaqi Comercial
+// date next to its Contabilidad (poliza) date.
+// "monto_distinto": a Comercial payment and a poliza a few days apart whose
+// amounts differ slightly - most likely the same payment typed differently.
+// "folio_equivocado": the poliza cites another invoice whose folio differs by
+// one digit (or two swapped digits) - see cited_folio_display.
 export type DateDifferenceStatus =
   | "distinto_mes"
+  | "folio_equivocado"
+  | "monto_distinto"
   | "solo_comercial"
   | "solo_contabilidad"
   | "distinto_dia"
@@ -141,6 +146,9 @@ export interface DateDifferenceRow {
   invoice_date: string;
   amount: number;
   status: DateDifferenceStatus;
+  // folio_equivocado only: the invoice the poliza actually cites.
+  cited_invoice_id: number | null;
+  cited_folio_display: string | null;
   // Latest date on each side (a payment can be split in pieces on one side);
   // null when only the other system has the payment.
   comercial_date: string | null;

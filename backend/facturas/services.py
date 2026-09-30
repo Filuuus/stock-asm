@@ -24,7 +24,7 @@ names are returned live and never stored.
 
 import re
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import connections
@@ -45,9 +45,11 @@ from commissions.services import (
 from corte_de_caja.date_differences import (
     STATUS_COMERCIAL_ONLY,
     STATUS_CONTABILIDAD_ONLY,
+    DIFFERENT_AMOUNT_MAX_DAYS,
+    STATUS_DIFFERENT_AMOUNT,
     STATUS_DIFFERENT_MONTH,
-    _pair_invoice,
-    _status,
+    STATUS_WRONG_FOLIO,
+    pair_payments,
 )
 from corte_de_caja.services import BANK_ACCOUNT_CODE_PREFIX, CASH_ACCOUNT_CODE_PREFIX, _as_decimal
 
@@ -60,13 +62,6 @@ QUERY_RE = re.compile(r'^\s*([A-Za-z]?)\s*-?\s*(\d{1,7})\s*$')
 # Same rule as corte_de_caja.services._invoice_series: the tax series lives
 # in admConceptos.CSERIEPOROMISION; anything but A/B is the 16% 'F' series.
 SERIES_SQL = "CASE WHEN c.CSERIEPOROMISION IN ('A','B') THEN c.CSERIEPOROMISION ELSE 'F' END"
-
-# A one-sided Comercial payment and a one-sided poliza this close in date and
-# amount are most likely the same payment typed with a different amount
-# (B 19236: $1,753 in Comercial, $1,756 in the poliza, same day).
-STATUS_DIFFERENT_AMOUNT = 'monto_distinto'
-DIFFERENT_AMOUNT_MAX_DAYS = 3
-DIFFERENT_AMOUNT_MAX_RATIO = Decimal('0.05')
 
 # A payment poliza dated this long before the invoice cites an older invoice
 # with the same number (F 19417 is cited by 2017 polizas) - same window the
@@ -227,6 +222,42 @@ class InvoiceRepository:
             [f'{series}-{folio}', f'{series} {folio}'],
         )
 
+    @staticmethod
+    def fetch_collection_lines_citing(references, date_from, date_to):
+        """Lines of collection polizas dated in the window that cite any of
+        these references (see _wrong_folio_hints)."""
+        return _rows(
+            f"""
+            SELECT p.Id AS poliza_id, tp.Nombre AS tipo, p.Folio AS poliza_folio, p.Fecha AS poliza_fecha,
+                   LTRIM(RTRIM(mp.Referencia)) AS referencia, mp.TipoMovto, mp.Importe
+            FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
+            JOIN {LEDGER_DATABASE}.dbo.Polizas p ON p.Id = mp.IdPoliza
+            JOIN {LEDGER_DATABASE}.dbo.TiposPolizas tp ON tp.Id = p.TipoPol
+            WHERE LTRIM(RTRIM(mp.Referencia)) IN ({', '.join(['%s'] * len(references))})
+              AND (p.Concepto = %s OR p.TipoPol = %s) AND p.Fecha BETWEEN %s AND %s
+            """,
+            [*references, LEDGER_PAGO_CONCEPTO, LEDGER_INGRESOS_TIPOPOL, date_from, date_to],
+        )
+
+    @staticmethod
+    def fetch_cash_applications_to_folios(folios, date_from, date_to):
+        """Customer payments dated in the window that Comercial applied to a
+        non-cancelled Factura with one of these folios, any series."""
+        return _rows(
+            f"""
+            SELECT f.CIDDOCUMENTO, {SERIES_SQL} AS factura_serie, f.CFOLIO, f.CFECHA, f.CRAZONSOCIAL,
+                   LTRIM(RTRIM(ab.CSERIEDOCUMENTO)) AS serie, ab.CFOLIO AS pago_folio, ab.CFECHA AS pago_fecha,
+                   a.CIMPORTEABONO
+            FROM admAsocCargosAbonos a
+            JOIN admDocumentos ab ON ab.CIDDOCUMENTO = a.CIDDOCUMENTOABONO
+            JOIN admDocumentos f ON f.CIDDOCUMENTO = a.CIDDOCUMENTOCARGO
+            JOIN admConceptos c ON c.CIDCONCEPTODOCUMENTO = f.CIDCONCEPTODOCUMENTO
+            WHERE f.CIDDOCUMENTODE = %s AND f.CCANCELADO = 0 AND f.CFOLIO IN ({', '.join(['%s'] * len(folios))})
+              AND ab.CIDDOCUMENTODE = %s AND ab.CCANCELADO = 0 AND ab.CFECHA BETWEEN %s AND %s
+            """,
+            [FACTURA_DOC_TYPE, *folios, PAGO_CLIENTE_DOC_TYPE, date_from, date_to],
+        )
+
 
 def search_invoices(text):
     """Invoices matching what the user typed. The series, when given, only
@@ -326,7 +357,7 @@ def _polizas(lines, invoice, series, folio, shared_reference):
 
 def _payment_pairs(polizas, cash_applications):
     """Comercial payments next to their polizas, paired the way the
-    "Diferencias de fecha" tab pairs them (same amount, nearest date; pieces
+    "Discrepancias" tab pairs them (same amount, nearest date; pieces
     of one payment on one side only). One item per poliza, not netted per day
     like the corte: a duplicated poliza (B 20016, two identical 35,060
     polizas the same day) then pairs once and the copy is left on its own."""
@@ -338,28 +369,7 @@ def _payment_pairs(polizas, cash_applications):
         {'date': a['fecha'], 'applied_date': a['applied_date'], 'amount': a['amount'], 'documento': a['documento']}
         for a in cash_applications if abs(a['amount']) >= TOLERANCE
     ]
-    matches = []
-    only_ledger, only_comercial = [], []
-    for ledger_items, comercial_items in _pair_invoice(ledger, comercial):
-        if not comercial_items:
-            only_ledger.append(ledger_items[0])
-        elif not ledger_items:
-            only_comercial.append(comercial_items[0])
-        else:
-            matches.append((ledger_items, comercial_items, _status(ledger_items, comercial_items)))
-    for c in only_comercial:
-        close = [
-            l for l in only_ledger
-            if abs((l['date'] - c['date']).days) <= DIFFERENT_AMOUNT_MAX_DAYS
-            and abs(l['amount'] - c['amount']) <= max(TOLERANCE, DIFFERENT_AMOUNT_MAX_RATIO * abs(c['amount']))
-        ]
-        if close:
-            l = min(close, key=lambda l: (abs((l['date'] - c['date']).days), abs(l['amount'] - c['amount'])))
-            only_ledger.remove(l)
-            matches.append(([l], [c], STATUS_DIFFERENT_AMOUNT))
-        else:
-            matches.append(([], [c], STATUS_COMERCIAL_ONLY))
-    matches.extend(([l], [], STATUS_CONTABILIDAD_ONLY) for l in only_ledger)
+    matches = pair_payments(ledger, comercial)
 
     pairs = []
     for ledger_items, comercial_items, status in matches:
@@ -373,9 +383,93 @@ def _payment_pairs(polizas, cash_applications):
                 {k: i[k] for k in ('date', 'amount', 'polizas')}
                 for i in sorted(ledger_items, key=lambda i: i['date'])
             ],
+            # folio_equivocado only, see _wrong_folio_hints.
+            'cited': None,
         })
     pairs.sort(key=lambda p: min(i['date'] for i in p['comercial'] + p['contabilidad']))
     return pairs
+
+
+def _look_alike_folios(folio):
+    """Every folio one digit away, or with two neighbouring digits swapped
+    (date_differences._folios_look_alike, generated instead of tested)."""
+    s = str(folio)
+    out = {s[:i] + d + s[i + 1:] for i in range(len(s)) for d in '0123456789'}
+    out |= {s[:i] + s[i + 1] + s[i] + s[i + 2:] for i in range(len(s) - 1)}
+    return sorted(int(x) for x in out if x != s and not x.startswith('0'))
+
+
+def _wrong_folio_hints(pairs, folio):
+    """The dialog's side of the Discrepancias tab's "folio equivocado": a
+    payment here with no poliza, and a poliza citing a look-alike folio for
+    the same amount a few days apart that the other invoice has no payment
+    for (or the reverse). Marks the pair and records the other side in
+    pair['cited']."""
+    lonely = [p for p in pairs if p['status'] in (STATUS_COMERCIAL_ONLY, STATUS_CONTABILIDAD_ONLY)]
+    if not lonely:
+        return
+    folios = _look_alike_folios(folio)
+    dates = [i['date'] for p in lonely for i in p['comercial'] + p['contabilidad']]
+    window = (min(dates) - timedelta(days=DIFFERENT_AMOUNT_MAX_DAYS), max(dates) + timedelta(days=DIFFERENT_AMOUNT_MAX_DAYS))
+
+    def near(a, b):
+        return abs((a - b).days) <= DIFFERENT_AMOUNT_MAX_DAYS
+
+    def same(a, b):
+        return abs(a - b) <= TOLERANCE
+
+    if any(p['status'] == STATUS_COMERCIAL_ONLY for p in lonely):
+        references = {f'{s}{sep}{f}': (s, f) for s in ('F', 'A', 'B') for f in folios for sep in ('-', ' ')}
+        citing = {}
+        for line in InvoiceRepository.fetch_collection_lines_citing(list(references), *window):
+            entry = citing.setdefault((line['poliza_id'], line['referencia'].upper()), {
+                'label': f"{line['tipo']} {line['poliza_folio']}",
+                'date': _day(line['poliza_fecha']),
+                'amount': Decimal('0'),
+                'cites': references[line['referencia'].upper()],
+            })
+            entry['amount'] += _money(line['Importe']) * (1 if line['TipoMovto'] else -1)
+        for p in lonely:
+            if p['status'] != STATUS_COMERCIAL_ONLY:
+                continue
+            c = p['comercial'][0]
+            for e in sorted(citing.values(), key=lambda e: abs((e['date'] - c['date']).days)):
+                if not (same(e['amount'], c['amount']) and near(e['date'], c['date'])):
+                    continue
+                serie, other_folio = e['cites']
+                other = next((r for r in InvoiceRepository.search(serie, other_folio)
+                              if r['serie'] == serie and not r['CCANCELADO']), None)
+                if other is None or any(
+                    a['CIDDOCUMENTODE'] == PAGO_CLIENTE_DOC_TYPE and not a['CCANCELADO']
+                    and same(_money(a['CIMPORTEABONO']), c['amount']) and near(_day(a['CFECHA']), e['date'])
+                    for a in InvoiceRepository.fetch_applications(other['CIDDOCUMENTO'])
+                ):
+                    continue
+                p['status'] = STATUS_WRONG_FOLIO
+                p['cited'] = {'invoice_id': other['CIDDOCUMENTO'], 'folio_display': f'{serie} {other_folio}',
+                              'documento': f"Póliza {e['label']}", 'date': e['date'], 'amount': e['amount']}
+                break
+
+    if any(p['status'] == STATUS_CONTABILIDAD_ONLY for p in lonely):
+        applied = InvoiceRepository.fetch_cash_applications_to_folios(folios, *window)
+        for p in lonely:
+            if p['status'] != STATUS_CONTABILIDAD_ONLY:
+                continue
+            l = p['contabilidad'][0]
+            for r in sorted(applied, key=lambda r: abs((_day(r['pago_fecha']) - l['date']).days)):
+                amount, paid = _money(r['CIMPORTEABONO']), _day(r['pago_fecha'])
+                if not (same(amount, l['amount']) and near(paid, l['date'])):
+                    continue
+                serie, other_folio = r['factura_serie'], int(r['CFOLIO'])
+                other_polizas = _polizas(
+                    InvoiceRepository.fetch_poliza_lines(serie, other_folio), r, serie, other_folio, False,
+                )
+                if any(q['counted'] and same(q['amount'], amount) and near(q['fecha'], paid) for q in other_polizas):
+                    continue
+                p['status'] = STATUS_WRONG_FOLIO
+                p['cited'] = {'invoice_id': r['CIDDOCUMENTO'], 'folio_display': f'{serie} {other_folio}',
+                              'documento': _document_label(r['serie'], r['pago_folio']), 'date': paid, 'amount': amount}
+                break
 
 
 def _currency(value):
@@ -405,7 +499,9 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
             )))
     # The per-payment flags below already say where the difference is; this
     # one is for a difference no single payment explains.
-    unpaired = any(p['status'] in (STATUS_COMERCIAL_ONLY, STATUS_CONTABILIDAD_ONLY, STATUS_DIFFERENT_AMOUNT) for p in pairs)
+    unpaired = any(p['status'] in (
+        STATUS_COMERCIAL_ONLY, STATUS_CONTABILIDAD_ONLY, STATUS_DIFFERENT_AMOUNT, STATUS_WRONG_FOLIO,
+    ) for p in pairs)
     if not cancelled and not unpaired and abs(balance['comercial_cash'] - balance['contabilidad_cash']) > TOLERANCE:
         flags.append((FLAG_WARNING, (
             f"Comercial registra {_currency(balance['comercial_cash'])} en pagos del cliente y Contabilidad "
@@ -417,6 +513,20 @@ def _flags(invoice, balance, pairs, applications, referencing_payments, same_fol
             flags.append((FLAG_WARNING, (
                 f"El pago {c['documento']} del {c['date']:%d/%m/%Y} por {_currency(c['amount'])} "
                 'no tiene póliza en Contabilidad.'
+            )))
+        elif pair['status'] == STATUS_WRONG_FOLIO and pair['comercial']:
+            c, cited = pair['comercial'][0], pair['cited']
+            flags.append((FLAG_WARNING, (
+                f"El pago {c['documento']} del {c['date']:%d/%m/%Y} por {_currency(c['amount'])} no tiene póliza "
+                f"que cite esta factura, pero la {cited['documento']} del {cited['date']:%d/%m/%Y} por el mismo "
+                f"monto cita {cited['folio_display']}: posible folio equivocado en la póliza."
+            )))
+        elif pair['status'] == STATUS_WRONG_FOLIO:
+            l, cited = pair['contabilidad'][0], pair['cited']
+            flags.append((FLAG_WARNING, (
+                f"La póliza {', '.join(l['polizas'])} del {l['date']:%d/%m/%Y} por {_currency(l['amount'])} cita "
+                f"esta factura, pero en Comercial ese monto es el pago {cited['documento']} del "
+                f"{cited['date']:%d/%m/%Y} aplicado a {cited['folio_display']}: posible folio equivocado en la póliza."
             )))
         elif pair['status'] == STATUS_DIFFERENT_AMOUNT:
             c, l = pair['comercial'][0], pair['contabilidad'][0]
@@ -592,6 +702,8 @@ def invoice_detail(invoice_id):
         'polizas_de_cobro': sum(1 for p in polizas if p['counted']),
     }
     pairs = _payment_pairs(polizas, cash_applications)
+    if not invoice['cancelada']:
+        _wrong_folio_hints(pairs, folio)
     flags = _flags(invoice, balance, pairs, applications, referencing_payments, same_folio, polizas)
     balance['ok'] = not any(f['level'] in (FLAG_ERROR, FLAG_WARNING) for f in flags)
 

@@ -1,6 +1,6 @@
 export type Zone = "ZONA1" | "ZONA2" | "OFICINA" | "SERVICIOS" | "PUNTOVENTA";
 
-export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "S" | "ZERO";
+export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "B_MIPRO" | "B_BOVI" | "S" | "ZERO";
 
 export interface CommissionLine {
   invoice_id: number;
@@ -37,15 +37,31 @@ export interface InvoiceSearchResult {
   zone: Zone | null;
 }
 
+// An invoice listed inside a Comisiones warning; `date` is when it was paid
+// in Comercial (missing póliza) or when the credit note was applied.
+export interface WarningInvoice {
+  invoice_id: number;
+  folio_display: string;
+  client_id: number;
+  cliente: string;
+  zone: Zone;
+  total: number;
+  date: string;
+}
+
+// Paid in Comercial during the month, not yet registered in Contabilidad.
 export interface UnresolvedPaymentDate {
   count: number;
   total_amount: number;
+  rows: WarningInvoice[];
   note: string;
 }
 
+// Settled during the month only with credit notes or returns.
 export interface CreditNoted {
   count: number;
   total_amount: number;
+  rows: WarningInvoice[];
   note: string;
 }
 

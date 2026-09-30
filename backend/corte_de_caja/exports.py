@@ -62,7 +62,7 @@ ZONE_SHEET_CODES = {
 }
 ZONE_ORDER = ['ZONA1', 'ZONA2', 'OFICINA', 'SERVICIOS', 'PUNTOVENTA']
 CATEGORY_SHEET_CODES = {
-    'R': 'R', 'R_NW': 'R', 'R_CHEM': 'R', 'R_FAN': 'R', 'B': 'B', 'S': 'S',
+    'R': 'R', 'R_NW': 'R', 'R_CHEM': 'R', 'R_FAN': 'R', 'B': 'B', 'B_MIPRO': 'B', 'B_BOVI': 'B', 'S': 'S',
 }
 PAYMENT_METHOD_LABELS = dict(CorteDeCajaAdjustment.PAYMENT_METHOD_CHOICES)
 # How the accountant abbreviates the receiving bank in OBSERVACIONES.

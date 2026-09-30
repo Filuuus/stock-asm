@@ -18,14 +18,14 @@ export default function HeaderNav() {
     <>
       <Link
         href="/comisiones"
-        className="text-sm font-medium text-slate-200 hover:text-white"
+        className="text-sm font-medium text-slate-200 hover:text-white whitespace-nowrap"
       >
         Comisiones
       </Link>
       {(isAccounting || isManagement) && (
         <Link
           href="/corte-de-caja"
-          className="text-sm font-medium text-slate-200 hover:text-white"
+          className="text-sm font-medium text-slate-200 hover:text-white whitespace-nowrap"
         >
           Corte de Caja
         </Link>
@@ -33,7 +33,7 @@ export default function HeaderNav() {
       {(isAccounting || isManagement) && (
         <Link
           href="/facturas"
-          className="text-sm font-medium text-slate-200 hover:text-white"
+          className="text-sm font-medium text-slate-200 hover:text-white whitespace-nowrap"
         >
           Facturas
         </Link>
@@ -41,12 +41,12 @@ export default function HeaderNav() {
       {isManagement && (
         <Link
           href="/usuarios"
-          className="text-sm font-medium text-slate-200 hover:text-white"
+          className="text-sm font-medium text-slate-200 hover:text-white whitespace-nowrap"
         >
           Usuarios
         </Link>
       )}
-      {!loading && user ? (
+      {loading ? null : user ? (
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1.5 text-sm text-slate-200">
             <User className="w-4 h-4" />
@@ -63,7 +63,7 @@ export default function HeaderNav() {
       ) : (
         <Link
           href="/login"
-          className="text-sm font-medium text-slate-200 hover:text-white"
+          className="text-sm font-medium text-slate-200 hover:text-white whitespace-nowrap"
         >
           Iniciar sesión
         </Link>

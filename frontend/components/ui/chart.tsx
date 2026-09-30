@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- recharts tooltip/legend payloads are untyped */
 import * as React from "react";
 import * as RechartsPrimitive from "recharts";
 

@@ -45,7 +45,7 @@ import {
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
-import { CommissionLine, CommissionsSummary, InvoiceSearchResult, Zone } from "@/types/commissions";
+import { CommissionLine, CommissionsSummary, InvoiceSearchResult, WarningInvoice, Zone } from "@/types/commissions";
 
 const CATEGORY_LABELS: Record<string, string> = {
   R: "Refacciones",
@@ -53,6 +53,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   R_CHEM: "Refacciones (Químicos)",
   R_FAN: "Refacciones (Ventiladores)",
   B: "Bionat",
+  B_MIPRO: "Bionat (Mipro)",
+  B_BOVI: "Bionat (Bovifit)",
   S: "Servicios",
   ZERO: "Sin comisión",
 };
@@ -63,6 +65,8 @@ const CATEGORY_BADGE: Record<string, string> = {
   R_CHEM: "bg-cyan-100 text-cyan-800 border-cyan-200",
   R_FAN: "bg-indigo-100 text-indigo-800 border-indigo-200",
   B: "bg-green-100 text-green-800 border-green-200",
+  B_MIPRO: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  B_BOVI: "bg-lime-100 text-lime-800 border-lime-200",
   S: "bg-purple-100 text-purple-800 border-purple-200",
   ZERO: "bg-gray-100 text-gray-600 border-gray-200",
 };
@@ -82,15 +86,45 @@ interface InvoiceGroup {
   lines: CommissionLine[];
 }
 
-function currency(value: number) {
-  return value.toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 0,
-  });
+// Punto de Venta invoices earn for the zone that owns the client (see
+// PuntoVentaClientZone), never for Punto de Venta itself.
+const COMMISSION_ZONES = (Object.keys(ZONE_LABELS) as Zone[]).filter((z) => z !== "PUNTOVENTA");
+
+// Invoices listed inside a warning: date, invoice, client, zone, total.
+function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: string }) {
+  return (
+    <div className="mt-2 overflow-x-auto">
+      <table className="text-xs">
+        <thead className="text-left opacity-80">
+          <tr>
+            <th className="pr-4 font-medium">{dateLabel}</th>
+            <th className="pr-4 font-medium">Factura</th>
+            <th className="pr-4 font-medium">Cliente</th>
+            <th className="pr-4 font-medium">Zona</th>
+            <th className="font-medium text-right">Total factura</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.invoice_id}>
+              <td className="pr-4 whitespace-nowrap">{formatDay(r.date)}</td>
+              <td className="pr-4 font-mono whitespace-nowrap">
+                <InvoiceLink invoiceId={r.invoice_id} label={r.folio_display} />
+              </td>
+              <td className="pr-4 max-w-56 truncate" title={r.cliente}>
+                <ClientLink clientId={r.client_id} label={r.cliente} />
+              </td>
+              <td className="pr-4 whitespace-nowrap">{ZONE_LABELS[r.zone] ?? r.zone}</td>
+              <td className="text-right font-mono whitespace-nowrap">{currency(r.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
-function currencyPrecise(value: number) {
+function currency(value: number) {
   return value.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
@@ -410,8 +444,8 @@ export default function CommissionsView() {
             </CardHeader>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {COMMISSION_ZONES.map((zone) => (
               <Card
                 key={zone}
                 onClick={() => handleZoneClick(zone)}
@@ -433,14 +467,15 @@ export default function CommissionsView() {
           {data.unresolved_payment_date.count > 0 && (
             <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="font-medium">
-                  {data.unresolved_payment_date.count} facturas pagadas sin
-                  fecha de pago rastreable ({currency(data.unresolved_payment_date.total_amount)})
+                  {data.unresolved_payment_date.count} facturas pagadas en Comercial este mes, aún
+                  sin póliza en Contabilidad ({currency(data.unresolved_payment_date.total_amount)})
                 </p>
                 <p className="text-amber-700">
                   {data.unresolved_payment_date.note}
                 </p>
+                <InvoiceList rows={data.unresolved_payment_date.rows} dateLabel="Pago en Comercial" />
               </div>
             </div>
           )}
@@ -448,12 +483,13 @@ export default function CommissionsView() {
           {data.credit_noted.count > 0 && (
             <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
               <Info className="w-5 h-5 shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="font-medium">
                   {data.credit_noted.count} facturas liquidadas por nota de
-                  crédito ({currency(data.credit_noted.total_amount)})
+                  crédito este mes ({currency(data.credit_noted.total_amount)})
                 </p>
                 <p className="text-slate-600">{data.credit_noted.note}</p>
+                <InvoiceList rows={data.credit_noted.rows} dateLabel="Nota de crédito" />
               </div>
             </div>
           )}
@@ -545,7 +581,7 @@ export default function CommissionsView() {
                           <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
                             <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600">
+                          <TableCell className="text-xs text-gray-600 whitespace-nowrap">
                             {ZONE_LABELS[group.zone] ?? group.zone}
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
@@ -636,7 +672,7 @@ export default function CommissionsView() {
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
                                         {line.unit_amount != null
-                                          ? currencyPrecise(line.unit_amount)
+                                          ? currency(line.unit_amount)
                                           : "-"}
                                       </TableCell>
                                       <TableCell className="text-right font-mono text-xs">
@@ -744,7 +780,7 @@ export default function CommissionsView() {
                       className="h-10 rounded-md border border-input bg-background px-3 text-sm"
                     >
                       <option value="">Seleccionar...</option>
-                      {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
+                      {COMMISSION_ZONES.map((zone) => (
                         <option key={zone} value={zone}>
                           {ZONE_LABELS[zone]}
                         </option>

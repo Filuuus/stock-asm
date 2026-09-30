@@ -1,7 +1,7 @@
 import type { DateDifferenceStatus } from "@/types/corte-de-caja";
 
 // Labels and colors for the Comercial vs Contabilidad payment statuses - used
-// by the Diferencias de fecha tab and by the invoice detail.
+// by the Discrepancias tab and by the invoice detail.
 export const STATUS_INFO: Record<
   DateDifferenceStatus,
   { label: string; description: string; badge: string; card: string }
@@ -10,6 +10,20 @@ export const STATUS_INFO: Record<
     label: "Distinto mes",
     description:
       "Comercial y Contabilidad registran el pago en meses diferentes.",
+    badge: "bg-red-50 text-red-700 border-red-200",
+    card: "border-red-300 bg-red-50",
+  },
+  folio_equivocado: {
+    label: "Folio equivocado",
+    description:
+      "La póliza parece citar otra factura: mismo monto y fecha, folio que difiere en un dígito.",
+    badge: "bg-red-50 text-red-700 border-red-200",
+    card: "border-red-300 bg-red-50",
+  },
+  monto_distinto: {
+    label: "Monto distinto",
+    description:
+      "Parece el mismo pago, pero Comercial y la póliza tienen importes distintos.",
     badge: "bg-red-50 text-red-700 border-red-200",
     card: "border-red-300 bg-red-50",
   },

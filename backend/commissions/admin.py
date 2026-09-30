@@ -9,8 +9,8 @@ from .models import (
 
 @admin.register(CommissionCategoryRate)
 class CommissionCategoryRateAdmin(admin.ModelAdmin):
-    list_display = ['code', 'label', 'base_rate', 'decay_rate_per_week', 'active']
-    list_editable = ['base_rate', 'decay_rate_per_week', 'active']
+    list_display = ['code', 'label', 'base_rate', 'decay_rate_per_week', 'late_penalty', 'active']
+    list_editable = ['base_rate', 'decay_rate_per_week', 'late_penalty', 'active']
 
 
 @admin.register(ZeroCommissionProduct)
