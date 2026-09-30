@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
 import CatalogFilters, { BrandOption } from "@/components/catalog/CatalogFilters";
 import { useSearchQuery } from "@/hooks/use-search-query";
@@ -21,6 +23,8 @@ export default function CatalogView({ products }: { products: Product[] }) {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
+  // Phones start with the filters folded away so products show first.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const brands: BrandOption[] = useMemo(() => {
     const counts = new Map<string, number>();
@@ -93,9 +97,24 @@ export default function CatalogView({ products }: { products: Product[] }) {
     return result;
   }, [products, selectedBrands, minPrice, maxPrice, sortMode, query]);
 
+  const activeFilters = selectedBrands.size + (minPrice ? 1 : 0) + (maxPrice ? 1 : 0);
+
   return (
-    <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-8 p-6">
+    <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-4 md:gap-8 p-4 sm:p-6">
+      <button
+        type="button"
+        onClick={() => setFiltersOpen((o) => !o)}
+        aria-expanded={filtersOpen}
+        className="md:hidden flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700"
+      >
+        <span>
+          Filtros
+          {activeFilters > 0 && <span className="ml-1.5 text-gray-400">({activeFilters})</span>}
+        </span>
+        <ChevronDown className={cn("w-4 h-4 transition-transform", filtersOpen && "rotate-180")} />
+      </button>
       <CatalogFilters
+        className={filtersOpen ? "block" : "hidden md:block"}
         brands={brands}
         selectedBrands={selectedBrands}
         onToggleBrand={toggleBrand}
@@ -125,7 +144,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
         </div>
 
         {filtered.length > 0 ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
             {filtered.map((product) => (
               <ProductCard key={product.CIDPRODUCTO} product={product} />
             ))}

@@ -343,8 +343,8 @@ export default function CorteDeCajaView() {
 
       {data && !error && (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <Card className="border-slate-900">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
+            <Card className="col-span-2 md:col-span-4 lg:col-span-1 border-slate-900">
               <CardHeader className="p-4">
                 <CardDescription>TOTAL CORTE</CardDescription>
                 <CardTitle className="text-xl">{currency(data.cash_drawer_total)}</CardTitle>
@@ -355,13 +355,13 @@ export default function CorteDeCajaView() {
               <Card key={method}>
                 <CardHeader className="p-4">
                   <CardDescription>{METHOD_LABELS[method]}</CardDescription>
-                  <CardTitle className="text-xl">{currency(data.method_totals[method] ?? 0)}</CardTitle>
+                  <CardTitle className="text-lg sm:text-xl">{currency(data.method_totals[method] ?? 0)}</CardTitle>
                 </CardHeader>
               </Card>
             ))}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5 [&>*:last-child:nth-child(odd)]:col-span-2 lg:[&>*:last-child:nth-child(odd)]:col-span-1">
             {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
               <Card
                 key={zone}
@@ -373,7 +373,7 @@ export default function CorteDeCajaView() {
               >
                 <CardHeader className="p-4">
                   <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
-                  <CardTitle className="text-lg">{currency(data.zone_totals[zone] ?? 0)}</CardTitle>
+                  <CardTitle className="text-lg sm:text-xl">{currency(data.zone_totals[zone] ?? 0)}</CardTitle>
                 </CardHeader>
               </Card>
             ))}

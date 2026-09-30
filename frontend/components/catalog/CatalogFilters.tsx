@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+
 export interface BrandOption {
   name: string;
   count: number;
@@ -11,6 +13,7 @@ interface CatalogFiltersProps {
   maxPrice: string;
   onMinPriceChange: (value: string) => void;
   onMaxPriceChange: (value: string) => void;
+  className?: string;
 }
 
 export default function CatalogFilters({
@@ -21,14 +24,15 @@ export default function CatalogFilters({
   maxPrice,
   onMinPriceChange,
   onMaxPriceChange,
+  className,
 }: CatalogFiltersProps) {
   return (
-    <aside className="w-full md:w-64 flex-shrink-0 space-y-8 pr-4">
+    <aside className={cn("w-full md:w-64 flex-shrink-0 space-y-8 md:pr-4", className)}>
       <div>
         <h3 className="text-xs font-bold text-gray-400 tracking-wider mb-4">MARCAS</h3>
         <ul className="text-sm text-gray-600 space-y-3">
           {brands.map((brand) => (
-            <li key={brand.name} className="flex items-center justify-between">
+            <li key={brand.name} className="flex items-center justify-between gap-2">
               <label className="flex items-center space-x-2">
                 <input
                   type="checkbox"
@@ -38,7 +42,7 @@ export default function CatalogFilters({
                 />
                 <span>{brand.name}</span>
               </label>
-              <span className="text-xs text-gray-400 font-medium">({brand.count})</span>
+              <span className="text-xs text-gray-400 font-medium whitespace-nowrap">({brand.count})</span>
             </li>
           ))}
         </ul>

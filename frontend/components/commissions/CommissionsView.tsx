@@ -444,7 +444,7 @@ export default function CommissionsView() {
             </CardHeader>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {COMMISSION_ZONES.map((zone) => (
               <Card
                 key={zone}
@@ -456,7 +456,7 @@ export default function CommissionsView() {
               >
                 <CardHeader className="p-4">
                   <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
-                  <CardTitle className="text-xl">
+                  <CardTitle className="text-lg sm:text-xl">
                     {currency(data.zone_totals[zone] ?? 0)}
                   </CardTitle>
                 </CardHeader>
