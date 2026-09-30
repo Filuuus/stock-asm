@@ -60,6 +60,12 @@ python manage.py createsuperuser
 
 Log in at `/login` with those credentials, then use `/usuarios` to create real accounts for the rest of the team. No further Django admin/shell access should be needed for day-to-day account management after that.
 
+Run the tests (they use made-up data only and never connect to the ERP):
+
+```bash
+python manage.py test
+```
+
 ### Frontend
 
 ```bash
