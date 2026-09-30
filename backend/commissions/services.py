@@ -617,13 +617,16 @@ def _effective_rate(rate_row, days_late):
     late already costs one full decay step, the next step only lands once
     another 7 days pass (day 8), and so on - so weeks_completed is a
     ceiling, not days_late / 7. Confirmed by management, 2026-09-15.
+
+    A category can also lose a one-off late_penalty as soon as it is late
+    (see CommissionCategoryRate.late_penalty).
     """
     if rate_row is None:
         return Decimal('0')
     if days_late <= 0:
         return rate_row.base_rate
     weeks_completed = -(-days_late // 7)  # ceiling division for positive ints
-    decayed = rate_row.base_rate - (rate_row.decay_rate_per_week * weeks_completed)
+    decayed = rate_row.base_rate - rate_row.late_penalty - (rate_row.decay_rate_per_week * weeks_completed)
     return max(decayed, Decimal('0'))
 
 

@@ -17,6 +17,11 @@ class CommissionCategoryRate(models.Model):
     label = models.CharField(max_length=60)
     base_rate = models.DecimalField(max_digits=5, decimal_places=4)
     decay_rate_per_week = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0050'))
+    # Taken off once, the moment a payment is late, on top of the weekly
+    # decay. R (the 6% GEA parts) has 0.015: 6% is only for on-time payment,
+    # a late one pays 4% the first week, 3.5% the second... (confirmed by
+    # management 2026-09-30; read from their own sheet, 85 of ~90 invoices).
+    late_penalty = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0'))
     active = models.BooleanField(default=True)
 
     class Meta:

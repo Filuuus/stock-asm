@@ -126,6 +126,15 @@ class RateTests(SimpleTestCase):
             with self.subTest(days_late=days_late):
                 self.assertEqual(_effective_rate(self.rate, days_late), Decimal(rate))
 
+    def test_late_penalty_is_taken_once_when_late(self):
+        # GEA parts: 6% on time; late, 4% the first week and then the weekly decay.
+        parts = CommissionCategoryRate(code='R', base_rate=Decimal('0.06'), decay_rate_per_week=Decimal('0.005'),
+                                       late_penalty=Decimal('0.015'))
+        expected = {-15: '0.06', 0: '0.06', 1: '0.04', 7: '0.04', 8: '0.035', 19: '0.03', 56: '0.005', 63: '0', 98: '0'}
+        for days_late, rate in expected.items():
+            with self.subTest(days_late=days_late):
+                self.assertEqual(_effective_rate(parts, days_late), Decimal(rate))
+
     def test_missing_rate_row_pays_nothing(self):
         self.assertEqual(_effective_rate(None, 0), Decimal('0'))
 
