@@ -86,6 +86,10 @@ interface InvoiceGroup {
   lines: CommissionLine[];
 }
 
+// Punto de Venta invoices earn for the zone that owns the client (see
+// PuntoVentaClientZone), never for Punto de Venta itself.
+const COMMISSION_ZONES = (Object.keys(ZONE_LABELS) as Zone[]).filter((z) => z !== "PUNTOVENTA");
+
 // Invoices listed inside a warning: date, invoice, client, zone, total.
 function InvoiceList({ rows, dateLabel }: { rows: WarningInvoice[]; dateLabel: string }) {
   return (
@@ -440,8 +444,8 @@ export default function CommissionsView() {
             </CardHeader>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {COMMISSION_ZONES.map((zone) => (
               <Card
                 key={zone}
                 onClick={() => handleZoneClick(zone)}
@@ -577,7 +581,7 @@ export default function CommissionsView() {
                           <TableCell className={cn("max-w-56 truncate", group.excluded && "line-through")}>
                             <ClientLink clientId={group.client_id} label={group.cliente} />
                           </TableCell>
-                          <TableCell className="text-xs text-gray-600">
+                          <TableCell className="text-xs text-gray-600 whitespace-nowrap">
                             {ZONE_LABELS[group.zone] ?? group.zone}
                           </TableCell>
                           <TableCell className="text-xs text-gray-600">
@@ -776,7 +780,7 @@ export default function CommissionsView() {
                       className="h-10 rounded-md border border-input bg-background px-3 text-sm"
                     >
                       <option value="">Seleccionar...</option>
-                      {(Object.keys(ZONE_LABELS) as Zone[]).map((zone) => (
+                      {COMMISSION_ZONES.map((zone) => (
                         <option key={zone} value={zone}>
                           {ZONE_LABELS[zone]}
                         </option>
