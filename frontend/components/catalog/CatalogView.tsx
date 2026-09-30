@@ -4,74 +4,31 @@ import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
-import CatalogFilters, { BrandOption } from "@/components/catalog/CatalogFilters";
+import CatalogFilters, {
+  EMPTY_FILTERS,
+  Filters,
+  matches,
+  normalize,
+  priceBreaks,
+} from "@/components/catalog/CatalogFilters";
 import { useSearchQuery } from "@/hooks/use-search-query";
 import { Product } from "@/types/api";
 
 type SortMode = "relevance" | "price-asc" | "price-desc";
 
-function normalize(text: string) {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
-}
-
 export default function CatalogView({ products }: { products: Product[] }) {
   const { query } = useSearchQuery();
-  const [selectedBrands, setSelectedBrands] = useState<Set<string>>(new Set());
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
   // Phones start with the filters folded away so products show first.
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const brands: BrandOption[] = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const product of products) {
-      if (product.brand) {
-        counts.set(product.brand, (counts.get(product.brand) ?? 0) + 1);
-      }
-    }
-    return [...counts.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [products]);
-
-  const toggleBrand = (brand: string) => {
-    setSelectedBrands((prev) => {
-      const next = new Set(prev);
-      if (next.has(brand)) {
-        next.delete(brand);
-      } else {
-        next.add(brand);
-      }
-      return next;
-    });
-  };
+  const normalizedQuery = normalize(query.trim());
+  // Ranges come from the whole catalog so they don't jump while filtering.
+  const breaks = useMemo(() => priceBreaks(products), [products]);
 
   const filtered = useMemo(() => {
-    const normalizedQuery = normalize(query.trim());
-    const min = minPrice ? parseFloat(minPrice) : null;
-    const max = maxPrice ? parseFloat(maxPrice) : null;
-
-    let result = products.filter((product) => {
-      if (selectedBrands.size > 0 && (!product.brand || !selectedBrands.has(product.brand))) {
-        return false;
-      }
-      if (min !== null || max !== null) {
-        // A hidden price can't be verified to fall in range - exclude it
-        // rather than guessing, only when a range filter is actually set.
-        if (product.CPRECIO1 === null) return false;
-        if (min !== null && product.CPRECIO1 < min) return false;
-        if (max !== null && product.CPRECIO1 > max) return false;
-      }
-      if (normalizedQuery) {
-        const haystack = normalize(`${product.CNOMBREPRODUCTO} ${product.CCODIGOPRODUCTO}`);
-        if (!haystack.includes(normalizedQuery)) return false;
-      }
-      return true;
-    });
+    let result = products.filter((product) => matches(product, filters, normalizedQuery));
 
     if (sortMode === "price-asc" || sortMode === "price-desc") {
       // Hidden prices (null) always sort last, regardless of direction -
@@ -95,9 +52,11 @@ export default function CatalogView({ products }: { products: Product[] }) {
     }
 
     return result;
-  }, [products, selectedBrands, minPrice, maxPrice, sortMode, query]);
+  }, [products, filters, sortMode, normalizedQuery]);
 
-  const activeFilters = selectedBrands.size + (minPrice ? 1 : 0) + (maxPrice ? 1 : 0);
+  const activeFilters =
+    filters.category.size + filters.line.size + filters.brand.size +
+    Number(filters.inStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
 
   return (
     <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-4 md:gap-8 p-4 sm:p-6">
@@ -115,13 +74,12 @@ export default function CatalogView({ products }: { products: Product[] }) {
       </button>
       <CatalogFilters
         className={filtersOpen ? "block" : "hidden md:block"}
-        brands={brands}
-        selectedBrands={selectedBrands}
-        onToggleBrand={toggleBrand}
-        minPrice={minPrice}
-        maxPrice={maxPrice}
-        onMinPriceChange={setMinPrice}
-        onMaxPriceChange={setMaxPrice}
+        products={products}
+        breaks={breaks}
+        filters={filters}
+        query={normalizedQuery}
+        resultCount={filtered.length}
+        onChange={setFilters}
       />
 
       <div className="flex-1 flex flex-col">
