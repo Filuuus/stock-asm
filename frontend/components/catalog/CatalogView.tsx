@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ArrowUpDown, SlidersHorizontal } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn, plural } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
 import CatalogFilters, {
@@ -17,6 +18,9 @@ import { Product } from "@/types/api";
 
 type SortMode = "relevance" | "best-sellers" | "price-asc" | "price-desc";
 
+const PANEL_BUTTON =
+  "inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700";
+
 export const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "relevance", label: "Más relevantes" },
   { value: "best-sellers", label: "Más vendidos" },
@@ -28,8 +32,9 @@ export default function CatalogView({ products }: { products: Product[] }) {
   const { query } = useSearchQuery();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
-  // Phones start with the filters folded away so products show first.
+  // Phones only: the filter and sort side panels.
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
 
   const normalizedQuery = normalize(query.trim());
   // Ranges come from the whole catalog so they don't jump while filtering.
@@ -70,36 +75,83 @@ export default function CatalogView({ products }: { products: Product[] }) {
     filters.category.size + filters.line.size + filters.brand.size +
     Number(filters.inStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
 
+  const filterProps = {
+    products,
+    breaks,
+    filters,
+    query: normalizedQuery,
+    resultCount: filtered.length,
+    onChange: setFilters,
+  };
+
   return (
     <main className="flex flex-col md:flex-row max-w-7xl mx-auto w-full gap-4 md:gap-8 p-4 sm:p-6">
-      <button
-        type="button"
-        onClick={() => setFiltersOpen((o) => !o)}
-        aria-expanded={filtersOpen}
-        className="md:hidden flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700"
-      >
-        <span>
-          Filtros
-          {activeFilters > 0 && <span className="ml-1.5 text-gray-400">({activeFilters})</span>}
-        </span>
-        <ChevronDown className={cn("w-4 h-4 transition-transform", filtersOpen && "rotate-180")} />
-      </button>
-      <CatalogFilters
-        className={filtersOpen ? "block" : "hidden md:block"}
-        products={products}
-        breaks={breaks}
-        filters={filters}
-        query={normalizedQuery}
-        resultCount={filtered.length}
-        onChange={setFilters}
-      />
+      <CatalogFilters className="hidden md:block" {...filterProps} />
 
       <div className="flex-1 flex flex-col">
-        {/* The count lives in the filter column; phones fold that away. */}
-        <div className="mb-4 flex items-center justify-between gap-3 md:justify-end">
-          <span className="whitespace-nowrap text-sm text-gray-500 md:hidden">
+        {/* Phones: count plus buttons that open the filters and the sort as side panels. */}
+        <div className="mb-4 flex items-center justify-between gap-3 md:hidden">
+          <span className="whitespace-nowrap text-sm text-gray-500">
             {plural(filtered.length, "resultado", "resultados")}
           </span>
+          <div className="flex gap-2">
+            <Sheet open={sortOpen} onOpenChange={setSortOpen}>
+              <SheetTrigger asChild>
+                <button type="button" className={PANEL_BUTTON}>
+                  <ArrowUpDown className="h-4 w-4" />
+                  Ordenar
+                </button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[85%]">
+                <SheetTitle className="mb-4">Ordenar por</SheetTitle>
+                <div className="space-y-1">
+                  {SORT_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => {
+                        setSortMode(o.value);
+                        setSortOpen(false);
+                      }}
+                      className={cn(
+                        "block w-full rounded px-3 py-2.5 text-left text-sm",
+                        o.value === sortMode ? "bg-blue-50 font-medium text-blue-700" : "text-gray-700 hover:bg-gray-50"
+                      )}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </SheetContent>
+            </Sheet>
+            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <SheetTrigger asChild>
+                <button type="button" className={PANEL_BUTTON}>
+                  <SlidersHorizontal className="h-4 w-4" />
+                  Filtrar
+                  {activeFilters > 0 && <span className="text-blue-600">({activeFilters})</span>}
+                </button>
+              </SheetTrigger>
+              <SheetContent side="left" className="flex w-[85%] flex-col p-0">
+                <SheetTitle className="px-6 pt-6">Filtrar</SheetTitle>
+                <div className="flex-1 overflow-y-auto px-6 pb-4">
+                  <CatalogFilters {...filterProps} />
+                </div>
+                <div className="border-t p-4">
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen(false)}
+                    className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    Ver {plural(filtered.length, "resultado", "resultados")}
+                  </button>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        </div>
+
+        <div className="mb-4 hidden justify-end md:flex">
           <label className="flex items-center gap-2 text-sm text-gray-600">
             <span className="whitespace-nowrap">Ordenar por</span>
             <select
