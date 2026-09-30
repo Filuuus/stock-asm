@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-// Inline links from tablet width up; below that, one menu button that opens
+// Inline links on desktop; below that, one menu button that opens
 // the same links in a side panel, so the header stays a single row.
 export default function HeaderNav() {
   const router = useRouter();
@@ -17,6 +17,7 @@ export default function HeaderNav() {
   const { user, loading, isAccounting, isManagement, logout } = useAuth();
 
   const links = [
+    { href: "/", label: "Catálogo", show: true },
     { href: "/comisiones", label: "Comisiones", show: true },
     { href: "/corte-de-caja", label: "Corte de Caja", show: isAccounting || isManagement },
     { href: "/facturas", label: "Facturas", show: isAccounting || isManagement },
@@ -37,7 +38,7 @@ export default function HeaderNav() {
 
   return (
     <>
-      <nav className="hidden md:flex items-center gap-x-5">
+      <nav className="hidden lg:flex items-center gap-x-5">
         {links.map((l) => (
           <Link key={l.href} href={l.href} className={linkClass(l.href)}>
             {l.label}
@@ -66,7 +67,7 @@ export default function HeaderNav() {
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger asChild>
-          <button aria-label="Menú" className="md:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md">
+          <button aria-label="Menú" className="lg:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md">
             <Menu className="w-6 h-6" />
           </button>
         </SheetTrigger>
