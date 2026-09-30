@@ -19,7 +19,6 @@ class InventoryRepository:
                 'CCODIGOPRODUCTO',
                 'CNOMBREPRODUCTO',
                 'CPRECIO1',
-                'CTEXTOEXTRA1',
                 'CIDVALORCLASIFICACION1',
                 'CIDVALORCLASIFICACION2',
                 'CTIPOPRODUCTO',

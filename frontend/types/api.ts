@@ -10,7 +10,6 @@ export interface Product {
   // null when the requester can't see this product's price (public/logged-out
   // visitor and the product isn't flagged public) - see price_visible.
   CPRECIO1: number | null;
-  CTEXTOEXTRA1: string | null;
   brand: string | null;
   // Commission category code (R, R_CHEM, B, ...) - see CATEGORY_LABELS.
   category: string;

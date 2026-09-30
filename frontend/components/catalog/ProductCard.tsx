@@ -49,18 +49,13 @@ export default function ProductCard({ product }: { product: Product }) {
         )}
       </div>
       <div className="mt-3 flex w-full flex-col items-start">
-        {product.CTEXTOEXTRA1 && (
-          <span className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-            {product.CTEXTOEXTRA1}
-          </span>
-        )}
-        <h3 className="mt-1.5 line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
+        <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
           {product.CNOMBREPRODUCTO}
         </h3>
         <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
         {product.price_visible && product.CPRECIO1 !== null ? (
           product.CPRECIO1 > 0 ? (
-            <span className="mt-2 text-lg font-bold text-gray-900">
+            <span className="mt-2 text-xl font-semibold text-gray-900 sm:text-2xl">
               {formatMoney(product.CPRECIO1)}
             </span>
           ) : (
@@ -71,6 +66,14 @@ export default function ProductCard({ product }: { product: Product }) {
             Precio disponible para personal
           </span>
         )}
+        {/* Staff get the units in ALMACEN GENERAL; the public only whether there are any. */}
+        <p className={`mt-1 text-xs font-medium ${product.in_stock ? "text-green-700" : "text-gray-400"}`}>
+          {!product.in_stock
+            ? "Sin existencia"
+            : product.stock === null
+              ? "Disponible"
+              : `Disponible: ${product.stock.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${product.stock === 1 ? "unidad" : "unidades"}`}
+        </p>
       </div>
     </div>
   );

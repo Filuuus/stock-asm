@@ -11,7 +11,7 @@ from .services import InventoryRepository, get_inventory_catalog
 def producto(pid, code, stock_units):
     return {
         'CIDPRODUCTO': pid, 'CCODIGOPRODUCTO': code, 'CNOMBREPRODUCTO': 'PEZONERA',
-        'CPRECIO1': 100.0, 'CTEXTOEXTRA1': None, 'CIDVALORCLASIFICACION1': 1,
+        'CPRECIO1': 100.0, 'CIDVALORCLASIFICACION1': 1,
         'CIDVALORCLASIFICACION2': 2, 'CTIPOPRODUCTO': 1,
     }, stock_units
 
