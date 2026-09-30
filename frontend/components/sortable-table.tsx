@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { TableHead } from "@/components/ui/table";
+import { TableCell, TableHead, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 // Click-to-sort table headers, like a spreadsheet: click a column to sort by
@@ -109,3 +109,14 @@ export function SortableHead<K extends string>({
 export const HIDE_BELOW_SM = "hidden sm:table-cell";
 export const HIDE_BELOW_MD = "hidden md:table-cell";
 export const HIDE_BELOW_LG = "hidden lg:table-cell";
+
+// The one empty-table message: a centered gray line spanning every column.
+export function EmptyRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell colSpan={colSpan} className="py-8 text-center text-sm text-gray-500">
+        {children}
+      </TableCell>
+    </TableRow>
+  );
+}

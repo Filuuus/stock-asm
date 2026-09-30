@@ -150,8 +150,8 @@ export default function CatalogView({ products }: { products: Product[] }) {
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center">
-            <p className="text-sm font-medium text-gray-700">No hay productos disponibles</p>
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white py-8 text-center">
+            <p className="text-sm text-gray-500">Sin productos que mostrar.</p>
           </div>
         )}
       </div>

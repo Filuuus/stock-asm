@@ -1,6 +1,7 @@
 "use client";
 
 import { Notice } from "@/components/notice";
+import { EmptyRow } from "@/components/sortable-table";
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, Plus, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -419,13 +420,7 @@ export default function UsersView() {
                 </TableRow>
               );
             })}
-            {users.length === 0 && !loading && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-sm text-gray-500 py-8">
-                  Sin usuarios.
-                </TableCell>
-              </TableRow>
-            )}
+            {users.length === 0 && !loading && <EmptyRow colSpan={6}>Sin usuarios que mostrar.</EmptyRow>}
           </TableBody>
         </Table>
       </div>
@@ -448,13 +443,7 @@ export default function UsersView() {
                   </TableCell>
                 </TableRow>
               ))}
-              {auditLog.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={2} className="text-center text-sm text-gray-500 py-8">
-                    Sin actividad todavía.
-                  </TableCell>
-                </TableRow>
-              )}
+              {auditLog.length === 0 && <EmptyRow colSpan={2}>Sin actividad todavía.</EmptyRow>}
             </TableBody>
           </Table>
         </div>

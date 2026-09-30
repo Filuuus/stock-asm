@@ -41,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HIDE_BELOW_LG, HIDE_BELOW_SM } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_SM, EmptyRow } from "@/components/sortable-table";
 import { cn, formatMoney, plural } from "@/lib/utils";
 import { Notice, NoticeList } from "@/components/notice";
 import { dateToISO, formatDay, isoToDate, todayISO } from "@/lib/dates";
@@ -398,8 +398,9 @@ export default function CorteDeCajaView() {
 
       {error && <Notice tone="error" summary={error} />}
 
+      {/* Old results stay visible, faded, while the next ones load. */}
       {data && !error && (
-        <>
+        <div className={cn("flex flex-col gap-6 transition-opacity", loading && "pointer-events-none opacity-50")}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
             <Card className="col-span-2 md:col-span-4 lg:col-span-1 border-slate-900">
               <CardHeader className="p-4">
@@ -681,18 +682,12 @@ export default function CorteDeCajaView() {
                       })}
                     </Fragment>
                   ))}
-                  {rows.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-sm text-gray-500 py-8">
-                        Sin resultados para este período.
-                      </TableCell>
-                    </TableRow>
-                  )}
+                  {rows.length === 0 && <EmptyRow colSpan={9}>Sin pagos que mostrar.</EmptyRow>}
                 </TableBody>
               </Table>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <Dialog open={editingRow !== null} onOpenChange={(open) => !open && setEditingRow(null)}>

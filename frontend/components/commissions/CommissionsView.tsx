@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
-import { HIDE_BELOW_LG, HIDE_BELOW_SM, SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_SM, SortableHead, SortColumn, useSort, EmptyRow } from "@/components/sortable-table";
 import { MonthControl } from "@/components/date-controls";
 import { currentMonthISO, formatDay } from "@/lib/dates";
 import { ZONE_LABELS } from "@/lib/zones";
@@ -402,8 +402,9 @@ export default function CommissionsView() {
 
       {error && <Notice tone="error" summary={error} />}
 
+      {/* Old results stay visible, faded, while the next ones load. */}
       {data && !error && (
-        <>
+        <div className={cn("flex flex-col gap-6 transition-opacity", loading && "pointer-events-none opacity-50")}>
           <Card>
             <CardHeader>
               <CardDescription>
@@ -681,21 +682,12 @@ export default function CommissionsView() {
                       </Fragment>
                     );
                   })}
-                  {invoiceGroups.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={isManagement ? 9 : 8}
-                        className="text-center text-sm text-gray-500 py-8"
-                      >
-                        Sin resultados para este período.
-                      </TableCell>
-                    </TableRow>
-                  )}
+                  {invoiceGroups.length === 0 && <EmptyRow colSpan={isManagement ? 9 : 8}>Sin facturas que mostrar.</EmptyRow>}
                 </TableBody>
               </Table>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

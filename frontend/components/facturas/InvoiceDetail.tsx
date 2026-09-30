@@ -235,7 +235,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
       {/* Payments: Comercial vs Contabilidad */}
       <Section title="Pagos: Comercial y Contabilidad" count={detail.payments.length}>
         {detail.payments.length === 0 ? (
-          <p className="text-sm text-gray-500">Ningún pago del cliente registrado.</p>
+          <p className="text-sm text-gray-500">Sin pagos del cliente.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-white">
             <Table>
@@ -330,7 +330,7 @@ export function InvoiceDetailView({ detail, onSelect }: {
 
       <Section title="Pólizas de cobro que citan la factura" count={paymentPolizas.length}>
         {paymentPolizas.length === 0 ? (
-          <p className="text-sm text-gray-500">Ninguna póliza de cobro cita esta factura.</p>
+          <p className="text-sm text-gray-500">Sin pólizas de cobro que citen esta factura.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {paymentPolizas.map((p) => <PolizaCard key={p.poliza_id} poliza={p} />)}

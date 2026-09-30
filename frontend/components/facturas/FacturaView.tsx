@@ -152,8 +152,8 @@ function SearchResults({ results, onSelect }: {
 }) {
   if (results.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-gray-300 bg-white py-10 text-center text-sm text-gray-500">
-        No hay facturas con ese folio.
+      <div className="rounded-lg border border-dashed border-gray-300 bg-white py-8 text-center text-sm text-gray-500">
+        Sin facturas con ese folio.
       </div>
     );
   }

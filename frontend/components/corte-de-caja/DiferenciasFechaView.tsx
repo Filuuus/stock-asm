@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM, EmptyRow } from "@/components/sortable-table";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import ClientLink from "@/components/facturas/ClientLink";
 import { MonthControl } from "@/components/date-controls";
@@ -113,8 +113,9 @@ export default function DiferenciasFechaView() {
 
       {error && <Notice tone="error" summary={error} />}
 
+      {/* Old results stay visible, faded, while the next ones load. */}
       {data && (
-        <>
+        <div className={cn("flex flex-col gap-6 transition-opacity", loading && "pointer-events-none opacity-50")}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             {STATUS_ORDER.map((status) => {
               const info = STATUS_INFO[status];
@@ -172,14 +173,7 @@ export default function DiferenciasFechaView() {
                 </TableHeader>
                 <TableBody>
                   {rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="py-8 text-center text-sm text-gray-500"
-                      >
-                        Sin pagos con los filtros seleccionados en este mes.
-                      </TableCell>
-                    </TableRow>
+                    <EmptyRow colSpan={7}>Sin pagos que mostrar.</EmptyRow>
                   ) : (
                     rows.map((row) => (
                       <DifferenceRow key={rowKey(row)} row={row} />
@@ -189,7 +183,7 @@ export default function DiferenciasFechaView() {
               </Table>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Field, Section, StatCard } from "@/components/facturas/InvoiceDetail";
-import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, SortColumn, useSort } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, SortColumn, useSort, EmptyRow } from "@/components/sortable-table";
 import { cn, formatMoney, plural } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { zoneLabel } from "@/lib/zones";
@@ -194,11 +194,7 @@ export function ClientHistoryView({ history, onOpenInvoice, onShowFull }: {
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="py-8 text-center text-sm text-gray-500">
-                    Sin facturas con este filtro.
-                  </TableCell>
-                </TableRow>
+                <EmptyRow colSpan={9}>Sin facturas que mostrar.</EmptyRow>
               ) : (
                 sorted.map((r) => <ClientInvoiceRow key={r.invoice_id} row={r} onOpen={onOpenInvoice} />)
               )}
