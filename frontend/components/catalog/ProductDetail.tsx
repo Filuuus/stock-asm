@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
@@ -77,6 +77,11 @@ function Drawing({
   onSelect: (pos: string) => void;
 }) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  // Once the boxes exist, bring a pre-selected part into view.
+  const [initial] = useState(active);
+  useEffect(() => {
+    if (size && initial) document.getElementById(`hs-${initial}`)?.scrollIntoView({ block: "center" });
+  }, [size, initial]);
   return (
     <div className="relative mx-auto w-full max-w-xl">
       {/* Plain img: the hotspots need the drawing's natural size, unresized. */}
@@ -96,6 +101,7 @@ function Drawing({
         hotspots.map((h, i) => (
           <button
             key={`${h.pos}-${i}`}
+            id={hotspots.findIndex((x) => x.pos === h.pos) === i ? `hs-${h.pos}` : undefined}
             type="button"
             onClick={() => onSelect(h.pos)}
             aria-label={`Posición ${Number(h.pos)}`}
@@ -115,9 +121,48 @@ function Drawing({
   );
 }
 
-export default function ProductDetailView({ product }: { product: ProductDetail }) {
+// Where this part is used: each assembly opens on its drawing with the part selected.
+function AppearsIn({ product }: { product: ProductDetail }) {
+  if (product.appears_in.length === 0) return null;
+  return (
+    <section className="mt-8">
+      <h2 className="mb-3 text-lg font-semibold text-gray-900">Aparece en</h2>
+      <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white text-sm">
+        {product.appears_in.map(({ parent, pos, qty, has_drawing }) => (
+          <li key={parent.CCODIGOPRODUCTO} className="px-4 py-3">
+            <Link
+              href={`${productHref(parent.CCODIGOPRODUCTO)}?pieza=${encodeURIComponent(product.CCODIGOPRODUCTO)}`}
+              className="group flex items-center gap-3"
+            >
+              <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-gray-50">
+                <Image src={imageSrc(parent.images)} alt="" fill sizes="48px" className="object-cover" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-medium text-gray-800 group-hover:text-blue-700">{parent.CNOMBREPRODUCTO}</p>
+                <p className="text-xs text-gray-500">
+                  {has_drawing ? `Posición ${Number(pos)} en el dibujo` : `Posición ${Number(pos)}`} · {qty}{" "}
+                  {qty === 1 ? "pieza" : "piezas"}
+                </p>
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export default function ProductDetailView({ product, highlight }: { product: ProductDetail; highlight?: string }) {
   const gea = product.gea;
-  const [active, setActive] = useState<string | null>(null);
+  // Arriving from a part's "Aparece en": start with that part selected.
+  const highlightPos =
+    highlight &&
+    gea?.parts.find((p) => p.ours.some((o) => o.CCODIGOPRODUCTO === highlight) || highlight.startsWith(p.code))?.pos;
+  const [active, setActive] = useState<string | null>(highlightPos || null);
+  // Without a drawing, bring the part's row into view instead (the drawing scrolls itself).
+  useEffect(() => {
+    if (highlightPos && !gea?.drawing) document.getElementById(`pos-${highlightPos}`)?.scrollIntoView({ block: "center" });
+  }, [highlightPos, gea?.drawing]);
   const select = (pos: string) => {
     setActive(pos);
     document.getElementById(`pos-${pos}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -221,6 +266,7 @@ export default function ProductDetailView({ product }: { product: ProductDetail 
         </section>
       )}
 
+      <AppearsIn product={product} />
       {gea && <PartsList title="Refacciones" parts={gea.spare_parts} />}
       {gea && <PartsList title="Se usa en" parts={gea.used_in} />}
     </main>

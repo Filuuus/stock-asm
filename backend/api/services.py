@@ -165,6 +165,35 @@ def _plain_code(code):
     return code.rstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 
+def _drawings_containing(gea_products):
+    """Reverse of the parts lists: GEA part code -> [(our assembly code, pos, qty)].
+    Rebuilt per request - ~20k rows, cheap."""
+    index = defaultdict(list)
+    for parent, gea in gea_products.items():
+        rows = (gea.get('drawing') or {}).get('parts') or gea.get('parts', [])
+        for r in rows:
+            index[r['code']].append((parent, r['pos'], r['qty']))
+    return index
+
+
+def _appears_in(code, gea_code, by_code, summary):
+    """Our assemblies whose parts list (and drawing, when we have it) include
+    this part - the "where is this piece used" lookup."""
+    gea = _gea_products()
+    index = _drawings_containing(gea)
+    out, seen = [], set()
+    for parent, pos, qty in index.get(gea_code, []):
+        if parent == code or parent in seen or parent not in by_code:
+            continue
+        seen.add(parent)
+        out.append({
+            'pos': pos, 'qty': qty,
+            'has_drawing': _local_drawing(gea[parent].get('drawing')) is not None,
+            'parent': summary(by_code[parent]),
+        })
+    return out
+
+
 def _staff_note(note, link):
     if not note:
         return None
@@ -174,34 +203,40 @@ def _staff_note(note, link):
 
 def get_product_detail(code, is_worker):
     catalog = get_inventory_catalog(is_worker)
-    product = next((p for p in catalog if p['CCODIGOPRODUCTO'] == code), None)
+    by_code = {p['CCODIGOPRODUCTO']: p for p in catalog}
+    product = by_code.get(code)
     if product is None:
         return None
+
+    def summary(p):
+        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price_visible', 'in_stock', 'images')}
+
     gea = _gea_products().get(code)
+    appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
     if gea is None:
-        return {**product, 'gea': None}
+        return {**product, 'appears_in': appears_in, 'gea': None}
 
     ours = defaultdict(list)
     for p in catalog:
         ours[_plain_code(p['CCODIGOPRODUCTO'])].append(p)
 
-    def summary(p):
-        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price_visible', 'in_stock', 'images')}
-
     def link(row):
         # Our own products for that GEA code, so the page can link to them.
         return {**row, 'ours': [summary(p) for p in ours.get(row['code'], []) if p['CCODIGOPRODUCTO'] != code]}
 
+    # GEA's where-used list, minus the assemblies already shown with their drawing.
+    shown = {_plain_code(a['parent']['CCODIGOPRODUCTO']) for a in appears_in}
     drawing = gea.get('drawing')
     return {
         **product,
+        'appears_in': appears_in,
         'gea': {
             'code': gea['gea_code'],
             'desc': gea['desc'],
             'parts': [link(r) for r in (drawing or {}).get('parts') or gea.get('parts', [])],
             'drawing': _local_drawing(drawing),
             'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
-            'used_in': [link(r) for r in gea.get('used_in', [])],
+            'used_in': [link(r) for r in gea.get('used_in', []) if r['code'] not in shown],
             # "Not orderable" / replacement notes are internal (owner, 2026-10-01).
             'note': _staff_note(gea.get('note'), link) if is_worker else None,
         },

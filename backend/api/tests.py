@@ -61,6 +61,20 @@ class ProductDetailTests(SimpleTestCase):
                 patch('api.services._gea_products', return_value=self.GEA):
             return get_product_detail('7041-2700-550', is_worker)
 
+    def test_part_lists_the_assemblies_it_appears_in(self):
+        catalog = [
+            {'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0,
+             'price_visible': True, 'in_stock': True, 'images': []},
+            {'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None,
+             'price_visible': False, 'in_stock': False, 'images': []},
+        ]
+        # The part has no GEA data of its own; it's found through the pulsator's list.
+        with patch('api.services.get_inventory_catalog', return_value=catalog), \
+                patch('api.services._gea_products', return_value=self.GEA):
+            part = get_product_detail('7021-2764-010W', True)
+        self.assertEqual([(a['parent']['CCODIGOPRODUCTO'], a['pos']) for a in part['appears_in']],
+                         [('7041-2700-550', '0020')])
+
     def test_links_parts_to_our_products_and_hides_notes_from_public(self):
         staff, public = self.detail(True), self.detail(False)
         self.assertEqual([p['CCODIGOPRODUCTO'] for p in staff['gea']['parts'][0]['ours']], ['7021-2764-010W'])

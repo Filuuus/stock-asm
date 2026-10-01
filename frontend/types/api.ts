@@ -39,6 +39,8 @@ export interface RelatedPart {
 
 // Product page: the catalog fields plus what GEA's dealer portal says about it.
 export interface ProductDetail extends Product {
+  // Our assemblies whose parts list includes this product.
+  appears_in: { pos: string; qty: number; has_drawing: boolean; parent: ProductSummary }[];
   gea: {
     code: string;
     desc: string;
