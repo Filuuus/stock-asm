@@ -51,6 +51,47 @@ class InventoryRepository:
             return dict(cursor.fetchall())
 
     @staticmethod
+    def fetch_product_activity(code):
+        """Staff box on the product page: stock in every warehouse (incl. the
+        technicians' trucks), units invoiced minus returned over 12 months, and
+        the last invoice date."""
+        with connections['erp'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.CNOMBREALMACEN,
+                       (e.CENTRADASINICIALES + e.CENTRADASPERIODO12) - (e.CSALIDASINICIALES + e.CSALIDASPERIODO12)
+                FROM admExistenciaCosto e
+                JOIN admAlmacenes a ON a.CIDALMACEN = e.CIDALMACEN
+                JOIN admProductos p ON p.CIDPRODUCTO = e.CIDPRODUCTO
+                WHERE p.CCODIGOPRODUCTO = %s
+                  AND e.CIDEJERCICIO = (SELECT MAX(CIDEJERCICIO) FROM admExistenciaCosto)
+                """,
+                [code],
+            )
+            warehouses = sorted(
+                ({'name': name.strip(), 'units': units} for name, units in cursor.fetchall() if units),
+                key=lambda w: -w['units'],
+            )
+            cursor.execute(
+                """
+                SELECT SUM(CASE WHEN d.CFECHA >= DATEADD(month, -12, GETDATE())
+                                THEN CASE WHEN d.CIDDOCUMENTODE = %s THEN m.CUNIDADES ELSE -m.CUNIDADES END END),
+                       MAX(CASE WHEN d.CIDDOCUMENTODE = %s THEN d.CFECHA END)
+                FROM admMovimientos m
+                JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+                JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
+                WHERE p.CCODIGOPRODUCTO = %s AND d.CIDDOCUMENTODE IN (%s, %s) AND d.CCANCELADO = 0
+                """,
+                [FACTURA_DOC_TYPE, FACTURA_DOC_TYPE, code, FACTURA_DOC_TYPE, DEVOLUCION_DOC_TYPE],
+            )
+            sold_12m, last_sale = cursor.fetchone()
+        return {
+            'warehouses': warehouses,
+            'sold_12m': sold_12m or 0,
+            'last_sale': last_sale.date().isoformat() if last_sale else None,
+        }
+
+    @staticmethod
     def fetch_units_sold():
         """{product id: units invoiced minus returned} over the last 12 months."""
         with connections['erp'].cursor() as cursor:
@@ -218,8 +259,10 @@ def get_product_detail(code, is_worker):
 
     gea = _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
+    # Staff only, read live (never cached: it's per product and per role).
+    staff = InventoryRepository.fetch_product_activity(code) if is_worker else None
     if gea is None:
-        return {**product, 'appears_in': appears_in, 'gea': None}
+        return {**product, 'appears_in': appears_in, 'staff': staff, 'gea': None}
 
     ours = defaultdict(list)
     for p in catalog:
@@ -235,6 +278,7 @@ def get_product_detail(code, is_worker):
     return {
         **product,
         'appears_in': appears_in,
+        'staff': staff,
         'gea': {
             'code': gea['gea_code'],
             'desc': gea['desc'],

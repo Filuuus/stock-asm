@@ -65,8 +65,12 @@ class ProductDetailTests(SimpleTestCase):
              'price_visible': False, 'in_stock': False, 'images': []},
         ]
         with patch('api.services.get_inventory_catalog', return_value=catalog), \
-                patch('api.services._gea_products', return_value=self.GEA):
-            return get_product_detail('7041-2700-550', is_worker)
+                patch('api.services._gea_products', return_value=self.GEA), \
+                patch.object(InventoryRepository, 'fetch_product_activity', return_value={'sold_12m': 5}) as activity:
+            detail = get_product_detail('7041-2700-550', is_worker)
+            # The ERP is only queried for staff.
+            self.assertEqual(activity.called, is_worker)
+            return detail
 
     def test_part_lists_the_assemblies_it_appears_in(self):
         catalog = [
@@ -77,7 +81,8 @@ class ProductDetailTests(SimpleTestCase):
         ]
         # The part has no GEA data of its own; it's found through the pulsator's list.
         with patch('api.services.get_inventory_catalog', return_value=catalog), \
-                patch('api.services._gea_products', return_value=self.GEA):
+                patch('api.services._gea_products', return_value=self.GEA), \
+                patch.object(InventoryRepository, 'fetch_product_activity', return_value={}):
             part = get_product_detail('7021-2764-010W', True)
         self.assertEqual([(a['parent']['CCODIGOPRODUCTO'], a['pos']) for a in part['appears_in']],
                          [('7041-2700-550', '0020')])
@@ -87,6 +92,8 @@ class ProductDetailTests(SimpleTestCase):
         self.assertEqual([p['CCODIGOPRODUCTO'] for p in staff['gea']['parts'][0]['ours']], ['7021-2764-010W'])
         self.assertTrue(staff['gea']['note']['not_orderable'])
         self.assertIsNone(public['gea']['note'])
+        self.assertEqual(staff['staff'], {'sold_12m': 5})
+        self.assertIsNone(public['staff'])
 
 
 class GeaPartSearchTests(SimpleTestCase):

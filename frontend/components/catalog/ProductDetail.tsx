@@ -10,6 +10,7 @@ import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
 import { cn } from "@/lib/utils";
+import { formatDay } from "@/lib/dates";
 import { ProductDetail, RelatedPart, ServiceRule } from "@/types/api";
 
 const imageSrc = (images: { file: string; is_primary: boolean }[]) => {
@@ -261,6 +262,37 @@ function Service({ service }: { service: NonNullable<NonNullable<ProductDetail["
   );
 }
 
+const units = (n: number) => n.toLocaleString("es-MX", { maximumFractionDigits: 2 });
+
+// Staff only: where the stock is (General, Matriz, the technicians' trucks...)
+// and how the product moves.
+function StaffBox({ staff }: { staff: NonNullable<ProductDetail["staff"]> }) {
+  return (
+    <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+      <h2 className="font-semibold text-gray-900">
+        Para personal <span className="font-normal text-gray-500">· solo visible al iniciar sesión</span>
+      </h2>
+      <p className="mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">Existencias por almacén</p>
+      {staff.warehouses.length > 0 ? (
+        <ul className="mt-1 space-y-0.5 text-gray-700">
+          {staff.warehouses.map((w) => (
+            <li key={w.name} className="flex justify-between gap-3">
+              <span className="min-w-0 truncate">{w.name}</span>
+              <span className={cn("num shrink-0", w.units < 0 && "text-red-600")}>{units(w.units)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-gray-500">Sin existencias en ningún almacén.</p>
+      )}
+      <p className="mt-3 text-gray-700">
+        Vendidas en 12 meses: <span className="font-medium">{units(staff.sold_12m)}</span>
+        {" · "}Última venta: <span className="font-medium">{staff.last_sale ? formatDay(staff.last_sale) : "nunca"}</span>
+      </p>
+    </div>
+  );
+}
+
 // GEA's manuals are document numbers (to request the manual), one per language.
 // Spanish and English first; the rest folded away.
 function Manuals({ manuals }: { manuals: { code: string; lang: string }[] }) {
@@ -364,6 +396,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
           <Availability product={product} className="mt-2 text-sm" />
+          {product.staff && <StaffBox staff={product.staff} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}
           {note && (

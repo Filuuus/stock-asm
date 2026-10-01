@@ -47,6 +47,12 @@ export interface RelatedPart {
 
 // Product page: the catalog fields plus what GEA's dealer portal says about it.
 export interface ProductDetail extends Product {
+  // Staff only (null for the public): live from the ERP.
+  staff: {
+    warehouses: { name: string; units: number }[]; // every warehouse holding stock, trucks included
+    sold_12m: number; // units invoiced minus returned
+    last_sale: string | null; // ISO date
+  } | null;
   // Our assemblies whose parts list includes this product.
   appears_in: { pos: string; qty: number; has_drawing: boolean; parent: ProductSummary }[];
   gea: {
