@@ -144,6 +144,21 @@ def _gea_products():
         return {}
 
 
+# GEA's exploded drawings, downloaded unresized (the hotspots are in their pixels).
+DRAWINGS_DIR = settings.BASE_DIR.parent / 'frontend' / 'public' / 'products' / 'ets'
+
+
+def _local_drawing(drawing):
+    """Our copy of the drawing, or None when GEA's server didn't have it
+    (13 referenced drawings 404 there)."""
+    if not drawing or not drawing.get('img'):
+        return None
+    name = os.path.basename(drawing['img'])
+    if not (DRAWINGS_DIR / name).exists():
+        return None
+    return {'img': f'/products/ets/{name}', 'hotspots': drawing['hotspots']}
+
+
 def _plain_code(code):
     """ERP codes sometimes carry a regional letter (7021-2764-010W) that GEA's
     own code doesn't."""
@@ -184,7 +199,7 @@ def get_product_detail(code, is_worker):
             'code': gea['gea_code'],
             'desc': gea['desc'],
             'parts': [link(r) for r in (drawing or {}).get('parts') or gea.get('parts', [])],
-            'drawing': drawing and {'img': drawing['img'], 'hotspots': drawing['hotspots']},
+            'drawing': _local_drawing(drawing),
             'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
             'used_in': [link(r) for r in gea.get('used_in', [])],
             # "Not orderable" / replacement notes are internal (owner, 2026-10-01).

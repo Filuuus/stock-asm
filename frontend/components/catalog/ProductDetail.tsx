@@ -79,13 +79,17 @@ function Drawing({
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   return (
     <div className="relative mx-auto w-full max-w-xl">
-      {/* GEA's image server; next/image would need it configured as a remote host. */}
-      {/* ponytail: hotlinked over http - download the ~117 drawings before serving the site over https */}
+      {/* Plain img: the hotspots need the drawing's natural size, unresized. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={img}
         alt="Dibujo de despiece"
         className="w-full"
+        // A cached drawing can finish loading before React attaches onLoad,
+        // so also read its size when the element is attached.
+        ref={(el) => {
+          if (el?.complete && el.naturalWidth && !size) setSize({ w: el.naturalWidth, h: el.naturalHeight });
+        }}
         onLoad={(e) => setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
       />
       {size &&
