@@ -40,6 +40,33 @@ export const EMPTY_FILTERS: Filters = {
   max: "",
 };
 
+// Filters live in the URL (/?categoria=R&marca=...) so going back from a
+// product returns to the same list - and a filtered view can be shared.
+// Repeated params, not commas: brand names contain commas.
+export function filtersToParams(f: Filters, params = new URLSearchParams()) {
+  f.category.forEach((v) => params.append("categoria", v));
+  f.line.forEach((v) => params.append("linea", v));
+  f.brand.forEach((v) => params.append("marca", v));
+  if (f.inStock) params.set("disponible", "1");
+  if (f.withPrice) params.set("conprecio", "1");
+  if (f.min) params.set("min", f.min);
+  if (f.max) params.set("max", f.max);
+  return params;
+}
+
+export function filtersFromParams(params: URLSearchParams): Filters {
+  const num = (v: string | null) => (v && Number.isFinite(Number(v)) ? v : "");
+  return {
+    category: new Set(params.getAll("categoria")),
+    line: new Set(params.getAll("linea")),
+    brand: new Set(params.getAll("marca")),
+    inStock: params.get("disponible") === "1",
+    withPrice: params.get("conprecio") === "1",
+    min: num(params.get("min")),
+    max: num(params.get("max")),
+  };
+}
+
 export function normalize(text: string) {
   return text
     .normalize("NFD")

@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowUpDown, SlidersHorizontal } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn, plural } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
 import GeaPartResults from "@/components/catalog/GeaPartResults";
 import CatalogFilters, {
-  EMPTY_FILTERS,
   Filters,
+  filtersFromParams,
+  filtersToParams,
   hasPrice,
   matches,
   normalize,
@@ -29,10 +31,51 @@ export const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "price-desc", label: "Mayor precio" },
 ];
 
+const SORT_VALUES = SORT_OPTIONS.map((o) => o.value);
+
+// Remembered per tab so "‹ Catálogo" on a product page returns to the same
+// filtered list and scroll position.
+export const CATALOG_URL_KEY = "catalog-url";
+export const CATALOG_SCROLL_KEY = "catalog-scroll";
+export const CATALOG_RESTORE_KEY = "catalog-restore";
+
+function session(action: (s: Storage) => void) {
+  try {
+    action(sessionStorage);
+  } catch {
+    // storage blocked: the catalog simply opens at the top
+  }
+}
+
 export default function CatalogView({ products }: { products: Product[] }) {
   const { query } = useSearchQuery();
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [sortMode, setSortMode] = useState<SortMode>("relevance");
+  // Start from the current URL - also when coming back to the catalog, where
+  // Next reuses the page as first rendered (without these filters).
+  const searchParams = useSearchParams();
+  const [filters, setFilters] = useState<Filters>(() => filtersFromParams(new URLSearchParams(searchParams)));
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    const orden = searchParams.get("orden") as SortMode | null;
+    return orden && SORT_VALUES.includes(orden) ? orden : "relevance";
+  });
+
+  // Keep the URL in step with the filters (no reload, no new history entry).
+  useEffect(() => {
+    const params = filtersToParams(filters);
+    if (sortMode !== "relevance") params.set("orden", sortMode);
+    const url = params.size ? `/?${params}` : "/";
+    if (url !== window.location.pathname + window.location.search) window.history.replaceState(null, "", url);
+    session((s) => s.setItem(CATALOG_URL_KEY, url));
+  }, [filters, sortMode]);
+
+  // Arriving from a product's "‹ Catálogo" link: back to where the user was.
+  useEffect(() => {
+    session((s) => {
+      if (!s.getItem(CATALOG_RESTORE_KEY)) return;
+      s.removeItem(CATALOG_RESTORE_KEY);
+      const y = Number(s.getItem(CATALOG_SCROLL_KEY));
+      if (y) requestAnimationFrame(() => window.scrollTo(0, y));
+    });
+  }, []);
   // Phones only: the filter and sort side panels.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
@@ -172,7 +215,10 @@ export default function CatalogView({ products }: { products: Product[] }) {
         <GeaPartResults query={query} />
 
         {filtered.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4"
+            onClickCapture={() => session((s) => s.setItem(CATALOG_SCROLL_KEY, String(window.scrollY)))}
+          >
             {filtered.map((product) => (
               <ProductCard key={product.CIDPRODUCTO} product={product} />
             ))}

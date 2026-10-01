@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, Maximize2, Minus, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
+import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
@@ -355,6 +357,7 @@ function AppearsIn({ product }: { product: ProductDetail }) {
 }
 
 export default function ProductDetailView({ product, highlight }: { product: ProductDetail; highlight?: string }) {
+  const router = useRouter();
   const gea = product.gea;
   // Arriving from a part's "Aparece en": start with that part selected.
   const highlightPos =
@@ -374,7 +377,23 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-      <Link href="/" className="mb-4 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline">
+      <Link
+        href="/"
+        scroll={false}
+        onClick={(e) => {
+          // Back to the same filtered list and scroll position the user left.
+          let url = "/";
+          try {
+            url = sessionStorage.getItem(CATALOG_URL_KEY) || "/";
+            sessionStorage.setItem(CATALOG_RESTORE_KEY, "1");
+          } catch {
+            // storage blocked: plain link to the catalog
+          }
+          e.preventDefault();
+          router.push(url, { scroll: false });
+        }}
+        className="mb-4 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+      >
         <ChevronLeft className="h-4 w-4" />
         Catálogo
       </Link>
