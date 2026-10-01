@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Maximize2, Minus, Plus } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
@@ -65,25 +66,31 @@ function PartsList({ title, parts }: { title: string; parts: RelatedPart[] }) {
 
 // GEA's exploded drawing: the hotspot boxes are in the image's own pixels,
 // so they're placed as percentages of its natural size once it loads.
-function Drawing({
+type Hotspot = { pos: string; box: [number, number, number, number] };
+
+function DrawingCanvas({
   img,
   hotspots,
   active,
   onSelect,
+  idPrefix,
+  className,
 }: {
   img: string;
-  hotspots: { pos: string; box: [number, number, number, number] }[];
+  hotspots: Hotspot[];
   active: string | null;
   onSelect: (pos: string) => void;
+  idPrefix: string; // the page and the zoom view both render it - keep ids unique
+  className?: string;
 }) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   // Once the boxes exist, bring a pre-selected part into view.
   const [initial] = useState(active);
   useEffect(() => {
-    if (size && initial) document.getElementById(`hs-${initial}`)?.scrollIntoView({ block: "center" });
-  }, [size, initial]);
+    if (size && initial) document.getElementById(`${idPrefix}-${initial}`)?.scrollIntoView({ block: "center", inline: "center" });
+  }, [size, initial, idPrefix]);
   return (
-    <div className="relative mx-auto w-full max-w-xl">
+    <div className={cn("relative", className)}>
       {/* Plain img: the hotspots need the drawing's natural size, unresized. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -101,7 +108,7 @@ function Drawing({
         hotspots.map((h, i) => (
           <button
             key={`${h.pos}-${i}`}
-            id={hotspots.findIndex((x) => x.pos === h.pos) === i ? `hs-${h.pos}` : undefined}
+            id={hotspots.findIndex((x) => x.pos === h.pos) === i ? `${idPrefix}-${h.pos}` : undefined}
             type="button"
             onClick={() => onSelect(h.pos)}
             aria-label={`Posición ${Number(h.pos)}`}
@@ -118,6 +125,86 @@ function Drawing({
           />
         ))}
     </div>
+  );
+}
+
+const ZOOMS = [1, 1.5, 2, 3];
+
+// The drawing on the page, plus "Ampliar": full screen, zoomable and scrollable
+// for phones, numbers still clickable (picking one closes it and shows the row).
+function Drawing(props: { img: string; hotspots: Hotspot[]; active: string | null; onSelect: (pos: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  // A number picked in the zoom view is applied once the view has closed, so
+  // the page can scroll to its row (an open dialog locks the page scroll).
+  const picked = useRef<string | null>(null);
+  return (
+    <>
+      <DrawingCanvas {...props} idPrefix="hs" className="mx-auto w-full max-w-xl" />
+      <div className="mt-2 text-center">
+        <button
+          type="button"
+          onClick={() => {
+            setZoom(2);
+            setOpen(true);
+          }}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <Maximize2 className="h-4 w-4" />
+          Ampliar dibujo
+        </button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="flex h-[100dvh] max-w-none flex-col gap-0 p-0 sm:h-[90vh] sm:max-w-5xl"
+          onCloseAutoFocus={(e) => {
+            if (!picked.current) return;
+            e.preventDefault(); // don't jump back to the "Ampliar" button
+            const pos = picked.current;
+            picked.current = null;
+            // After the dialog releases the page's scroll lock, which would undo our scroll.
+            setTimeout(() => props.onSelect(pos), 50);
+          }}
+        >
+          <div className="flex items-center gap-2 border-b px-4 py-3 pr-12">
+            <DialogTitle className="flex-1 text-base">Dibujo de despiece</DialogTitle>
+            <button
+              type="button"
+              aria-label="Alejar"
+              disabled={zoom === ZOOMS[0]}
+              onClick={() => setZoom(ZOOMS[ZOOMS.indexOf(zoom) - 1])}
+              className="rounded border px-2 py-1 disabled:opacity-40"
+            >
+              <Minus className="h-4 w-4" />
+            </button>
+            <span className="w-12 text-center text-sm text-gray-600">{zoom * 100}%</span>
+            <button
+              type="button"
+              aria-label="Acercar"
+              disabled={zoom === ZOOMS[ZOOMS.length - 1]}
+              onClick={() => setZoom(ZOOMS[ZOOMS.indexOf(zoom) + 1])}
+              className="rounded border px-2 py-1 disabled:opacity-40"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto bg-white">
+            {/* Width grows with the zoom; the boxes are percentages, so they follow. */}
+            <div style={{ width: `${zoom * 100}%` }}>
+              <DrawingCanvas
+                {...props}
+                idPrefix="hs-zoom"
+                className="w-full"
+                onSelect={(pos) => {
+                  picked.current = pos;
+                  setOpen(false);
+                }}
+              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
