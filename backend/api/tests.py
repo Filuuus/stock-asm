@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .services import InventoryRepository, get_inventory_catalog
+from .services import InventoryRepository, get_inventory_catalog, get_product_detail
 
 
 def producto(pid, code, stock_units):
@@ -40,3 +40,29 @@ class InventoryCatalogTests(SimpleTestCase):
         self.assertEqual(staff[1]['category'], 'R')
         self.assertIsNone(staff[1]['line'])  # "(Ninguna)" means no line
         self.assertEqual([staff[i]['sold_rank'] for i in (1, 2, 3)], [2, 1, None])
+
+
+class ProductDetailTests(SimpleTestCase):
+    GEA = {'7041-2700-550': {
+        'gea_code': '7041-2700-550', 'desc': 'Pulsador', 'path': [],
+        'parts': [{'pos': '0020', 'qty': 1.0, 'code': '7021-2764-010', 'desc': 'Pieza'}],
+        'note': {'text': 'Nota', 'not_orderable': True, 'replacement': None},
+    }}
+
+    def detail(self, is_worker):
+        catalog = [
+            {'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0,
+             'price_visible': True, 'in_stock': True, 'images': []},
+            # Our code carries a regional letter; GEA's doesn't.
+            {'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None,
+             'price_visible': False, 'in_stock': False, 'images': []},
+        ]
+        with patch('api.services.get_inventory_catalog', return_value=catalog), \
+                patch('api.services._gea_products', return_value=self.GEA):
+            return get_product_detail('7041-2700-550', is_worker)
+
+    def test_links_parts_to_our_products_and_hides_notes_from_public(self):
+        staff, public = self.detail(True), self.detail(False)
+        self.assertEqual([p['CCODIGOPRODUCTO'] for p in staff['gea']['parts'][0]['ours']], ['7021-2764-010W'])
+        self.assertTrue(staff['gea']['note']['not_orderable'])
+        self.assertIsNone(public['gea']['note'])

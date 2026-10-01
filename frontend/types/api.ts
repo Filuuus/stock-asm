@@ -22,3 +22,35 @@ export interface Product {
   // 1 = best seller over the last 12 months; null = no sales.
   sold_rank: number | null;
 }
+
+// What the product page gets for a related part we also sell.
+export type ProductSummary = Pick<
+  Product,
+  "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price_visible" | "in_stock" | "images"
+> & { stock?: number | null };
+
+export interface RelatedPart {
+  pos?: string; // position on the parts list / drawing
+  qty?: number;
+  code: string; // GEA code
+  desc: string; // GEA description
+  ours: ProductSummary[]; // our products with that GEA code
+}
+
+// Product page: the catalog fields plus what GEA's dealer portal says about it.
+export interface ProductDetail extends Product {
+  gea: {
+    code: string;
+    desc: string;
+    parts: RelatedPart[];
+    drawing: { img: string | null; hotspots: { pos: string; box: [number, number, number, number] }[] } | null;
+    spare_parts: RelatedPart[];
+    used_in: RelatedPart[];
+    note: {
+      text: string;
+      not_orderable: boolean;
+      replacement: string | null;
+      replacement_ours: ProductSummary[]; // our products for the replacement code
+    } | null; // staff only
+  } | null;
+}

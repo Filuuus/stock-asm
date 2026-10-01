@@ -1,3 +1,9 @@
+import json
+import os
+from collections import defaultdict
+from functools import lru_cache
+
+from django.conf import settings
 from django.core.cache import cache
 from django.db import connections
 from .models import AdmClasificacionesValores, AdmProductos
@@ -117,3 +123,71 @@ def get_inventory_catalog(is_worker):
             'in_stock': product['stock'] > 0,
         })
     return result
+
+
+# GEA portal data (backend/exports/gea, gitignored - pulled from GEA's dealer
+# portal and parsed by parse_gea.py). Optional: without the file the product
+# page just shows the ERP data.
+GEA_PRODUCTS_FILE = settings.BASE_DIR / 'exports' / 'gea' / 'gea_products.json'
+
+
+@lru_cache(maxsize=1)
+def _load_gea(mtime):
+    with open(GEA_PRODUCTS_FILE, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _gea_products():
+    try:
+        return _load_gea(os.path.getmtime(GEA_PRODUCTS_FILE))
+    except OSError:
+        return {}
+
+
+def _plain_code(code):
+    """ERP codes sometimes carry a regional letter (7021-2764-010W) that GEA's
+    own code doesn't."""
+    return code.rstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+
+
+def _staff_note(note, link):
+    if not note:
+        return None
+    replacement = note['replacement'] and link({'code': note['replacement'], 'desc': ''})
+    return {**note, 'replacement_ours': replacement['ours'] if replacement else []}
+
+
+def get_product_detail(code, is_worker):
+    catalog = get_inventory_catalog(is_worker)
+    product = next((p for p in catalog if p['CCODIGOPRODUCTO'] == code), None)
+    if product is None:
+        return None
+    gea = _gea_products().get(code)
+    if gea is None:
+        return {**product, 'gea': None}
+
+    ours = defaultdict(list)
+    for p in catalog:
+        ours[_plain_code(p['CCODIGOPRODUCTO'])].append(p)
+
+    def summary(p):
+        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price_visible', 'in_stock', 'images')}
+
+    def link(row):
+        # Our own products for that GEA code, so the page can link to them.
+        return {**row, 'ours': [summary(p) for p in ours.get(row['code'], []) if p['CCODIGOPRODUCTO'] != code]}
+
+    drawing = gea.get('drawing')
+    return {
+        **product,
+        'gea': {
+            'code': gea['gea_code'],
+            'desc': gea['desc'],
+            'parts': [link(r) for r in (drawing or {}).get('parts') or gea.get('parts', [])],
+            'drawing': drawing and {'img': drawing['img'], 'hotspots': drawing['hotspots']},
+            'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
+            'used_in': [link(r) for r in gea.get('used_in', [])],
+            # "Not orderable" / replacement notes are internal (owner, 2026-10-01).
+            'note': _staff_note(gea.get('note'), link) if is_worker else None,
+        },
+    }
