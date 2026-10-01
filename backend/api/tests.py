@@ -25,7 +25,9 @@ class InventoryCatalogTests(SimpleTestCase):
                 patch.object(InventoryRepository, 'fetch_stock', return_value={r['CIDPRODUCTO']: s for r, s in rows}), \
                 patch.object(InventoryRepository, 'fetch_units_sold', return_value={1: 3.0, 2: 9.0, 3: -1.0}), \
                 patch('api.services.get_images_by_codes', return_value={}), \
-                patch('api.services.get_public_price_codes', return_value=set()):
+                patch('api.services.get_public_price_codes', return_value=set()), \
+                patch('api.services._gea_products', return_value={
+                    'A': {'note': {'not_orderable': True, 'replacement': 'B'}}}):
             cache.get.return_value = None
             return {p['CIDPRODUCTO']: p for p in get_inventory_catalog(is_worker)}
 
@@ -34,6 +36,11 @@ class InventoryCatalogTests(SimpleTestCase):
         self.assertEqual([staff[i]['stock'] for i in (1, 2, 3)], [5.0, 0.0, -1.0])
         self.assertEqual([public[i]['stock'] for i in (1, 2, 3)], [None, None, None])
         self.assertEqual([public[i]['in_stock'] for i in (1, 2, 3)], [True, False, False])
+
+    def test_discontinued_flag_is_staff_only(self):
+        self.assertEqual(self.catalog(True)[1]['discontinued'], {'replacement': 'B'})
+        self.assertIsNone(self.catalog(True)[2]['discontinued'])
+        self.assertIsNone(self.catalog(False)[1]['discontinued'])
 
     def test_category_line_and_sales_rank(self):
         staff = self.catalog(True)

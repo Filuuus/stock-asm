@@ -21,6 +21,8 @@ export interface Product {
   in_stock: boolean;
   // 1 = best seller over the last 12 months; null = no sales.
   sold_rank: number | null;
+  // Staff only: GEA no longer supplies it; null otherwise (and always for the public).
+  discontinued?: { replacement: string | null } | null;
 }
 
 // What the product page gets for a related part we also sell.

@@ -112,8 +112,10 @@ def get_inventory_catalog(is_worker):
     # default; a product is public only via an explicit ProductPriceVisibility
     # row (see catalog.models - the owner's 2026-09 decision).
     public_codes = get_public_price_codes()
+    gea = _gea_products() if is_worker else {}
     result = []
     for product in data:
+        note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
         visible = is_worker or product['CCODIGOPRODUCTO'] in public_codes
         result.append({
             **product,
@@ -122,6 +124,8 @@ def get_inventory_catalog(is_worker):
             # Staff see units; the public only whether there is any.
             'stock': product['stock'] if is_worker else None,
             'in_stock': product['stock'] > 0,
+            # Staff only: GEA no longer supplies it (and what replaces it).
+            'discontinued': {'replacement': note.get('replacement')} if note.get('not_orderable') else None,
         })
     return result
 

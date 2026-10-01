@@ -64,6 +64,12 @@ export default function ProductCard({ product }: { product: Product }) {
         <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
         <Price product={product} className="mt-2" />
         <Availability product={product} className="mt-1" />
+        {product.discontinued && (
+          <p className="mt-1 text-xs font-medium text-amber-700">
+            GEA ya no la surte
+            {product.discontinued.replacement && ` · Reemplazo: ${product.discontinued.replacement}`}
+          </p>
+        )}
       </div>
     </div>
   );
