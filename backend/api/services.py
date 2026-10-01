@@ -238,6 +238,11 @@ def get_product_detail(code, is_worker):
             'drawing': _local_drawing(drawing),
             'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
             'used_in': [link(r) for r in gea.get('used_in', []) if r['code'] not in shown],
+            # GEA's service interval; public (owner, 2026-10-01).
+            'service': gea.get('service') and {
+                'rules': gea['service']['rules'],
+                'in_assemblies': [link(r) for r in gea['service']['in_assemblies']],
+            },
             # "Not orderable" / replacement notes are internal (owner, 2026-10-01).
             'note': _staff_note(gea.get('note'), link) if is_worker else None,
         },

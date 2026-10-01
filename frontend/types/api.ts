@@ -29,6 +29,12 @@ export type ProductSummary = Pick<
   "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price_visible" | "in_stock" | "images"
 > & { stock?: number | null };
 
+export interface ServiceRule {
+  hours: number | null; // working hours
+  months: number | null; // or calendar time, whichever comes first
+  action: string; // "reemplazar", "Verificar fisuras/desgaste", ...
+}
+
 export interface RelatedPart {
   pos?: string; // position on the parts list / drawing
   qty?: number;
@@ -48,6 +54,11 @@ export interface ProductDetail extends Product {
     drawing: { img: string | null; hotspots: { pos: string; box: [number, number, number, number] }[] } | null;
     spare_parts: RelatedPart[];
     used_in: RelatedPart[];
+    // GEA's service interval: general rules, plus different ones inside specific assemblies.
+    service: {
+      rules: ServiceRule[];
+      in_assemblies: (ServiceRule & RelatedPart)[];
+    } | null;
     note: {
       text: string;
       not_orderable: boolean;

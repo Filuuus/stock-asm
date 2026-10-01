@@ -9,7 +9,7 @@ import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
 import { cn } from "@/lib/utils";
-import { ProductDetail, RelatedPart } from "@/types/api";
+import { ProductDetail, RelatedPart, ServiceRule } from "@/types/api";
 
 const imageSrc = (images: { file: string; is_primary: boolean }[]) => {
   const img = images.find((i) => i.is_primary) ?? images[0];
@@ -121,6 +121,59 @@ function Drawing({
   );
 }
 
+const PERIODS: Record<number, string> = { 0.25: "cada semana", 1: "cada mes", 12: "cada año" };
+const period = (m: number) => PERIODS[m] ?? (m % 12 === 0 ? `cada ${m / 12} años` : `cada ${m} meses`);
+
+// "Reemplazar cada 750 horas de trabajo o cada 6 meses"
+function ruleText(r: ServiceRule) {
+  const action = r.action.charAt(0).toUpperCase() + r.action.slice(1);
+  const when = [r.hours && `cada ${r.hours.toLocaleString("es-MX")} horas de trabajo`, r.months && period(r.months)]
+    .filter(Boolean)
+    .join(" o ");
+  return `${action} ${when}`;
+}
+
+function Service({ service }: { service: NonNullable<NonNullable<ProductDetail["gea"]>["service"]> }) {
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 text-sm">
+      <h2 className="font-semibold text-gray-900">Mantenimiento</h2>
+      {service.rules.length > 0 ? (
+        <ul className="mt-1 space-y-0.5 text-gray-700">
+          {service.rules.map((r, i) => (
+            <li key={i}>{ruleText(r)}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-gray-500">Depende del equipo donde se usa.</p>
+      )}
+      {service.rules.some((r) => r.hours && r.months) && (
+        <p className="mt-1 text-xs text-gray-500">Lo que ocurra primero. Recomendación de GEA.</p>
+      )}
+      {service.in_assemblies.length > 0 && (
+        <details className="group mt-3" open={service.rules.length === 0}>
+          <summary className="cursor-pointer list-none text-blue-600 hover:underline [&::-webkit-details-marker]:hidden">
+            En equipos específicos ({service.in_assemblies.length})
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {service.in_assemblies.map((a, i) => (
+              <li key={`${a.code}-${i}`}>
+                {a.ours[0] ? (
+                  <Link href={productHref(a.ours[0].CCODIGOPRODUCTO)} className="text-gray-800 hover:text-blue-700">
+                    {a.ours[0].CNOMBREPRODUCTO}
+                  </Link>
+                ) : (
+                  <span className="text-gray-800">{a.desc}</span>
+                )}
+                <span className="block text-xs text-gray-500">{ruleText(a)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // Where this part is used: each assembly opens on its drawing with the part selected.
 function AppearsIn({ product }: { product: ProductDetail }) {
   if (product.appears_in.length === 0) return null;
@@ -195,6 +248,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
           <Availability product={product} className="mt-2 text-sm" />
+          {gea?.service && <Service service={gea.service} />}
           {note && (
             <div className="mt-6">
               <Notice
