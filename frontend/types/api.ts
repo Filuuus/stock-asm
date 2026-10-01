@@ -54,6 +54,7 @@ export interface ProductDetail extends Product {
     drawing: { img: string | null; hotspots: { pos: string; box: [number, number, number, number] }[] } | null;
     spare_parts: RelatedPart[];
     used_in: RelatedPart[];
+    manuals: { code: string; lang: string }[]; // GEA document number per language
     // GEA's service interval: general rules, plus different ones inside specific assemblies.
     service: {
       rules: ServiceRule[];

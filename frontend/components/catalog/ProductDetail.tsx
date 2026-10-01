@@ -174,6 +174,35 @@ function Service({ service }: { service: NonNullable<NonNullable<ProductDetail["
   );
 }
 
+// GEA's manuals are document numbers (to request the manual), one per language.
+// Spanish and English first; the rest folded away.
+function Manuals({ manuals }: { manuals: { code: string; lang: string }[] }) {
+  const main = manuals
+    .filter((m) => m.lang === "Español" || m.lang === "English")
+    .sort((a, b) => Number(b.lang === "Español") - Number(a.lang === "Español"));
+  const others = manuals.filter((m) => !main.includes(m));
+  const item = (m: { code: string; lang: string }) => (
+    <li key={`${m.code}-${m.lang}`}>
+      {m.lang} <span className="text-gray-500">· {m.code}</span>
+    </li>
+  );
+  return (
+    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm">
+      <h2 className="font-semibold text-gray-900">Manuales</h2>
+      <p className="text-xs text-gray-500">Número de documento GEA, para solicitar el manual.</p>
+      {main.length > 0 && <ul className="mt-1 space-y-0.5 text-gray-700">{main.map(item)}</ul>}
+      {others.length > 0 && (
+        <details className="mt-2" open={main.length === 0}>
+          <summary className="cursor-pointer list-none text-blue-600 hover:underline [&::-webkit-details-marker]:hidden">
+            {main.length > 0 ? `Otros idiomas (${others.length})` : `Idiomas disponibles (${others.length})`}
+          </summary>
+          <ul className="mt-1 space-y-0.5 text-gray-700">{others.map(item)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // Where this part is used: each assembly opens on its drawing with the part selected.
 function AppearsIn({ product }: { product: ProductDetail }) {
   if (product.appears_in.length === 0) return null;
@@ -249,6 +278,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           <Price product={product} className="mt-4 block !text-3xl" />
           <Availability product={product} className="mt-2 text-sm" />
           {gea?.service && <Service service={gea.service} />}
+          {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}
           {note && (
             <div className="mt-6">
               <Notice

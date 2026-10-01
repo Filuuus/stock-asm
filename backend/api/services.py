@@ -238,6 +238,8 @@ def get_product_detail(code, is_worker):
             'drawing': _local_drawing(drawing),
             'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
             'used_in': [link(r) for r in gea.get('used_in', []) if r['code'] not in shown],
+            # GEA manual document numbers per language.
+            'manuals': gea.get('manuals', []),
             # GEA's service interval; public (owner, 2026-10-01).
             'service': gea.get('service') and {
                 'rules': gea['service']['rules'],
