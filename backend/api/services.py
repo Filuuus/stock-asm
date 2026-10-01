@@ -1,5 +1,6 @@
 import json
 import os
+import unicodedata
 from collections import defaultdict
 from functools import lru_cache
 
@@ -241,3 +242,40 @@ def get_product_detail(code, is_worker):
             'note': _staff_note(gea.get('note'), link) if is_worker else None,
         },
     }
+
+
+def _fold(text):
+    """Lowercase, no accents, no dashes - so "7041 2717", "70412717" and
+    "vastago" all match."""
+    text = unicodedata.normalize('NFD', text.lower())
+    return ''.join(c for c in text if unicodedata.category(c) != 'Mn').replace('-', '')
+
+
+def search_gea_parts(query, is_worker, limit=20):
+    """Parts from GEA's parts lists that we don't sell, matched by code or
+    description, each with the products of ours they appear in. Lets someone
+    holding a GEA part number find the machine (and drawing) it belongs to."""
+    terms = _fold(query).split()
+    if not terms or sum(len(t) for t in terms) < 3:
+        return []
+    catalog = get_inventory_catalog(is_worker)
+    by_code = {p['CCODIGOPRODUCTO']: p for p in catalog}
+    sold = {_plain_code(c) for c in by_code}
+
+    def summary(p):
+        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'images')}
+
+    descs = {}
+    for gea in _gea_products().values():
+        for r in (gea.get('drawing') or {}).get('parts') or gea.get('parts', []):
+            descs.setdefault(r['code'], r['desc'])
+    results = []
+    for code, desc in descs.items():
+        if code in sold or not all(t in _fold(f'{code} {desc}') for t in terms):
+            continue
+        appears_in = _appears_in(None, code, by_code, summary)
+        if appears_in:
+            results.append({'code': code, 'desc': desc, 'appears_in': appears_in})
+        if len(results) >= limit:
+            break
+    return results

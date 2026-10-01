@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .services import InventoryRepository, get_inventory_catalog, get_product_detail
+from .services import InventoryRepository, get_inventory_catalog, get_product_detail, search_gea_parts
 
 
 def producto(pid, code, stock_units):
@@ -80,3 +80,25 @@ class ProductDetailTests(SimpleTestCase):
         self.assertEqual([p['CCODIGOPRODUCTO'] for p in staff['gea']['parts'][0]['ours']], ['7021-2764-010W'])
         self.assertTrue(staff['gea']['note']['not_orderable'])
         self.assertIsNone(public['gea']['note'])
+
+
+class GeaPartSearchTests(SimpleTestCase):
+    GEA = {'7041-2700-550': {'gea_code': '7041-2700-550', 'desc': 'Pulsador', 'parts': [
+        {'pos': '0020', 'qty': 1.0, 'code': '7041-2717-010', 'desc': 'Vástago de embolo'},
+        {'pos': '0040', 'qty': 4.0, 'code': '7041-2745-010', 'desc': 'Disco presión'},
+    ]}}
+    CATALOG = [
+        {'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'images': []},
+        {'CCODIGOPRODUCTO': '7041-2745-010W', 'CNOMBREPRODUCTO': 'DISCO', 'images': []},
+    ]
+
+    def search(self, q):
+        with patch('api.services.get_inventory_catalog', return_value=self.CATALOG), \
+                patch('api.services._gea_products', return_value=self.GEA):
+            return [(r['code'], [a['pos'] for a in r['appears_in']]) for r in search_gea_parts(q, False)]
+
+    def test_finds_parts_we_dont_sell_by_code_or_accentless_word(self):
+        self.assertEqual(self.search('70412717'), [('7041-2717-010', ['0020'])])
+        self.assertEqual(self.search('vastago'), [('7041-2717-010', ['0020'])])
+        # Sold parts (even with our regional letter) are left to the normal catalog search.
+        self.assertEqual(self.search('disco'), [])

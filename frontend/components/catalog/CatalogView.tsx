@@ -5,6 +5,7 @@ import { ArrowUpDown, SlidersHorizontal } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn, plural } from "@/lib/utils";
 import ProductCard from "@/components/catalog/ProductCard";
+import GeaPartResults from "@/components/catalog/GeaPartResults";
 import CatalogFilters, {
   EMPTY_FILTERS,
   Filters,
@@ -167,6 +168,8 @@ export default function CatalogView({ products }: { products: Product[] }) {
             </select>
           </label>
         </div>
+
+        <GeaPartResults query={query} />
 
         {filtered.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
