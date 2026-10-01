@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ChevronLeft, Maximize2, Minus, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
+import AddToCart from "@/components/catalog/AddToCart";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
@@ -396,6 +397,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
           <Availability product={product} className="mt-2 text-sm" />
+          <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
           {product.staff && <StaffBox staff={product.staff} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}

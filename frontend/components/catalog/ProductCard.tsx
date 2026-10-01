@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import AddToCart from "@/components/catalog/AddToCart";
 import { Product, ProductSummary } from "@/types/api";
 import { cn, formatMoney } from "@/lib/utils";
 
@@ -55,7 +56,7 @@ export default function ProductCard({ product }: { product: Product }) {
           </div>
         )}
       </div>
-      <div className="mt-3 flex w-full flex-col items-start">
+      <div className="mt-3 flex w-full flex-1 flex-col items-start">
         <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
           <Link href={productHref(product.CCODIGOPRODUCTO)} className="hover:text-blue-700">
             {product.CNOMBREPRODUCTO}
@@ -70,6 +71,8 @@ export default function ProductCard({ product }: { product: Product }) {
             {product.discontinued.replacement && ` · Reemplazo: ${product.discontinued.replacement}`}
           </p>
         )}
+        {/* Pinned to the bottom so the buttons line up across a row. */}
+        <AddToCart product={product} className="mt-auto pt-3" />
       </div>
     </div>
   );
