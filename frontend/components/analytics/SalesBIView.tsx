@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Loader2 } from "lucide-react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
@@ -38,12 +40,23 @@ interface MonthRow {
   zonas: Record<Zone, number>;
 }
 
+// Operating results from Contabilidad, by posting month.
+interface ResultsRow {
+  month: string;
+  ingresos: number;
+  costo: number;
+  financieros: number;
+  utilidad_operativa: number;
+  gastos: Record<string, number>; // category -> amount
+}
+
 interface SalesSummary {
   month: string;
   months: MonthRow[]; // January of last year through `month`
   brands: { brand: string; ytd: number; ytd_prev: number }[];
   cobrado: Partial<Record<Zone, number>>;
   cuentas_por_cobrar: { pendiente: number; dias_cobro: number | null };
+  resultados: ResultsRow[]; // same months as `months`
 }
 
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -51,6 +64,8 @@ const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep
 const COLOR_CURRENT = "#2a78d6";
 const COLOR_PREVIOUS = "#eb6834";
 const TOP_BRANDS = 8;
+// Categorical slots 1-5, in the order the backend lists the categories.
+const EXPENSE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
 
 function lastCompleteMonth() {
   const d = new Date();
@@ -156,6 +171,12 @@ export default function SalesBIView() {
     const lastYearRows = data.months.filter((r) => r.month.startsWith(`${year - 1}-`));
     const lastYearToDate = lastYearRows.filter((r) => Number(r.month.slice(5)) <= m);
     const margin = (r?: MonthRow) => (r && r.ventas ? (r.ventas - r.costo) / r.ventas : null);
+    const results = new Map(data.resultados.map((r) => [r.month, r]));
+    const res = results.get(data.month)!;
+    const resLastYear = results.get(key(year - 1, m));
+    const expenses = (r?: ResultsRow) => (r ? sum(Object.values(r.gastos)) : 0);
+    const opMargin = (r?: ResultsRow) => (r && r.ingresos ? r.utilidad_operativa / r.ingresos : null);
+    const categories = Object.keys(res.gastos);
     const zoneYtd = (rows: MonthRow[], z: Zone) => sum(rows.map((r) => r.zonas[z] ?? 0));
 
     const brandTotal = sum(data.brands.map((b) => b.ytd));
@@ -191,6 +212,19 @@ export default function SalesBIView() {
       })),
       brands,
       brandTotal,
+      res,
+      resLastYear,
+      // Until the accountant posts the month's cost of sales, its result is meaningless.
+      resPosted: res.costo > 0,
+      opMargin: opMargin(res),
+      opMarginLastYear: opMargin(resLastYear),
+      expenses: expenses(res),
+      expensesLastYear: expenses(resLastYear),
+      categories,
+      expenseChart: MONTH_ABBR.slice(0, m).map((label, i) => {
+        const r = results.get(key(year, i + 1));
+        return { label, ...(r && r.costo > 0 ? r.gastos : {}) };
+      }),
     };
   }, [data]);
 
@@ -376,6 +410,129 @@ export default function SalesBIView() {
               </Table>
             </Card>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold text-gray-900">Resultados</h2>
+            <p className="text-sm text-gray-500">
+              Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos
+              pueden no coincidir con las ventas facturadas. Gastos agrupados por el nombre de la cuenta.
+            </p>
+          </div>
+
+          {!view.resPosted ? (
+            <p className="rounded-xl border border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-600">
+              Contabilidad todavía no registra el costo de ventas de {monthName}; los resultados aparecen
+              cuando el contador cierre el mes.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <Tile label={`Utilidad operativa de ${monthName}`} value={formatMoney(view.res.utilidad_operativa)}>
+                  <Delta
+                    value={change(view.res.utilidad_operativa, view.resLastYear?.utilidad_operativa)}
+                    label={`vs ${monthShort} ${view.year - 1}`}
+                  />
+                  <p className="text-xs text-gray-400">ingresos - costo - gastos de operación</p>
+                </Tile>
+                <Tile label="Margen operativo" value={view.opMargin === null ? "-" : percent(view.opMargin)}>
+                  <Delta
+                    value={
+                      view.opMargin !== null && view.opMarginLastYear !== null
+                        ? view.opMargin - view.opMarginLastYear
+                        : null
+                    }
+                    label={`vs ${monthShort} ${view.year - 1}`}
+                    unit="pp"
+                  />
+                </Tile>
+                <Tile label="Gastos de operación" value={formatMoney(view.expenses)}>
+                  <Delta value={change(view.expenses, view.expensesLastYear)} label={`vs ${monthShort} ${view.year - 1}`} />
+                  <p className="text-xs text-gray-400">
+                    {view.res.ingresos ? percent(view.expenses / view.res.ingresos) : "-"} de los ingresos
+                  </p>
+                </Tile>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader className="p-4 pb-0">
+                    <CardTitle className="text-base">Gastos de operación por mes</CardTitle>
+                    <CardDescription>{view.year}, por categoría</CardDescription>
+                  </CardHeader>
+                  <div className="h-72 p-2 sm:p-4">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={view.expenseChart} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
+                        <YAxis
+                          tickFormatter={compactMoney}
+                          tickLine={false}
+                          axisLine={false}
+                          width={56}
+                          tick={{ fontSize: 12, fill: "#6b7280" }}
+                        />
+                        <Tooltip
+                          formatter={(value, name) => [formatMoney(Number(value)), name]}
+                          contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                          cursor={{ fill: "#f3f4f6" }}
+                        />
+                        <Legend iconType="square" itemSorter={null} wrapperStyle={{ fontSize: 12 }} />
+                        {view.categories.map((c, i) => (
+                          <Bar
+                            key={c}
+                            dataKey={c}
+                            stackId="gastos"
+                            fill={EXPENSE_COLORS[i]}
+                            stroke="#fff"
+                            strokeWidth={1}
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card>
+                  <CardHeader className="p-4 pb-2">
+                    <CardTitle className="text-base">Gastos de {monthName}</CardTitle>
+                    <CardDescription>
+                      Contra {monthShort} {view.year - 1}
+                    </CardDescription>
+                  </CardHeader>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Categoría</TableHead>
+                        <TableHead className="text-right">Monto</TableHead>
+                        <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% ingresos</TableHead>
+                        <TableHead className="text-right">Cambio</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {view.categories.map((c, i) => (
+                        <TableRow key={c}>
+                          <TableCell>
+                            <span className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: EXPENSE_COLORS[i] }} />
+                              {c}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right num">{formatMoney(view.res.gastos[c])}</TableCell>
+                          <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                            {view.res.ingresos ? percent(view.res.gastos[c] / view.res.ingresos) : "-"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <ChangeCell value={change(view.res.gastos[c], view.resLastYear?.gastos[c])} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
+            </>
+          )}
         </>
       )}
     </main>
