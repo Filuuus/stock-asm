@@ -58,3 +58,6 @@ next-env.d.ts
 *.xlsx*
 *.jpeg
 *.jpg
+
+# GEA portal data (third-party, not for the public repo)
+backend/exports/gea/

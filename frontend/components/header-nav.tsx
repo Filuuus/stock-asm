@@ -3,9 +3,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut, Menu, User } from "lucide-react";
+import { LogOut, Menu, ShoppingCart, User } from "lucide-react";
+import { useCart } from "@/hooks/use-cart";
 import { useAuth } from "@/hooks/use-auth";
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 // Inline links on desktop; below that, one menu button that opens
@@ -15,12 +21,22 @@ export default function HeaderNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const { user, loading, isAccounting, isManagement, logout } = useAuth();
+  const { count } = useCart();
 
   const links = [
     { href: "/", label: "Catálogo", show: true },
+    { href: "/solicitudes", label: "Solicitudes", show: !!user },
     { href: "/comisiones", label: "Comisiones", show: true },
-    { href: "/corte-de-caja", label: "Corte de Caja", show: isAccounting || isManagement },
-    { href: "/facturas", label: "Facturas", show: isAccounting || isManagement },
+    {
+      href: "/corte-de-caja",
+      label: "Corte de Caja",
+      show: isAccounting || isManagement,
+    },
+    {
+      href: "/facturas",
+      label: "Facturas",
+      show: isAccounting || isManagement,
+    },
     { href: "/usuarios", label: "Usuarios", show: isManagement },
   ].filter((l) => l.show);
 
@@ -37,7 +53,20 @@ export default function HeaderNav() {
     );
 
   return (
-    <>
+    <div className="flex items-center gap-x-5">
+      {/* The quote-request cart, on every screen size. */}
+      <Link
+        href="/carrito"
+        aria-label={`Mi solicitud (${count} productos)`}
+        className="relative order-last p-2 -mr-2 rounded-md hover:bg-slate-800 lg:order-none lg:mr-0"
+      >
+        <ShoppingCart className="h-6 w-6" />
+        {count > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 min-w-[1.25rem] rounded-full bg-blue-500 px-1 text-center text-xs font-semibold leading-5">
+            {count}
+          </span>
+        )}
+      </Link>
       <nav className="hidden lg:flex items-center gap-x-5">
         {links.map((l) => (
           <Link key={l.href} href={l.href} className={linkClass(l.href)}>
@@ -67,11 +96,17 @@ export default function HeaderNav() {
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger asChild>
-          <button aria-label="Menú" className="lg:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md">
+          <button
+            aria-label="Menú"
+            className="lg:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md"
+          >
             <Menu className="w-6 h-6" />
           </button>
         </SheetTrigger>
-        <SheetContent side="right" className="w-64 flex flex-col gap-1 bg-slate-900 text-white border-slate-800">
+        <SheetContent
+          side="right"
+          className="w-64 flex flex-col gap-1 bg-slate-900 text-white border-slate-800"
+        >
           <SheetTitle className="text-white mb-4">Menú</SheetTitle>
           {links.map((l) => (
             <Link
@@ -80,7 +115,9 @@ export default function HeaderNav() {
               onClick={() => setOpen(false)}
               className={cn(
                 "rounded-md px-3 py-2.5 text-base font-medium",
-                pathname === l.href ? "bg-slate-800 text-white" : "text-slate-300 hover:bg-slate-800",
+                pathname === l.href
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-300 hover:bg-slate-800",
               )}
             >
               {l.label}
@@ -113,6 +150,6 @@ export default function HeaderNav() {
           </div>
         </SheetContent>
       </Sheet>
-    </>
+    </div>
   );
 }

@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Product } from "@/types/api";
-import { formatMoney } from "@/lib/utils";
+import Link from "next/link";
+import AddToCart from "@/components/catalog/AddToCart";
+import { Product, ProductSummary } from "@/types/api";
+import { cn, formatMoney } from "@/lib/utils";
 
 export default function ProductCard({ product }: { product: Product }) {
   const images = product.images;
@@ -21,6 +23,12 @@ export default function ProductCard({ product }: { product: Product }) {
     <div className="flex flex-col items-start rounded-xl border border-gray-200 bg-white p-3 sm:p-4 transition-shadow hover:shadow-md">
       {/* Square box, photo cropped to fill it, so every card lines up. */}
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-50">
+        <Link
+          href={productHref(product.CCODIGOPRODUCTO)}
+          aria-label={product.CNOMBREPRODUCTO}
+          tabIndex={-1}
+          className="absolute inset-0 z-[1]"
+        />
         <Image
           src={imgSrc}
           alt={product.CNOMBREPRODUCTO}
@@ -30,7 +38,7 @@ export default function ProductCard({ product }: { product: Product }) {
           onError={() => setFailed(true)}
         />
         {images.length > 1 && (
-          <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 gap-1">
+          <div className="absolute bottom-1.5 left-1/2 z-[2] flex -translate-x-1/2 gap-1">
             {images.map((img, index) => (
               <button
                 key={img.file}
@@ -48,30 +56,54 @@ export default function ProductCard({ product }: { product: Product }) {
           </div>
         )}
       </div>
-      <div className="mt-3 flex w-full flex-col items-start">
-        {product.CTEXTOEXTRA1 && (
-          <span className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-            {product.CTEXTOEXTRA1}
-          </span>
-        )}
-        <h3 className="mt-1.5 line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
-          {product.CNOMBREPRODUCTO}
+      <div className="mt-3 flex w-full flex-1 flex-col items-start">
+        <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
+          <Link href={productHref(product.CCODIGOPRODUCTO)} className="hover:text-blue-700">
+            {product.CNOMBREPRODUCTO}
+          </Link>
         </h3>
         <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
-        {product.price_visible && product.CPRECIO1 !== null ? (
-          product.CPRECIO1 > 0 ? (
-            <span className="mt-2 text-lg font-bold text-gray-900">
-              {formatMoney(product.CPRECIO1)}
-            </span>
-          ) : (
-            <span className="mt-2 text-sm font-medium text-gray-400">Sin precio</span>
-          )
-        ) : (
-          <span className="mt-2 text-xs font-medium text-gray-400">
-            Precio disponible para personal
-          </span>
+        <Price product={product} className="mt-2" />
+        <Availability product={product} className="mt-1" />
+        {product.discontinued && (
+          <p className="mt-1 text-xs font-medium text-amber-700">
+            GEA ya no la surte
+            {product.discontinued.replacement && ` · Reemplazo: ${product.discontinued.replacement}`}
+          </p>
         )}
+        {/* Pinned to the bottom so the buttons line up across a row. */}
+        <AddToCart product={product} className="mt-auto pt-3" />
       </div>
     </div>
+  );
+}
+
+export const productHref = (code: string) => `/producto/${encodeURIComponent(code)}`;
+
+export function Price({ product, className }: { product: ProductSummary; className?: string }) {
+  if (!product.price_visible || product.CPRECIO1 === null) {
+    return <span className={cn("text-xs font-medium text-gray-400", className)}>Precio disponible para personal</span>;
+  }
+  if (product.CPRECIO1 <= 0) {
+    return <span className={cn("text-sm font-medium text-gray-400", className)}>Sin precio</span>;
+  }
+  return (
+    <span className={cn("text-xl font-semibold text-gray-900 sm:text-2xl", className)}>
+      {formatMoney(product.CPRECIO1)}
+    </span>
+  );
+}
+
+// Staff get the units in ALMACEN GENERAL; the public only whether there are any.
+export function Availability({ product, className }: { product: ProductSummary; className?: string }) {
+  const stock = product.stock ?? null;
+  return (
+    <p className={cn("text-xs font-medium", product.in_stock ? "text-green-700" : "text-gray-400", className)}>
+      {!product.in_stock
+        ? "Sin existencia"
+        : stock === null
+          ? "Disponible"
+          : `Disponible: ${stock.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${stock === 1 ? "unidad" : "unidades"}`}
+    </p>
   );
 }

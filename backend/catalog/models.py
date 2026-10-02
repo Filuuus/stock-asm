@@ -1,3 +1,6 @@
+import secrets
+
+from django.conf import settings
 from django.db import models
 
 
@@ -30,3 +33,49 @@ class ProductPriceVisibility(models.Model):
 
     def __str__(self):
         return f'{self.producto_codigo} ({"pública" if self.public else "privada"})'
+
+
+def _new_token():
+    return secrets.token_urlsafe(16)
+
+
+class QuoteRequest(models.Model):
+    """A customer's cart sent for pricing (management, 2026-10-01): prices stay
+    private, staff review the request and management approves it, which
+    freezes the prices; the customer follows it through their own link
+    (/solicitud/<token>). Customer details live only in this local database,
+    never in the repo or the ERP.
+    """
+
+    STATUS_NEW, STATUS_APPROVED, STATUS_REJECTED = 'NEW', 'APPROVED', 'REJECTED'
+    STATUS_CHOICES = [(STATUS_NEW, 'Nueva'), (STATUS_APPROVED, 'Aprobada'), (STATUS_REJECTED, 'Rechazada')]
+
+    token = models.CharField(max_length=32, unique=True, default=_new_token, editable=False)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_NEW)
+    name = models.CharField(max_length=120)
+    phone = models.CharField(max_length=30)
+    company = models.CharField(max_length=120, blank=True)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    valid_until = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Solicitud {self.pk} ({self.get_status_display()})'
+
+
+class QuoteRequestItem(models.Model):
+    request = models.ForeignKey(QuoteRequest, related_name='items', on_delete=models.CASCADE)
+    # Mirrors AdmProductos.CCODIGOPRODUCTO, same pattern as ProductImage.
+    producto_codigo = models.CharField(max_length=30)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    # Frozen when management approves; null = no price ("se cotiza aparte").
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['id']
+        unique_together = [('request', 'producto_codigo')]

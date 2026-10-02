@@ -172,6 +172,8 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
     ],
+    # Public quote-request form (catalog.views.QuoteCreateThrottle).
+    'DEFAULT_THROTTLE_RATES': {'quote_create': '10/hour'},
 }
 
 CACHES = {
