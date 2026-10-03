@@ -378,6 +378,13 @@ export default function SalesBIView() {
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
+  // On a phone the indicator matrix scrolls sideways; start it at the picked
+  // month (its last column) rather than at January.
+  const indicatorTable = useRef<HTMLTableElement>(null);
+  useEffect(() => {
+    const wrapper = indicatorTable.current?.parentElement;
+    if (wrapper) wrapper.scrollLeft = wrapper.scrollWidth;
+  }, [data]);
 
   useEffect(() => {
     if (!isManagement) return;
@@ -1010,7 +1017,7 @@ export default function SalesBIView() {
                     acumulado del año
                   </CardDescription>
                 </CardHeader>
-                <Table className={TABLE_CLASS}>
+                <Table className={TABLE_CLASS} ref={indicatorTable}>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="sticky left-0 bg-inherit min-w-[11rem]">Indicador</TableHead>
@@ -1030,13 +1037,13 @@ export default function SalesBIView() {
                       <Fragment key={ind.key}>
                         {ind.group && (
                           // Group label row: ! overrides the table's row and first-column styles.
+                          // The label sits in the first (pinned) cell alone - a cell spanning the
+                          // whole row can't stay pinned and scrolls out of view on phones.
                           <tr className="border-b !bg-slate-200">
-                            <td
-                              colSpan={view.indicatorMonths.length + 2}
-                              className="sticky left-0 px-4 py-1.5 text-[11px] !font-semibold uppercase tracking-wide !text-slate-600"
-                            >
+                            <td className="sticky left-0 bg-slate-200 px-4 py-1.5 text-[11px] !font-semibold uppercase tracking-wide whitespace-nowrap !text-slate-600">
                               {ind.group}
                             </td>
+                            <td colSpan={view.indicatorMonths.length + 1} />
                           </tr>
                         )}
                         <TableRow>
