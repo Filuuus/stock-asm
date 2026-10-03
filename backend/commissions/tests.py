@@ -7,10 +7,11 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 
-from .models import CommissionCategoryRate
+from .models import CommissionCategoryRate, PuntoVentaClientZone
 from .services import (
     BIONAT_SUPPLIER_NAME,
     NORTHWEST_RUBBER_SUPPLIER_NAME,
+    _cash_share,
     _classify_line,
     _effective_rate,
     _extract_folio_tokens,
@@ -181,3 +182,23 @@ class FolioTokenTests(SimpleTestCase):
         # "4395-96" means folios 4395 and 4396.
         self.assertEqual(_extract_folio_tokens('4395-96'), {'4395', '4396'})
         self.assertEqual(_extract_folio_tokens('20933-20934'), {'20933', '20934'})
+
+
+class CashShareTests(SimpleTestCase):
+    def test_partly_credit_noted_pays_on_cash_part(self):
+        # F 20951: management's sheet pays on the 5,072.80 actually paid.
+        share = _cash_share({'CTOTAL': 5968.01}, {'cash': 5072.8, 'credit': 895.21})
+        self.assertAlmostEqual(Decimal('5144.84') * share, Decimal('4373.10'), delta=Decimal('0.01'))
+
+    def test_all_cash_or_cents_of_credit_is_whole(self):
+        self.assertEqual(_cash_share({'CTOTAL': 100.0}, None), 1)
+        self.assertEqual(_cash_share({'CTOTAL': 100.0}, {'cash': 100.0, 'credit': 0.0}), 1)
+        self.assertEqual(_cash_share({'CTOTAL': 100.0}, {'cash': 99.6, 'credit': 0.4}), 1)
+
+
+class PuntoVentaClientTests(SimpleTestCase):
+    def test_product_list_limits_the_pv_rate(self):
+        relative = PuntoVentaClientZone(cliente_id=1, zone='ZONA1', product_codes='BIO-SLC1, BIO-SPRI')
+        self.assertTrue(relative.applies_to('BIO-SPRI'))
+        self.assertFalse(relative.applies_to('BIO-BOV'))
+        self.assertTrue(PuntoVentaClientZone(cliente_id=2, zone='ZONA2').applies_to('ANY'))

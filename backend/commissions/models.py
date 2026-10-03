@@ -72,11 +72,22 @@ class PuntoVentaClientZone(models.Model):
     # ERP (a separate, read-only database) rather than referencing it.
     cliente_id = models.IntegerField(unique=True)
     zone = models.CharField(max_length=10, choices=ZONE_CHOICES)
+    # Comma-separated product codes that earn the Punto de Venta rate; blank =
+    # every product. Some clients outside Punto de Venta get its prices on a
+    # few products only (management 2026-10-03: relatives of a Punto de Venta
+    # owner pay PV prices on Sanolac Lila Citro and Sprint, and those lines pay
+    # the PV commission rate). A listed client is Punto de Venta whatever
+    # agent the ERP invoice carries - some are registered under a route.
+    product_codes = models.CharField(max_length=200, blank=True)
     note = models.CharField(max_length=200, blank=True)
     active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['cliente_id']
+
+    def applies_to(self, producto_codigo):
+        codes = {c.strip() for c in self.product_codes.split(',') if c.strip()}
+        return not codes or producto_codigo in codes
 
     def __str__(self):
         return f'Cliente {self.cliente_id} -> {self.zone}'
@@ -133,3 +144,28 @@ class InvoiceCommissionOverride(models.Model):
         if self.excluded:
             return f'Factura {self.invoice_id}: excluida'
         return f'Factura {self.invoice_id}: monto manual {self.override_amount}'
+
+
+class LineRateOverride(models.Model):
+    """Management's rate for one invoice line, replacing the automatic rate
+    (decay included) - for edge cases no rule covers, e.g. a part bought
+    outside inventory and invoiced as SERVICIO, which earns the parts rate
+    (management 2026-10-03). Keyed by the ERP line id (admMovimientos.
+    CIDMOVIMIENTO); invoice_id is kept for the admin. Ids only, no names.
+    """
+
+    movimiento_id = models.IntegerField(unique=True)
+    invoice_id = models.IntegerField()
+    rate = models.DecimalField(max_digits=5, decimal_places=4)
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f'Línea {self.movimiento_id} (factura {self.invoice_id}): {self.rate:.2%}'

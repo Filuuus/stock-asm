@@ -3,7 +3,7 @@ from django.contrib import admin
 from api.models import AdmClientes
 
 from .models import (
-    CommissionCategoryRate, InvoiceCommissionOverride, PuntoVentaClientZone, ZeroCommissionProduct,
+    CommissionCategoryRate, InvoiceCommissionOverride, LineRateOverride, PuntoVentaClientZone, ZeroCommissionProduct,
 )
 
 
@@ -21,8 +21,8 @@ class ZeroCommissionProductAdmin(admin.ModelAdmin):
 
 @admin.register(PuntoVentaClientZone)
 class PuntoVentaClientZoneAdmin(admin.ModelAdmin):
-    list_display = ['cliente_id', 'cliente_nombre', 'zone', 'note', 'active']
-    list_editable = ['zone', 'note', 'active']
+    list_display = ['cliente_id', 'cliente_nombre', 'zone', 'product_codes', 'note', 'active']
+    list_editable = ['zone', 'product_codes', 'note', 'active']
     search_fields = ['cliente_id']
 
     @admin.display(description='Cliente')
@@ -42,4 +42,12 @@ class InvoiceCommissionOverrideAdmin(admin.ModelAdmin):
     list_display = ['invoice_id', 'excluded', 'override_amount', 'zone', 'note', 'created_by', 'updated_at']
     list_editable = ['excluded', 'override_amount', 'zone', 'note']
     search_fields = ['invoice_id']
+    readonly_fields = ['created_by', 'created_at', 'updated_at']
+
+
+@admin.register(LineRateOverride)
+class LineRateOverrideAdmin(admin.ModelAdmin):
+    list_display = ['movimiento_id', 'invoice_id', 'rate', 'note', 'created_by', 'updated_at']
+    list_editable = ['rate', 'note']
+    search_fields = ['invoice_id', 'movimiento_id']
     readonly_fields = ['created_by', 'created_at', 'updated_at']

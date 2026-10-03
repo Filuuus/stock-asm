@@ -4,6 +4,8 @@ export type Category = "R" | "R_NW" | "R_CHEM" | "R_FAN" | "B" | "B_MIPRO" | "B_
 
 export interface CommissionLine {
   invoice_id: number;
+  // ERP line id (admMovimientos.CIDMOVIMIENTO); absent on manual-amount rows.
+  movimiento_id?: number;
   folio: number;
   folio_display: string; // "F 20844"
   // Bare ERP client id - opens the client history (see ClientLink).
@@ -22,6 +24,13 @@ export interface CommissionLine {
   paid_date: string;
   due_date: string | null;
   commission: number;
+  // Share of the invoice paid with money when credit notes settled part of it
+  // (commission is only on that part); null when paid in full with money.
+  cash_share?: number | null;
+  // Set when management changed this line's rate (see LineRateOverride):
+  // the rate the rules would have given, and management's note.
+  auto_rate?: number | null;
+  rate_note?: string | null;
   // Management-only manual correction flags (see InvoiceCommissionOverride) -
   // excluded rows are zeroed but stay visible; manual rows replace the
   // computed line with a flat management-entered amount.

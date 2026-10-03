@@ -190,6 +190,13 @@ export default function CommissionsView() {
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
 
+  // Per-line rate edit (LineRateOverride): rate typed as a percentage.
+  const [rateLine, setRateLine] = useState<CommissionLine | null>(null);
+  const [ratePercent, setRatePercent] = useState("");
+  const [rateNote, setRateNote] = useState("");
+  const [rateSaving, setRateSaving] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+
   const requestIdRef = useRef(0);
 
   const fetchSummary = async (targetMonth: string) => {
@@ -335,6 +342,53 @@ export default function CommissionsView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo actualizar la factura.");
     }
+  };
+
+  const openRateDialog = (line: CommissionLine) => {
+    setRateLine(line);
+    setRatePercent(line.rate != null ? String(+(line.rate * 100).toFixed(2)) : "");
+    setRateNote(line.rate_note ?? "");
+    setRateError(null);
+  };
+
+  // rate = null restores the automatic rate.
+  const saveLineRate = async (rate: number | null) => {
+    if (!rateLine?.movimiento_id) return;
+    setRateSaving(true);
+    setRateError(null);
+    try {
+      const res =
+        rate == null
+          ? await apiFetch(`/api/commissions/line-rates/${rateLine.movimiento_id}/`, { method: "DELETE" })
+          : await apiFetch("/api/commissions/line-rates/", {
+              method: "POST",
+              body: JSON.stringify({
+                movimiento_id: rateLine.movimiento_id,
+                invoice_id: rateLine.invoice_id,
+                rate,
+                note: rateNote,
+              }),
+            });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "No se pudo guardar la tasa.");
+      }
+      setRateLine(null);
+      fetchSummary(month);
+    } catch (err) {
+      setRateError(err instanceof Error ? err.message : "No se pudo guardar la tasa.");
+    } finally {
+      setRateSaving(false);
+    }
+  };
+
+  const handleSaveRate = () => {
+    const percent = Number(ratePercent);
+    if (ratePercent.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 20) {
+      setRateError("Indique una tasa entre 0 y 20%.");
+      return;
+    }
+    saveLineRate(percent / 100);
   };
 
   const totalCommission = useMemo(() => {
@@ -643,6 +697,11 @@ export default function CommissionsView() {
                                     >
                                       <TableCell className="pl-4 lg:pl-14 min-w-40 sm:max-w-48 lg:max-w-64 sm:truncate">
                                         {line.producto_nombre}
+                                        {line.cash_share != null && (
+                                          <p className="text-xs text-gray-500">
+                                            Comisión sobre el {Math.round(line.cash_share * 100)}% pagado en dinero (nota de crédito)
+                                          </p>
+                                        )}
                                       </TableCell>
                                       <TableCell className={HIDE_BELOW_SM}>
                                         {line.category && (
@@ -667,7 +726,26 @@ export default function CommissionsView() {
                                         {formatMoney(line.net_amount)}
                                       </TableCell>
                                       <TableCell className="text-right num">
-                                        {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
+                                        {isManagement && line.movimiento_id != null && !group.excluded ? (
+                                          <button
+                                            onClick={() => openRateDialog(line)}
+                                            title={
+                                              line.auto_rate != null
+                                                ? `Tasa cambiada por gerencia (automática ${(line.auto_rate * 100).toFixed(2)}%)${line.rate_note ? `: ${line.rate_note}` : ""}`
+                                                : "Cambiar tasa"
+                                            }
+                                            className={cn(
+                                              "rounded px-1.5 py-0.5 underline decoration-dotted underline-offset-4 hover:bg-gray-200",
+                                              line.auto_rate != null && "bg-amber-100 text-amber-900",
+                                            )}
+                                          >
+                                            {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
+                                          </button>
+                                        ) : (
+                                          <span className={cn(line.auto_rate != null && "rounded bg-amber-100 px-1.5 py-0.5 text-amber-900")}>
+                                            {line.rate != null ? `${(line.rate * 100).toFixed(2)}%` : "-"}
+                                          </span>
+                                        )}
                                       </TableCell>
                                       <TableCell className="text-right num lg:pr-8">
                                         {formatMoney(line.commission)}
@@ -689,6 +767,61 @@ export default function CommissionsView() {
           </div>
         </div>
       )}
+
+      <Dialog open={rateLine != null} onOpenChange={(open) => !open && setRateLine(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cambiar tasa de comisión</DialogTitle>
+          </DialogHeader>
+          {rateLine && (
+            <div className="flex flex-col gap-4">
+              <div className="text-sm text-gray-700">
+                <p className="font-medium">{rateLine.producto_nombre}</p>
+                <p className="text-gray-500">
+                  {rateLine.folio_display} · Monto neto {formatMoney(rateLine.net_amount)} · Tasa automática{" "}
+                  {((rateLine.auto_rate ?? rateLine.rate ?? 0) * 100).toFixed(2)}%
+                </p>
+              </div>
+              <div className="grid grid-cols-[8rem_1fr] gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="line-rate">Tasa (%)</Label>
+                  <Input
+                    id="line-rate"
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    max="20"
+                    value={ratePercent}
+                    onChange={(e) => setRatePercent(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveRate()}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="line-rate-note">Nota</Label>
+                  <Input
+                    id="line-rate-note"
+                    value={rateNote}
+                    onChange={(e) => setRateNote(e.target.value)}
+                    placeholder="Motivo del cambio"
+                  />
+                </div>
+              </div>
+              {rateError && <p className="text-sm text-red-600">{rateError}</p>}
+              <div className="flex flex-wrap justify-end gap-2">
+                {rateLine.auto_rate != null && (
+                  <Button variant="outline" onClick={() => saveLineRate(null)} disabled={rateSaving}>
+                    <RotateCcw className="w-4 h-4" />
+                    Usar tasa automática
+                  </Button>
+                )}
+                <Button onClick={handleSaveRate} disabled={rateSaving}>
+                  {rateSaving ? "Guardando..." : "Guardar"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-lg">
