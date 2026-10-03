@@ -9,8 +9,10 @@ services carry no cost. Read-only, like every ERP access in this project.
 """
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
+from django.core.cache import cache
 from django.db import connections
 
 from commissions.services import (
@@ -30,16 +32,28 @@ LEDGER_INCOME_GROUPS = ('4001', '4002')  # sales, minus discounts/returns
 LEDGER_COST_GROUPS = ('5001', '5002')  # cost of sales, minus purchase discounts
 LEDGER_EXPENSE_GROUPS = ('5003', '5005', '5006')  # depreciation, selling, administration
 LEDGER_FINANCIAL_GROUPS = ('4003', '4004', '5007', '5008')  # other/financial income and expenses
-# Expense categories, matched on whole words of the account name (so "IGI"
+# Expense categories: (label, Cuentas.Codigo prefixes, account-name words).
+# The ledger's own sub-groups come first where it has them (5x0511 = one
+# account per vehicle, 500508 = import charges incl. "COSTO INDIRECTO" -
+# unforeseen transport/import costs per the owner, in practice port terminals
+# and customs brokers); names match whole words (so "IGI"
 # doesn't match "VIGILANCIA"). First match wins; anything else is "Otros".
-# ponytail: name keywords, agreed with the user 2026-10-02 - pending the
-# accountant's review; a new account with an unexpected name lands in Otros.
+# Agreed with the user 2026-10-03 (took "Otros" from ~30% to ~1% of 2026);
+# pending the accountant's review.
 EXPENSE_CATEGORIES = [
-    ('Nómina', re.compile(
+    ('Nómina', (), re.compile(
         r'\b(SUELDOS|SALARIOS|IMSS|INFONAVIT|RETIRO|PREMIOS|VACACIONES|VACACIONAL|AGUINALDO|NOMINAS|DESPENSA|PTU)\b')),
-    ('Fletes e importación', re.compile(r'\b(FLETES|ACARREOS|IGI|ARANCELARIA|ADUANALES|DTA|PRV)\b')),
-    ('Combustible', re.compile(r'\b(COMBUSTIBLES|GAS LP|GASOLINA|DIESEL)\b')),
-    ('Seguros', re.compile(r'\bSEGUROS Y FIANZAS\b')),
+    ('Fletes e importación', ('500508',), re.compile(r'\b(FLETES|ACARREOS|IGI|ARANCELARIA|ADUANALES|DTA|PRV)\b')),
+    # 500300003 vehicle depreciation, 500616 vehicle leases.
+    ('Vehículos y combustible', ('500511', '500611', '500300003', '500616'), re.compile(
+        r'\b(COMBUSTIBLES|GAS LP|GASOLINA|DIESEL|PEAJE|REFRENDOS|PERMISOS DE CIRCULACION)\b')),
+    ('Seguros', (), re.compile(r'\bSEGUROS Y FIANZAS\b')),
+    ('Materiales y reparaciones', ('500515',), None),
+    ('Honorarios y publicidad', (), re.compile(
+        r'\b(HONORARIOS|ASISTENCIA TECNICA|CAPACITACION|PROPAGANDA|REGALOS A CLIENTES)\b')),
+    # Building, machinery, office and computer upkeep, plus utilities.
+    ('Mantenimiento y servicios', ('500509', '500510', '500512', '500513', '500609', '500610', '500612', '500613'),
+     re.compile(r'\b(TELEFONO|ENERGIA ELECTRICA|AGUA)\b')),
 ]
 OTHER_EXPENSES = 'Otros'
 
@@ -76,14 +90,26 @@ def fetch_month_lines(date_from, date_to):
         return cursor.fetchall()
 
 
-def summarize(rows, year, month, brand_names):
+def chart_end_month(year, month, today):
+    """Last month of `year` the sales chart shows, so it stays put while the
+    owner moves between months: the whole year for past years, else the last
+    complete month - or the month picked, when that's later (the current one,
+    still changing, only shows up when picked on purpose)."""
+    last = today.replace(day=1) - timedelta(days=1)
+    if year < last.year:
+        return 12
+    return max(month, last.month) if year == last.year else month
+
+
+def summarize(rows, year, month, brand_names, end_month=None):
     """Pure part of calculate_sales: rows from fetch_month_lines covering
-    January of year-1 through (year, month)."""
+    January of year-1 through (year, end_month), end_month >= month."""
+    end_month = end_month or month
     zone_by_id = {v: k for k, v in ZONE_SCOPE.items()}
-    keys = [f'{y}-{m:02d}' for y in (year - 1, year) for m in range(1, 13) if (y, m) <= (year, month)]
+    keys = [f'{y}-{m:02d}' for y in (year - 1, year) for m in range(1, 13) if (y, m) <= (year, end_month)]
     months = {k: {'month': k, 'ventas': 0.0, 'devoluciones': 0.0, 'costo': 0.0,
                   'zonas': {z: 0.0 for z in ZONE_SCOPE}} for k in keys}
-    brands = defaultdict(lambda: {'ytd': 0.0, 'ytd_prev': 0.0})
+    brands = defaultdict(lambda: {'ytd': 0.0, 'ytd_prev': 0.0, 'mes': 0.0, 'mes_prev': 0.0})
 
     for y, m, doc_type, zone_id, brand_id, net, cost in rows:
         row = months[f'{y}-{m:02d}']
@@ -95,7 +121,10 @@ def summarize(rows, year, month, brand_names):
         if sign < 0:
             row['devoluciones'] -= net
         if m <= month:
-            brands[brand_names.get(brand_id, NO_BRAND).replace('(Ninguna)', NO_BRAND)]['ytd' if y == year else 'ytd_prev'] += net
+            brand = brands[brand_names.get(brand_id, NO_BRAND).replace('(Ninguna)', NO_BRAND)]
+            brand['ytd' if y == year else 'ytd_prev'] += net
+            if m == month:
+                brand['mes' if y == year else 'mes_prev'] += net
 
     def rounded(d):
         return {k: rounded(v) if isinstance(v, dict) else round(v, 2) if isinstance(v, float) else v for k, v in d.items()}
@@ -108,38 +137,40 @@ def summarize(rows, year, month, brand_names):
 
 def fetch_ledger_results(date_from, date_to):
     """Contabilidad results accounts, net debit (cargos minus abonos) per
-    (year, period, 4-digit group, account name). Periods 13+ (year-end
+    (year, period, account code, account name). Periods 13+ (year-end
     adjustments) are left out; the month view only knows 1-12."""
     groups = LEDGER_INCOME_GROUPS + LEDGER_COST_GROUPS + LEDGER_EXPENSE_GROUPS + LEDGER_FINANCIAL_GROUPS
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT mp.Ejercicio, mp.Periodo, LEFT(cu.Codigo, 4), cu.Nombre,
+            SELECT mp.Ejercicio, mp.Periodo, cu.Codigo, cu.Nombre,
                    SUM(CASE WHEN mp.TipoMovto = 0 THEN mp.Importe ELSE -mp.Importe END)
             FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
             JOIN {LEDGER_DATABASE}.dbo.Cuentas cu ON cu.Id = mp.IdCuenta
             WHERE mp.Periodo BETWEEN 1 AND 12
               AND mp.Ejercicio * 100 + mp.Periodo BETWEEN %s AND %s
               AND LEFT(cu.Codigo, 4) IN ({', '.join(['%s'] * len(groups))})
-            GROUP BY mp.Ejercicio, mp.Periodo, LEFT(cu.Codigo, 4), cu.Nombre
+            GROUP BY mp.Ejercicio, mp.Periodo, cu.Codigo, cu.Nombre
             """,
             [date_from.year * 100 + date_from.month, date_to.year * 100 + date_to.month, *groups],
         )
         return cursor.fetchall()
 
 
-def expense_category(account_name):
-    name = (account_name or '').upper()
-    return next((label for label, pattern in EXPENSE_CATEGORIES if pattern.search(name)), OTHER_EXPENSES)
+def expense_category(code, account_name):
+    code, name = code or '', (account_name or '').upper()
+    return next((label for label, prefixes, words in EXPENSE_CATEGORIES
+                 if code.startswith(prefixes) or (words and words.search(name))), OTHER_EXPENSES)
 
 
 def summarize_results(rows, keys):
     """Monthly operating results from fetch_ledger_results, one row per key
     ("YYYY-MM"). Income comes back positive, costs and expenses positive."""
-    categories = [label for label, _ in EXPENSE_CATEGORIES] + [OTHER_EXPENSES]
+    categories = [label for label, _, _ in EXPENSE_CATEGORIES] + [OTHER_EXPENSES]
     months = {k: {'month': k, 'ingresos': 0.0, 'costo': 0.0, 'financieros': 0.0,
                   'gastos': {c: 0.0 for c in categories}} for k in keys}
-    for y, period, group, name, net_debit in rows:
+    for y, period, code, name, net_debit in rows:
+        group = code[:4]
         row = months.get(f'{y}-{period:02d}')
         if row is None:
             continue
@@ -149,7 +180,7 @@ def summarize_results(rows, keys):
         elif group in LEDGER_COST_GROUPS:
             row['costo'] += net_debit
         elif group in LEDGER_EXPENSE_GROUPS:
-            row['gastos'][expense_category(name)] += net_debit
+            row['gastos'][expense_category(code, name)] += net_debit
         else:
             row['financieros'] += net_debit
     for row in months.values():
@@ -158,6 +189,36 @@ def summarize_results(rows, keys):
             round(v, 2) for v in (row['ingresos'], row['costo'], row['financieros'], row['utilidad_operativa']))
         row['gastos'] = {c: round(v, 2) for c, v in row['gastos'].items()}
     return [months[k] for k in keys]
+
+
+def account_detail(rows, key, prev_key, groups, category_of):
+    """Net debit of month `key` per account in `groups` (4-digit prefixes),
+    with the same account in `prev_key` (same month last year): {category:
+    [{cuenta, monto, anterior}]}, largest first. Accounts are merged by name
+    across the selling/administration branches - "HONORARIOS" is one expense
+    to the owner."""
+    wanted = {key: 'monto', prev_key: 'anterior'}
+    accounts = defaultdict(lambda: {'monto': 0.0, 'anterior': 0.0})
+    for y, period, code, name, net_debit in rows:
+        field = wanted.get(f'{y}-{period:02d}')
+        if field and code[:4] in groups:
+            name = ' '.join((name or '').split())
+            accounts[(category_of(code, name), name)][field] += net_debit or 0
+    result = defaultdict(list)
+    for (category, name), v in accounts.items():
+        if round(v['monto'], 2) or round(v['anterior'], 2):
+            result[category].append({'cuenta': name, 'monto': round(v['monto'], 2), 'anterior': round(v['anterior'], 2)})
+    return {c: sorted(items, key=lambda a: -a['monto']) for c, items in result.items()}
+
+
+def expense_accounts(rows, key, prev_key):
+    return account_detail(rows, key, prev_key, LEDGER_EXPENSE_GROUPS, expense_category)
+
+
+def financial_accounts(rows, key, prev_key):
+    """The "gastos financieros netos" line per account: exchange losses and
+    gains, bank fees, interest. Gains come back negative."""
+    return account_detail(rows, key, prev_key, LEDGER_FINANCIAL_GROUPS, lambda code, name: 'all').get('all', [])
 
 
 def fetch_ledger_balances(date_to):
@@ -272,22 +333,47 @@ def receivables_today():
     return {'pendiente': round(pending, 2), 'dias_cobro': round(pending / sold * 365, 1) if sold else None}
 
 
-def calculate_sales(year, month):
+def _in_thread(fn, *args):
+    # Each thread opens its own DB connections; close them so they don't leak.
+    try:
+        return fn(*args)
+    finally:
+        connections.close_all()
+
+
+def calculate_sales(year, month, refresh=False):
+    # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
+    # button) recomputes straight from the ERP and re-caches it.
+    key = f'analytics_sales_v6_{year}-{month:02d}'  # bump v when the response shape changes
+    result = None if refresh else cache.get(key)
+    if result is None:
+        result = _calculate_sales(year, month)
+        cache.set(key, result, timeout=600)
+    return result
+
+
+def _calculate_sales(year, month):
     next_month = date(year + month // 12, month % 12 + 1, 1)
-    result = summarize(
-        fetch_month_lines(date(year - 1, 1, 1), next_month),
-        year, month, CommissionRepository.fetch_brand_names(),
-    )
-    corte = calculate_corte_de_caja(date(year, month, 1), next_month - timedelta(days=1))
+    end_month = chart_end_month(year, month, date.today())
+    chart_end = date(year + end_month // 12, end_month % 12 + 1, 1)
+    # The ERP queries are independent, so run them side by side: the request
+    # takes as long as the slowest one (Corte de Caja) instead of their sum.
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        lines = pool.submit(_in_thread, fetch_month_lines, date(year - 1, 1, 1), chart_end)
+        brand_names = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
+        corte = pool.submit(_in_thread, calculate_corte_de_caja, date(year, month, 1), next_month - timedelta(days=1))
+        ledger_results = pool.submit(_in_thread, fetch_ledger_results, date(year - 1, 1, 1), date(year, end_month, 1))
+        ledger_balances = pool.submit(_in_thread, fetch_ledger_balances, date(year, end_month, 1))
+        receivables = pool.submit(_in_thread, receivables_today)
+
+    result = summarize(lines.result(), year, month, brand_names.result(), end_month)
+    keys = [m['month'] for m in result['months']]
     result['month'] = f'{year}-{month:02d}'
-    result['resultados'] = summarize_results(
-        fetch_ledger_results(date(year - 1, 1, 1), date(year, month, 1)),
-        [m['month'] for m in result['months']],
-    )
-    result['indicadores'] = indicators(
-        result['resultados'],
-        month_end_balances(fetch_ledger_balances(date(year, month, 1)), [m['month'] for m in result['months']]),
-    )
-    result['cobrado'] = {z: round(float(v), 2) for z, v in corte['zone_totals'].items()}
-    result['cuentas_por_cobrar'] = receivables_today()
+    result['resultados'] = summarize_results(ledger_results.result(), keys)
+    prev_key = f'{year - 1}-{month:02d}'
+    result['gastos_cuentas'] = expense_accounts(ledger_results.result(), result['month'], prev_key)
+    result['financieros_cuentas'] = financial_accounts(ledger_results.result(), result['month'], prev_key)
+    result['indicadores'] = indicators(result['resultados'], month_end_balances(ledger_balances.result(), keys))
+    result['cobrado'] = {z: round(float(v), 2) for z, v in corte.result()['zone_totals'].items()}
+    result['cuentas_por_cobrar'] = receivables.result()
     return result
