@@ -192,6 +192,11 @@ const TABLE_CLASS =
   "[&_tbody_tr:nth-child(even)]:bg-slate-50 [&_tbody_tr:hover]:bg-blue-50/60 [&_td:first-child]:font-medium " +
   "[&_td:first-child]:text-slate-800";
 
+// Number-column widths for the tables whose rows expand ("table-fixed"): long
+// account names wrap in the first column instead of resizing the table.
+const COL_MONEY = "w-32 sm:w-40";
+const COL_PERCENT = "w-[4.5rem] sm:w-24";
+
 function SectionHeading({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1 border-l-4 border-slate-900 pl-3">
@@ -832,19 +837,19 @@ export default function SalesBIView() {
                   Del ingreso a la utilidad; el costo de ventas es lo que costaron los productos vendidos en el mes.
                 </CardDescription>
               </CardHeader>
-              <Table className={TABLE_CLASS}>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Concepto</TableHead>
-                    <TableHead className="text-right">Monto</TableHead>
-                    <TableHead className="text-right">
+                    <TableHead className={cn("text-right", COL_MONEY)}>Monto</TableHead>
+                    <TableHead className={cn("text-right", COL_PERCENT)}>
                       <span className="sm:hidden">%</span>
                       <span className="hidden sm:inline">% ingresos</span>
                     </TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_MD)}>
+                    <TableHead className={cn("text-right w-40", HIDE_BELOW_MD)}>
                       {monthShort} {view.year - 1}
                     </TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cambio</TableHead>
+                    <TableHead className={cn("text-right w-24", HIDE_BELOW_SM)}>Cambio</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -863,7 +868,7 @@ export default function SalesBIView() {
                           )}
                           onClick={line.expandable ? () => setFinancialOpen((o) => !o) : undefined}
                         >
-                          <TableCell className={cn("min-w-[8rem]", !line.total && "!font-normal !text-gray-600")}>
+                          <TableCell className={cn(!line.total && "!font-normal !text-gray-600")}>
                             {line.expandable ? (
                               <button type="button" className="-ml-5 flex items-center gap-1 text-left" aria-expanded={open}>
                                 <ChevronRight
@@ -915,7 +920,7 @@ export default function SalesBIView() {
                                 !a.monto && "hidden sm:table-row",
                               )}
                             >
-                              <TableCell className="pl-9 sm:pl-14 !font-normal !text-gray-500">{a.cuenta}</TableCell>
+                              <TableCell className="pl-6 sm:pl-14 !font-normal !text-gray-500">{a.cuenta}</TableCell>
                               <TableCell className="text-right num text-gray-600">{formatMoney(0 - a.monto || 0)}</TableCell>
                               <TableCell className="text-right num text-gray-500">
                                 {view.res.ingresos ? percent((0 - a.monto || 0) / view.res.ingresos) : "-"}
@@ -1025,14 +1030,14 @@ export default function SalesBIView() {
                     contra {monthShort} {view.year - 1}
                   </span>
                 </p>
-                <Table className={TABLE_CLASS}>
+                <Table className={cn(TABLE_CLASS, "table-fixed")}>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Categoría</TableHead>
-                      <TableHead className="text-right">Monto</TableHead>
-                      <TableHead className="text-right">% gasto</TableHead>
-                      <TableHead className={cn("text-right", HIDE_BELOW_MD)}>% ingresos</TableHead>
-                      <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cambio</TableHead>
+                      <TableHead className={cn("text-right", COL_MONEY)}>Monto</TableHead>
+                      <TableHead className={cn("text-right", COL_PERCENT)}>% gasto</TableHead>
+                      <TableHead className={cn("text-right w-28", HIDE_BELOW_MD)}>% ingresos</TableHead>
+                      <TableHead className={cn("text-right w-24", HIDE_BELOW_SM)}>Cambio</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1072,7 +1077,7 @@ export default function SalesBIView() {
                                 key={a.cuenta}
                                 className={cn("!bg-white text-xs sm:text-sm [&_td]:py-2", !a.monto && "hidden sm:table-row")}
                               >
-                                <TableCell className="pl-9 sm:pl-16 !font-normal !text-gray-600">{a.cuenta}</TableCell>
+                                <TableCell className="pl-6 sm:pl-16 !font-normal !text-gray-600">{a.cuenta}</TableCell>
                                 <TableCell className="text-right num text-gray-700">{formatMoney(a.monto)}</TableCell>
                                 <TableCell className="text-right num text-gray-500">
                                   {view.expenses ? percent(a.monto / view.expenses, 1) : "-"}
