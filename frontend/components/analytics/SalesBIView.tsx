@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, CircleAlert, CircleCheck, Loader2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, ChevronRight, CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -9,12 +9,15 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -57,14 +60,27 @@ type IndicatorKey =
   | "endeudamiento" | "roa_ytd" | "roe_ytd" | "pe_operativo_ytd" | "pe_financiero_ytd" | "cobertura_pef";
 type IndicatorRow = { month: string; posted: boolean } & Partial<Record<IndicatorKey, number | null>>;
 
+// Brand sales: year to date and the month alone, each with last year's.
+interface Brand {
+  brand: string;
+  ytd: number;
+  ytd_prev: number;
+  mes: number;
+  mes_prev: number;
+}
+
 interface SalesSummary {
   month: string;
-  months: MonthRow[]; // January of last year through `month`
-  brands: { brand: string; ytd: number; ytd_prev: number }[];
+  // January of last year through the chart's end: the whole year, or up to
+  // the last complete month - can run past `month`.
+  months: MonthRow[];
+  brands: Brand[];
   cobrado: Partial<Record<Zone, number>>;
   cuentas_por_cobrar: { pendiente: number; dias_cobro: number | null };
   resultados: ResultsRow[]; // same months as `months`
   indicadores: IndicatorRow[]; // same months as `months`
+  // The picked month's operating expenses per account, by category.
+  gastos_cuentas: Record<string, { cuenta: string; monto: number; anterior: number }[]>;
 }
 
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -74,24 +90,70 @@ const COLOR_PREVIOUS = "#eb6834";
 const TOP_BRANDS = 8;
 type Unit = "%" | "x" | "dias" | "$";
 // Rows of her INDICADORES sheet that we can compute, in her order.
-const INDICATORS: { key: IndicatorKey; label: string; unit: Unit; group?: string }[] = [
-  { group: "Rentabilidad", key: "margen_bruto", label: "Margen bruto", unit: "%" },
+const INDICATORS: {
+  key: IndicatorKey;
+  label: string;
+  unit: Unit;
+  group?: string;
+}[] = [
+  {
+    group: "Rentabilidad",
+    key: "margen_bruto",
+    label: "Margen bruto",
+    unit: "%",
+  },
   { key: "margen_operativo", label: "Margen operativo", unit: "%" },
   { key: "margen_neto", label: "Margen neto (antes de impuestos)", unit: "%" },
-  { key: "gasto_operativo_ingresos", label: "Gasto operativo / ingresos", unit: "%" },
-  { group: "Liquidez", key: "saldo_caja", label: "Caja y bancos al cierre", unit: "$" },
+  {
+    key: "gasto_operativo_ingresos",
+    label: "Gasto operativo / ingresos",
+    unit: "%",
+  },
+  {
+    group: "Liquidez",
+    key: "saldo_caja",
+    label: "Caja y bancos al cierre",
+    unit: "$",
+  },
   { key: "razon_circulante", label: "Razón circulante", unit: "x" },
   { key: "prueba_acida", label: "Prueba ácida", unit: "x" },
-  { group: "Ciclo de efectivo", key: "dias_cxc", label: "Días de cuentas por cobrar", unit: "dias" },
+  {
+    group: "Ciclo de efectivo",
+    key: "dias_cxc",
+    label: "Días de cuentas por cobrar",
+    unit: "dias",
+  },
   { key: "dias_inventario", label: "Días de inventario", unit: "dias" },
   { key: "dias_cxp", label: "Días de cuentas por pagar", unit: "dias" },
-  { key: "ciclo_efectivo", label: "Ciclo de conversión de efectivo", unit: "dias" },
-  { group: "Endeudamiento y retorno", key: "endeudamiento", label: "Nivel de endeudamiento", unit: "%" },
+  {
+    key: "ciclo_efectivo",
+    label: "Ciclo de conversión de efectivo",
+    unit: "dias",
+  },
+  {
+    group: "Endeudamiento y retorno",
+    key: "endeudamiento",
+    label: "Nivel de endeudamiento",
+    unit: "%",
+  },
   { key: "roa_ytd", label: "ROA acumulado", unit: "%" },
   { key: "roe_ytd", label: "ROE acumulado", unit: "%" },
-  { group: "Punto de equilibrio", key: "pe_operativo_ytd", label: "Punto de equilibrio operativo (acum.)", unit: "$" },
-  { key: "pe_financiero_ytd", label: "Punto de equilibrio financiero (acum.)", unit: "$" },
-  { key: "cobertura_pef", label: "Cobertura del punto de equilibrio", unit: "x" },
+  {
+    group: "Punto de equilibrio",
+    key: "pe_operativo_ytd",
+    label: "Punto de equilibrio operativo (acum.)",
+    unit: "$",
+  },
+  {
+    key: "pe_financiero_ytd",
+    label: "Punto de equilibrio financiero (acum.)",
+    unit: "$",
+  },
+  {
+    key: "cobertura_pef",
+    label: "Cobertura del punto de equilibrio",
+    unit: "x",
+  },
 ];
 // Targets from her model's "semáforo" - provisional, set for another organization.
 const TARGETS: { key: IndicatorKey; label: string; goal: string; ok: (v: number) => boolean; reading: [string, string] }[] = [
@@ -117,6 +179,7 @@ const TARGETS: { key: IndicatorKey; label: string; goal: string; ok: (v: number)
 // alternating row shading, row label in medium weight.
 const TABLE_CLASS =
   "[&_thead_tr]:bg-slate-100 [&_thead_tr:hover]:bg-slate-100 [&_th]:h-9 [&_th]:text-[11px] [&_th]:font-semibold " +
+  "[&_th]:whitespace-nowrap " +
   "[&_th]:uppercase [&_th]:tracking-wide [&_th]:text-slate-500 [&_tbody_tr]:bg-white " +
   "[&_tbody_tr:nth-child(even)]:bg-slate-50 [&_tbody_tr:hover]:bg-blue-50/60 [&_td:first-child]:font-medium " +
   "[&_td:first-child]:text-slate-800";
@@ -148,8 +211,93 @@ function indicatorTone(key: IndicatorKey, value: number | null | undefined) {
   return value < 0 ? "text-red-700" : "";
 }
 
-// Categorical slots 1-5, in the order the backend lists the categories.
-const EXPENSE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
+// Categorical slots 1-8, in the order the backend lists the categories
+// ("Otros" last). Validated as a set; labels/table carry the low-contrast ones.
+const EXPENSE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+
+// Top brands by the chosen period, the rest folded into "Otras".
+function topBrands(brands: Brand[], period: "ytd" | "mes") {
+  const prevKey = period === "ytd" ? "ytd_prev" : "mes_prev";
+  const sorted = [...brands].sort((a, b) => b[period] - a[period]);
+  const rest = sorted.slice(TOP_BRANDS);
+  const rows = sorted.slice(0, TOP_BRANDS).map((b) => ({ brand: b.brand, value: b[period], prev: b[prevKey] }));
+  if (rest.length)
+    rows.push({
+      brand: "Otras",
+      value: sum(rest.map((b) => b[period])),
+      prev: sum(rest.map((b) => b[prevKey])),
+    });
+  return { rows, total: sum(brands.map((b) => b[period])) };
+}
+
+// Card header with tabs: title and tabs share a row, the description gets
+// its own line so it isn't squeezed next to the tabs on a phone.
+function TabbedHeader({
+  title,
+  description,
+  tabs,
+  value,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  tabs: [string, string][]; // [value, label]
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <CardHeader className="p-4 pb-2 space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <CardTitle className="text-base">{title}</CardTitle>
+        <Tabs value={value} onValueChange={onChange}>
+          <TabsList className="h-8">
+            {tabs.map(([v, label]) => (
+              <TabsTrigger key={v} value={v} className="text-xs">
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      <CardDescription>{description}</CardDescription>
+    </CardHeader>
+  );
+}
+
+// One month's expenses as a single bar split by category, largest first.
+// Each slice opens its category's accounts in the table below (its legend).
+function ExpenseSplit({
+  parts,
+  total,
+  selected,
+  onSelect,
+}: {
+  parts: { category: string; value: number; color: string }[];
+  total: number;
+  selected: string | null;
+  onSelect: (category: string) => void;
+}) {
+  return (
+    <div className="flex h-12 w-full gap-0.5 overflow-hidden rounded-md">
+      {parts
+        .filter((p) => p.value > 0)
+        .map((p) => {
+          const label = `${p.category}: ${formatMoney(p.value)} (${total ? percent(p.value / total, 0) : "-"})`;
+          return (
+            <button
+              key={p.category}
+              type="button"
+              className={cn("h-full transition-opacity", selected && selected !== p.category && "opacity-30")}
+              style={{ flexGrow: p.value, flexBasis: 0, background: p.color }}
+              title={label}
+              aria-label={label}
+              onClick={() => onSelect(p.category)}
+            />
+          );
+        })}
+    </div>
+  );
+}
 
 function lastCompleteMonth() {
   const d = new Date();
@@ -183,8 +331,8 @@ function Delta({ value, label, unit = "%" }: { value: number | null; label: stri
       ? `${up ? "+" : ""}${(value * 100).toLocaleString("es-MX", { maximumFractionDigits: 1 })} pts`
       : `${up ? "+" : ""}${percent(value)}`;
   return (
-    <p className="flex items-center gap-1 text-xs text-gray-500">
-      <span className={cn("inline-flex items-center font-medium", up ? "text-green-700" : "text-red-700")}>
+    <p className="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
+      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", up ? "text-green-700" : "text-red-700")}>
         <Icon className="w-3.5 h-3.5" aria-hidden />
         {text}
       </span>
@@ -206,9 +354,9 @@ function ChangeCell({ value }: { value: number | null }) {
 function Tile({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
     <Card>
-      <CardHeader className="p-4 space-y-1">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-lg sm:text-xl">{value}</CardTitle>
+      <CardHeader className="p-3 sm:p-4 space-y-1">
+        <CardDescription className="text-xs sm:text-sm">{label}</CardDescription>
+        <CardTitle className="text-base sm:text-xl">{value}</CardTitle>
         {children}
       </CardHeader>
     </Card>
@@ -221,15 +369,26 @@ export default function SalesBIView() {
   const [data, setData] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The server caches each month for 10 minutes; "Actualizar" bumps `reload`
+  // and flags that one fetch to skip the cache.
+  const [reload, setReload] = useState(0);
+  const forceRefresh = useRef(false);
+  const [brandPeriod, setBrandPeriod] = useState<"ytd" | "mes">("ytd");
+  const [expensePeriod, setExpensePeriod] = useState<"anual" | "mes">("anual");
+  // Expense category whose accounts are listed; kept across months to compare.
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
+  const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
 
   useEffect(() => {
     if (!isManagement) return;
+    const refresh = forceRefresh.current ? "&refresh=1" : "";
+    forceRefresh.current = false;
     let cancelled = false;
     // Standard fetch-on-change; `cancelled` drops a stale month's response.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
-    apiFetch(`/api/analytics/sales/?month=${month}`)
+    apiFetch(`/api/analytics/sales/?month=${month}${refresh}`)
       .then(async (res) => {
         if (!res.ok) throw new Error("No se pudieron cargar las ventas.");
         const json = await res.json();
@@ -240,7 +399,7 @@ export default function SalesBIView() {
     return () => {
       cancelled = true;
     };
-  }, [month, isManagement]);
+  }, [month, isManagement, reload]);
 
   const view = useMemo(() => {
     if (!data) return null;
@@ -251,7 +410,7 @@ export default function SalesBIView() {
     const cur = byMonth.get(data.month)!;
     const prev = byMonth.get(monthToISO(new Date(year, m - 2, 1)));
     const lastYear = byMonth.get(key(year - 1, m));
-    const thisYearRows = data.months.filter((r) => r.month.startsWith(`${year}-`));
+    const thisYearRows = data.months.filter((r) => r.month.startsWith(`${year}-`) && r.month <= data.month);
     const lastYearRows = data.months.filter((r) => r.month.startsWith(`${year - 1}-`));
     const lastYearToDate = lastYearRows.filter((r) => Number(r.month.slice(5)) <= m);
     const margin = (r?: MonthRow) => (r && r.ventas ? (r.ventas - r.costo) / r.ventas : null);
@@ -269,13 +428,6 @@ export default function SalesBIView() {
       return values.length ? sum(values) / values.length : null;
     };
     const zoneYtd = (rows: MonthRow[], z: Zone) => sum(rows.map((r) => r.zonas[z] ?? 0));
-
-    const brandTotal = sum(data.brands.map((b) => b.ytd));
-    const top = data.brands.slice(0, TOP_BRANDS);
-    const rest = data.brands.slice(TOP_BRANDS);
-    const brands = rest.length
-      ? [...top, { brand: "Otras", ytd: sum(rest.map((b) => b.ytd)), ytd_prev: sum(rest.map((b) => b.ytd_prev)) }]
-      : top;
 
     return {
       year,
@@ -301,8 +453,7 @@ export default function SalesBIView() {
         ytdPrev: zoneYtd(lastYearToDate, z),
         cobrado: data.cobrado[z] ?? 0,
       })),
-      brands,
-      brandTotal,
+      brands: topBrands(data.brands, brandPeriod),
       res,
       resLastYear,
       // Until the accountant posts the month's cost of sales, its result is meaningless.
@@ -312,15 +463,27 @@ export default function SalesBIView() {
       expenses: expenses(res),
       expensesLastYear: expenses(resLastYear),
       categories,
+      // The picked month alone, largest first; colors stay with the category.
+      expenseMonth: categories
+        .map((c, i) => ({
+          category: c,
+          value: res.gastos[c],
+          color: EXPENSE_COLORS[i],
+        }))
+        .sort((a, b) => b.value - a.value),
       indicator: indicators.get(data.month),
-      indicatorMonths: MONTH_ABBR.slice(0, m).map((label, i) => ({ label, row: indicators.get(key(year, i + 1)) })),
+      indicatorMonths: MONTH_ABBR.slice(0, m).map((label, i) => ({
+        label,
+        row: indicators.get(key(year, i + 1)),
+      })),
       indicatorAverage,
-      expenseChart: MONTH_ABBR.slice(0, m).map((label, i) => {
+      // Whole range like the sales chart; months not closed yet stay empty.
+      expenseChart: MONTH_ABBR.map((label, i) => {
         const r = results.get(key(year, i + 1));
         return { label, ...(r && r.costo > 0 ? r.gastos : {}) };
       }),
     };
-  }, [data]);
+  }, [data, brandPeriod]);
 
   if (!authLoading && !isManagement) {
     return (
@@ -335,6 +498,13 @@ export default function SalesBIView() {
     );
   }
 
+  // Chart click on column i: open that month of the year shown, if it has sales.
+  const openMonth = (i: number) => {
+    if (view && Number.isInteger(i) && view.chart[i]?.actual !== null) {
+      setMonth(`${view.year}-${String(i + 1).padStart(2, "0")}`);
+    }
+  };
+
   const monthName = formatMonth(month);
   const monthShort = MONTH_ABBR[isoToDate(month).getMonth()].toLowerCase();
 
@@ -348,16 +518,30 @@ export default function SalesBIView() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         <MonthControl month={month} onChange={setMonth} />
-        {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 sm:h-8"
+          disabled={loading}
+          title="Actualizar con los datos más recientes del ERP"
+          aria-label="Actualizar"
+          onClick={() => {
+            forceRefresh.current = true;
+            setReload((n) => n + 1);
+          }}
+        >
+          <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} aria-hidden />
+          <span className="hidden sm:inline">Actualizar</span>
+        </Button>
       </div>
 
       {error && <p className="text-sm text-red-700">{error}</p>}
 
       {view && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
             <Tile label={`Ventas de ${monthName}`} value={formatMoney(view.cur.ventas)}>
               <Delta value={change(view.cur.ventas, view.lastYear?.ventas)} label={`vs ${monthShort} ${view.year - 1}`} />
               <Delta value={change(view.cur.ventas, view.prev?.ventas)} label="vs mes anterior" />
@@ -392,12 +576,20 @@ export default function SalesBIView() {
             <CardHeader className="p-4 pb-0">
               <CardTitle className="text-base">Ventas por mes</CardTitle>
               <CardDescription>
-                {view.year} contra {view.year - 1}, sin IVA
+                {view.year} contra {view.year - 1}, sin IVA. Haga clic en un mes para verlo.
               </CardDescription>
             </CardHeader>
             <div className="h-72 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={view.chart} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <LineChart
+                  data={view.chart}
+                  margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+                  // Mouse clicks focus parts of the chart; keep the ring for keyboard users only.
+                  className="cursor-pointer [&_:focus:not(:focus-visible)]:outline-none"
+                  // Anywhere in a month's column opens that month of the year shown;
+                  // last year's dot (below) opens last year's instead.
+                  onClick={(e) => openMonth(Number(e.activeIndex))}
+                >
                   <CartesianGrid vertical={false} stroke="#e5e7eb" />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
                   <YAxis
@@ -412,13 +604,28 @@ export default function SalesBIView() {
                     contentStyle={{ fontSize: 12, borderRadius: 8 }}
                   />
                   <Legend iconType="plainline" wrapperStyle={{ fontSize: 12 }} />
+                  <ReferenceLine
+                    x={MONTH_ABBR[Number(data!.month.slice(5)) - 1]}
+                    stroke="#94a3b8"
+                    strokeDasharray="4 4"
+                  />
                   <Line
                     name={String(view.year - 1)}
                     dataKey="anterior"
                     stroke={COLOR_PREVIOUS}
                     strokeWidth={2}
                     dot={{ r: 3 }}
-                    activeDot={{ r: 5 }}
+                    activeDot={(p) => (
+                      <g
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMonth(`${view.year - 1}-${String(p.index + 1).padStart(2, "0")}`);
+                        }}
+                      >
+                        <circle cx={p.cx} cy={p.cy} r={12} fill="transparent" />
+                        <circle cx={p.cx} cy={p.cy} r={5} fill={COLOR_PREVIOUS} stroke="#fff" strokeWidth={2} />
+                      </g>
+                    )}
                     isAnimationActive={false}
                   />
                   <Line
@@ -470,12 +677,20 @@ export default function SalesBIView() {
             </Card>
 
             <Card>
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base">Por marca</CardTitle>
-                <CardDescription>
-                  Acumulado ene-{monthShort} {view.year} contra el mismo periodo de {view.year - 1}
-                </CardDescription>
-              </CardHeader>
+              <TabbedHeader
+                title="Por marca"
+                description={
+                  brandPeriod === "ytd"
+                    ? `Acumulado ene-${monthShort} ${view.year} contra el mismo periodo de ${view.year - 1}`
+                    : `${monthName} contra ${monthShort} ${view.year - 1}`
+                }
+                tabs={[
+                  ["ytd", "Acumulado"],
+                  ["mes", "Mensual"],
+                ]}
+                value={brandPeriod}
+                onChange={(v) => setBrandPeriod(v as "ytd" | "mes")}
+              />
               <Table className={TABLE_CLASS}>
                 <TableHeader>
                   <TableRow>
@@ -486,29 +701,32 @@ export default function SalesBIView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {view.brands.map((b) => (
+                  {view.brands.rows.map((b) => (
                     <TableRow key={b.brand}>
                       <TableCell className="max-w-[7rem] sm:max-w-[14rem] truncate" title={b.brand}>
                         {b.brand}
                       </TableCell>
-                      <TableCell className="text-right num">{formatMoney(b.ytd)}</TableCell>
+                      <TableCell className="text-right num">{formatMoney(b.value)}</TableCell>
                       <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
-                        {view.brandTotal ? (
+                        {view.brands.total ? (
                           <span className="flex items-center justify-end gap-2">
                             <span className="h-1.5 w-16 rounded-full bg-slate-200" aria-hidden>
                               <span
                                 className="block h-full rounded-full"
-                                style={{ width: `${(b.ytd / view.brandTotal) * 100}%`, background: COLOR_CURRENT }}
+                                style={{
+                                  width: `${Math.max(0, b.value / view.brands.total) * 100}%`,
+                                  background: COLOR_CURRENT,
+                                }}
                               />
                             </span>
-                            {percent(b.ytd / view.brandTotal)}
+                            {percent(b.value / view.brands.total)}
                           </span>
                         ) : (
                           "-"
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <ChangeCell value={change(b.ytd, b.ytd_prev)} />
+                        <ChangeCell value={change(b.value, b.prev)} />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -519,122 +737,214 @@ export default function SalesBIView() {
 
           <SectionHeading title="Resultados">
               Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos
-              pueden no coincidir con las ventas facturadas. Gastos agrupados por el nombre de la cuenta.
+              pueden no coincidir con las ventas facturadas. Gastos agrupados por tipo de cuenta.
             </SectionHeading>
 
-          {!view.resPosted ? (
+          {!view.resPosted && (
             <p className="rounded-xl border border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-600">
-              Contabilidad todavía no registra el costo de ventas de {monthName}; los resultados aparecen
-              cuando el contador cierre el mes.
+              Contabilidad todavía no registra el costo de ventas de {monthName}; los resultados aparecen cuando el
+              contador cierre el mes.
             </p>
-          ) : (
+          )}
+
+          {view.resPosted && (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <Tile label={`Utilidad operativa de ${monthName}`} value={formatMoney(view.res.utilidad_operativa)}>
+                <Delta
+                  value={change(view.res.utilidad_operativa, view.resLastYear?.utilidad_operativa)}
+                  label={`vs ${monthShort} ${view.year - 1}`}
+                />
+                <p className="text-xs text-gray-400">ingresos - costo - gastos de operación</p>
+              </Tile>
+              <Tile label="Margen operativo" value={view.opMargin === null ? "-" : percent(view.opMargin)}>
+                <Delta
+                  value={
+                    view.opMargin !== null && view.opMarginLastYear !== null
+                      ? view.opMargin - view.opMarginLastYear
+                      : null
+                  }
+                  label={`vs ${monthShort} ${view.year - 1}`}
+                  unit="pp"
+                />
+              </Tile>
+              <Tile label="Gastos de operación" value={formatMoney(view.expenses)}>
+                <Delta
+                  value={change(view.expenses, view.expensesLastYear)}
+                  label={`vs ${monthShort} ${view.year - 1}`}
+                />
+                <p className="text-xs text-gray-400">
+                  {view.res.ingresos ? percent(view.expenses / view.res.ingresos) : "-"} de los ingresos
+                </p>
+              </Tile>
+            </div>
+          )}
+
+          <Card>
+            <TabbedHeader
+              title="Gastos de operación"
+              description={
+                expensePeriod === "anual"
+                  ? `${view.year} por mes. Haga clic en una barra para ver ese mes y esa categoría.`
+                  : `${monthName}. Haga clic en un color o en una categoría para ver sus cuentas.`
+              }
+              tabs={[
+                ["anual", "Anual"],
+                ["mes", "Mensual"],
+              ]}
+              value={expensePeriod}
+              onChange={(v) => setExpensePeriod(v as "anual" | "mes")}
+            />
+            {expensePeriod === "anual" ? (
+              <div className="h-64 sm:h-80 px-1 sm:px-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={view.expenseChart}
+                    margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+                    // Mouse clicks focus parts of the chart; keep the ring for keyboard users only.
+                    className="[&_:focus:not(:focus-visible)]:outline-none"
+                  >
+                    <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
+                    <YAxis
+                      tickFormatter={compactMoney}
+                      tickLine={false}
+                      axisLine={false}
+                      width={52}
+                      tick={{ fontSize: 12, fill: "#6b7280" }}
+                    />
+                    <Tooltip
+                      formatter={(value, name) => [formatMoney(Number(value)), name]}
+                      contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                      cursor={{ fill: "#f3f4f6" }}
+                    />
+                    <ReferenceLine
+                      x={MONTH_ABBR[Number(data!.month.slice(5)) - 1]}
+                      stroke="#94a3b8"
+                      strokeDasharray="4 4"
+                    />
+                    {view.categories.map((c, i) => (
+                      <Bar
+                        key={c}
+                        dataKey={c}
+                        stackId="gastos"
+                        fill={EXPENSE_COLORS[i]}
+                        stroke="#fff"
+                        strokeWidth={1}
+                        isAnimationActive={false}
+                        className="cursor-pointer"
+                        onClick={(bar) => {
+                          openMonth(MONTH_ABBR.indexOf(bar.payload?.label));
+                          setOpenCategory(c);
+                        }}
+                      />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : view.resPosted ? (
+              <div className="px-4 pt-2 pb-4">
+                <ExpenseSplit
+                  parts={view.expenseMonth}
+                  total={view.expenses}
+                  selected={openCategory}
+                  onSelect={toggleCategory}
+                />
+              </div>
+            ) : (
+              <p className="px-4 py-10 text-center text-sm text-gray-500">
+                {monthName} todavía no está cerrado en Contabilidad.
+              </p>
+            )}
+
+            {view.resPosted ? (
+              // The month's table doubles as the charts' legend; a row opens its accounts.
+              <div className="border-t">
+                <p className="px-4 pt-3 pb-2 text-sm font-medium text-gray-900">
+                  Gastos de {monthName}{" "}
+                  <span className="font-normal text-gray-500">
+                    contra {monthShort} {view.year - 1}
+                  </span>
+                </p>
+                <Table className={TABLE_CLASS}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Categoría</TableHead>
+                      <TableHead className="text-right">Monto</TableHead>
+                      <TableHead className="text-right">% gasto</TableHead>
+                      <TableHead className={cn("text-right", HIDE_BELOW_MD)}>% ingresos</TableHead>
+                      <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cambio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {view.categories.map((c, i) => {
+                      const open = openCategory === c;
+                      const accounts = data!.gastos_cuentas[c] ?? [];
+                      return (
+                        <Fragment key={c}>
+                          <TableRow className="cursor-pointer" onClick={() => toggleCategory(c)}>
+                            <TableCell>
+                              <button type="button" className="flex items-center gap-2 text-left" aria-expanded={open}>
+                                <ChevronRight
+                                  className={cn("w-4 h-4 shrink-0 text-gray-400 transition-transform", open && "rotate-90")}
+                                  aria-hidden
+                                />
+                                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: EXPENSE_COLORS[i] }} />
+                                {c}
+                              </button>
+                            </TableCell>
+                            <TableCell className="text-right num">{formatMoney(view.res.gastos[c])}</TableCell>
+                            <TableCell className="text-right num">
+                              {view.expenses ? percent(view.res.gastos[c] / view.expenses, 0) : "-"}
+                            </TableCell>
+                            <TableCell className={cn("text-right num", HIDE_BELOW_MD)}>
+                              {view.res.ingresos ? percent(view.res.gastos[c] / view.res.ingresos) : "-"}
+                            </TableCell>
+                            <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
+                              <ChangeCell value={change(view.res.gastos[c], view.resLastYear?.gastos[c])} />
+                            </TableCell>
+                          </TableRow>
+                          {open &&
+                            accounts.map((a) => (
+                              // ! overrides the table's zebra and first-column styles for detail rows.
+                              // Accounts with nothing this month only matter next to last year's
+                              // amount, which phones don't show.
+                              <TableRow
+                                key={a.cuenta}
+                                className={cn("!bg-white text-xs sm:text-sm [&_td]:py-2", !a.monto && "hidden sm:table-row")}
+                              >
+                                <TableCell className="pl-9 sm:pl-16 !font-normal !text-gray-600">{a.cuenta}</TableCell>
+                                <TableCell className="text-right num text-gray-700">{formatMoney(a.monto)}</TableCell>
+                                <TableCell className="text-right num text-gray-500">
+                                  {view.expenses ? percent(a.monto / view.expenses, 1) : "-"}
+                                </TableCell>
+                                <TableCell className={cn("text-right num text-gray-500", HIDE_BELOW_MD)}>
+                                  {view.res.ingresos ? percent(a.monto / view.res.ingresos) : "-"}
+                                </TableCell>
+                                <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
+                                  <ChangeCell value={change(a.monto, a.anterior)} />
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <ul className="flex flex-wrap gap-x-4 gap-y-1.5 px-4 pt-2 pb-4 text-xs text-gray-600">
+                {view.categories.map((c, i) => (
+                  <li key={c} className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: EXPENSE_COLORS[i] }} />
+                    {c}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          {view.resPosted && (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <Tile label={`Utilidad operativa de ${monthName}`} value={formatMoney(view.res.utilidad_operativa)}>
-                  <Delta
-                    value={change(view.res.utilidad_operativa, view.resLastYear?.utilidad_operativa)}
-                    label={`vs ${monthShort} ${view.year - 1}`}
-                  />
-                  <p className="text-xs text-gray-400">ingresos - costo - gastos de operación</p>
-                </Tile>
-                <Tile label="Margen operativo" value={view.opMargin === null ? "-" : percent(view.opMargin)}>
-                  <Delta
-                    value={
-                      view.opMargin !== null && view.opMarginLastYear !== null
-                        ? view.opMargin - view.opMarginLastYear
-                        : null
-                    }
-                    label={`vs ${monthShort} ${view.year - 1}`}
-                    unit="pp"
-                  />
-                </Tile>
-                <Tile label="Gastos de operación" value={formatMoney(view.expenses)}>
-                  <Delta value={change(view.expenses, view.expensesLastYear)} label={`vs ${monthShort} ${view.year - 1}`} />
-                  <p className="text-xs text-gray-400">
-                    {view.res.ingresos ? percent(view.expenses / view.res.ingresos) : "-"} de los ingresos
-                  </p>
-                </Tile>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader className="p-4 pb-0">
-                    <CardTitle className="text-base">Gastos de operación por mes</CardTitle>
-                    <CardDescription>{view.year}, por categoría</CardDescription>
-                  </CardHeader>
-                  <div className="h-72 p-2 sm:p-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={view.expenseChart} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                        <CartesianGrid vertical={false} stroke="#e5e7eb" />
-                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
-                        <YAxis
-                          tickFormatter={compactMoney}
-                          tickLine={false}
-                          axisLine={false}
-                          width={56}
-                          tick={{ fontSize: 12, fill: "#6b7280" }}
-                        />
-                        <Tooltip
-                          formatter={(value, name) => [formatMoney(Number(value)), name]}
-                          contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                          cursor={{ fill: "#f3f4f6" }}
-                        />
-                        <Legend iconType="square" itemSorter={null} wrapperStyle={{ fontSize: 12 }} />
-                        {view.categories.map((c, i) => (
-                          <Bar
-                            key={c}
-                            dataKey={c}
-                            stackId="gastos"
-                            fill={EXPENSE_COLORS[i]}
-                            stroke="#fff"
-                            strokeWidth={1}
-                            isAnimationActive={false}
-                          />
-                        ))}
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
-
-                <Card>
-                  <CardHeader className="p-4 pb-2">
-                    <CardTitle className="text-base">Gastos de {monthName}</CardTitle>
-                    <CardDescription>
-                      Contra {monthShort} {view.year - 1}
-                    </CardDescription>
-                  </CardHeader>
-                  <Table className={TABLE_CLASS}>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Categoría</TableHead>
-                        <TableHead className="text-right">Monto</TableHead>
-                        <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% ingresos</TableHead>
-                        <TableHead className="text-right">Cambio</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {view.categories.map((c, i) => (
-                        <TableRow key={c}>
-                          <TableCell>
-                            <span className="flex items-center gap-2">
-                              <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: EXPENSE_COLORS[i] }} />
-                              {c}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right num">{formatMoney(view.res.gastos[c])}</TableCell>
-                          <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
-                            {view.res.ingresos ? percent(view.res.gastos[c] / view.res.ingresos) : "-"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <ChangeCell value={change(view.res.gastos[c], view.resLastYear?.gastos[c])} />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Card>
-              </div>
-
               <SectionHeading title="Indicadores">
                   Mismas fórmulas que el modelo financiero mensual, con los saldos de Contabilidad al cierre de cada
                   mes. Las metas del semáforo son provisionales: vienen de ese modelo, hecho para otra organización.

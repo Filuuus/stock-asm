@@ -135,7 +135,7 @@ export function MonthControl({
         }}
       >
         <PopoverTrigger asChild>
-          <Button variant="outline" className="w-56 justify-start gap-2 font-normal capitalize">
+          <Button variant="outline" className="w-44 sm:w-56 justify-start gap-2 font-normal capitalize">
             <CalendarIcon className="w-4 h-4 text-gray-400" />
             {formatMonth(month)}
           </Button>

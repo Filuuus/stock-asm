@@ -1,6 +1,8 @@
 from django.test import SimpleTestCase
 
-from .services import expense_category, indicators, month_end_balances, summarize, summarize_results
+from datetime import date
+
+from .services import chart_end_month, expense_accounts, expense_category, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -17,26 +19,65 @@ class SummarizeTests(SimpleTestCase):
         self.assertEqual(len(r['months']), 20)  # Jan 2025 .. Aug 2026
         self.assertEqual((aug['ventas'], aug['devoluciones'], aug['costo']), (750.0, 250.0, 480.0))
         self.assertEqual((aug['zonas']['ZONA1'], aug['zonas']['ZONA2']), (800.0, -50.0))
-        self.assertEqual(r['brands'][0], {'brand': 'GEA', 'ytd': 800.0, 'ytd_prev': 400.0})
+        self.assertEqual(r['brands'][0], {'brand': 'GEA', 'ytd': 800.0, 'ytd_prev': 400.0, 'mes': 800.0, 'mes_prev': 400.0})
         self.assertEqual(r['brands'][1]['brand'], 'Sin marca')
+
+    def test_chart_runs_past_the_picked_month(self):
+        rows = [(2026, 3, 4, 1, 10, 100.0, 0.0), (2026, 8, 4, 1, 10, 50.0, 0.0)]
+        r = summarize(rows, 2026, 3, {10: 'GEA'}, end_month=9)
+        self.assertEqual(r['months'][-1]['month'], '2026-09')
+        self.assertEqual(r['brands'][0]['ytd'], 100.0)  # August isn't in a March YTD
+
+    def test_chart_end_month(self):
+        today = date(2026, 10, 3)  # September is the last complete month
+        self.assertEqual(chart_end_month(2025, 4, today), 12)
+        self.assertEqual(chart_end_month(2026, 4, today), 9)
+        self.assertEqual(chart_end_month(2026, 10, today), 10)  # current month, picked on purpose
+        self.assertEqual(chart_end_month(2027, 1, date(2027, 1, 15)), 1)  # last complete month is Dec 2026
 
 
 class ResultsTests(SimpleTestCase):
     def test_expense_categories(self):
-        self.assertEqual(expense_category('CUOTAS DE SEGURO, RETIRO, CESANTIA EN EDAD AV'), 'Nómina')
-        self.assertEqual(expense_category('SEGUROS Y FIANZAS'), 'Seguros')
-        self.assertEqual(expense_category('IGI'), 'Fletes e importación')
-        self.assertEqual(expense_category('ARTICULOS DE VIGILANCIA Y SEGURIDAD'), 'Otros')
-        self.assertEqual(expense_category('GAS LP'), 'Combustible')
+        cases = [
+            ('500501009', 'CUOTAS DE SEGURO, RETIRO, CESANTIA EN ED', 'Nómina'),
+            ('500503010', 'SEGUROS Y FIANZAS', 'Seguros'),
+            ('500508002', 'IGI', 'Fletes e importación'),
+            ('500508005', 'COSTO INDIRECTO', 'Fletes e importación'),  # by code: port and customs costs
+            ('500511099', 'MANTENIMIENTO VEHICULO NUEVO', 'Vehículos y combustible'),  # any new vehicle account
+            ('500503021', 'GAS LP', 'Vehículos y combustible'),
+            ('500515003', 'REPARACIONES Y FABRICACIONES', 'Materiales y reparaciones'),
+            ('500602003', 'HONORARIOS A PERSONAS MORALES', 'Honorarios y publicidad'),
+            ('500603005', 'ENERGIA ELECTRICA', 'Mantenimiento y servicios'),
+            ('500503006', 'ARTICULOS DE VIGILANCIA Y SEGURIDAD', 'Otros'),
+            ('500615000', 'GASTOS NO DEDUCIBLES', 'Otros'),  # 5006 15 is not 5005 15
+            ('500616001', 'ARRENDAMIENTO DE VEHICULO', 'Vehículos y combustible'),  # vehicle leases
+        ]
+        for code, name, expected in cases:
+            self.assertEqual(expense_category(code, name), expected, name)
+
+    def test_expense_accounts(self):
+        rows = [
+            (2026, 8, '500502003', 'HONORARIOS A PERSONAS MORALES', 100.0),  # selling branch
+            (2026, 8, '500602003', 'HONORARIOS A PERSONAS  MORALES', 50.0),  # admin branch, same expense
+            (2025, 8, '500602003', 'HONORARIOS A PERSONAS MORALES', 40.0),
+            (2025, 8, '500603005', 'ENERGIA ELECTRICA', 9.0),  # only last year: still listed
+            (2026, 8, '400101001', 'VENTAS', -999.0),  # not an expense
+            (2026, 7, '500603005', 'ENERGIA ELECTRICA', 7.0),  # another month
+        ]
+        r = expense_accounts(rows, '2026-08', '2025-08')
+        self.assertEqual(r['Honorarios y publicidad'],
+                         [{'cuenta': 'HONORARIOS A PERSONAS MORALES', 'monto': 150.0, 'anterior': 40.0}])
+        self.assertEqual(r['Mantenimiento y servicios'], [{'cuenta': 'ENERGIA ELECTRICA', 'monto': 0.0, 'anterior': 9.0}])
+        self.assertEqual(set(r), {'Honorarios y publicidad', 'Mantenimiento y servicios'})
 
     def test_operating_result(self):
         rows = [
-            (2026, 8, '4001', 'VENTAS', -1000.0),
-            (2026, 8, '4002', 'DESCUENTOS', 100.0),
-            (2026, 8, '5001', 'COSTO DE VENTAS', 500.0),
-            (2026, 8, '5005', 'SUELDOS Y SALARIOS POR VENTAS', 150.0),
-            (2026, 8, '5007', 'GASTOS FINANCIEROS', 40.0),
-            (2026, 9, '4001', 'VENTAS', -999.0),  # outside the keys
+            (2026, 8, '400101001', 'VENTAS', -1000.0),
+            (2026, 8, '400201001', 'DESCUENTOS', 100.0),
+            (2026, 8, '500101001', 'COSTO DE VENTAS', 500.0),
+            (2026, 8, '500501001', 'SUELDOS Y SALARIOS POR VENTAS', 150.0),
+            (2026, 8, '500701001', 'GASTOS FINANCIEROS', 40.0),
+            (2026, 9, '400101001', 'VENTAS', -999.0),  # outside the keys
         ]
         [aug] = summarize_results(rows, ['2026-08'])
         self.assertEqual((aug['ingresos'], aug['costo'], aug['financieros']), (900.0, 500.0, 40.0))

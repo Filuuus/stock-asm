@@ -19,4 +19,4 @@ def sales_summary(request):
         date(year, month, 1)
     except ValueError:
         return Response({'error': 'month debe tener formato YYYY-MM.'}, status=400)
-    return Response(calculate_sales(year, month))
+    return Response(calculate_sales(year, month, refresh=request.query_params.get('refresh') == '1'))
