@@ -328,6 +328,144 @@ function incomeStatement(r: ResultsRow) {
   ];
 }
 
+// The income statement as a horizontal waterfall: each line a row whose bar
+// floats where it sits between zero and the month's income - costs bite off
+// the running total, subtotals stand from zero. Amount, % of income and the
+// change vs the same month last year sit beside each bar; the financial line
+// opens its accounts.
+function IncomeWaterfall({
+  res,
+  resLastYear,
+  accounts,
+  prevLabel,
+}: {
+  res: ResultsRow;
+  resLastYear?: ResultsRow;
+  accounts: AccountLine[];
+  prevLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const lines = incomeStatement(res);
+  const prevLines = resLastYear ? incomeStatement(resLastYear) : null;
+  // Each line's [from, to] on the axis: subtotals from zero, the rest from the
+  // running total of the lines above them.
+  const spans = lines.map((line, i) => {
+    const from = line.total ? 0 : sum(lines.slice(0, i).filter((l) => !l.total).map((l) => l.value));
+    const to = line.total ? line.value : from + line.value;
+    return [Math.min(from, to), Math.max(from, to)];
+  });
+  const lo = Math.min(0, ...spans.map(([a]) => a));
+  const hi = Math.max(...spans.map(([, b]) => b));
+  const at = (v: number) => `${((v - lo) / (hi - lo || 1)) * 100}%`;
+  const share = (v: number) => (res.ingresos ? percent(v / res.ingresos) : "-");
+  // Label | bar | amount | % | change on wide screens; on phones the bar drops under label + amount.
+  const ROW = "grid grid-cols-[1fr_auto] sm:grid-cols-[12.5rem_1fr_8.5rem_5.5rem_5rem] items-center gap-x-3";
+
+  return (
+    <div className="px-4 pb-4">
+      <div className={cn(ROW, "hidden sm:grid pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500")}>
+        <span />
+        <span />
+        <span className="text-right">Monto</span>
+        <span className="text-right whitespace-nowrap">% ingresos</span>
+        <span className="text-right whitespace-nowrap">vs {prevLabel}</span>
+      </div>
+      {lines.map((line, i) => {
+        const [a, b] = spans[i];
+        const prev = prevLines?.[i].value;
+        const negative = line.total && line.value < 0;
+        return (
+          <Fragment key={line.label}>
+            <div className={cn(ROW, "gap-y-1.5 py-2", line.total && "border-t border-slate-200")}>
+              <div className={cn("text-sm", line.total ? "font-semibold text-gray-900" : "text-gray-600")}>
+                {line.expandable ? (
+                  <button
+                    type="button"
+                    className="-ml-1 flex items-center gap-1 text-left"
+                    aria-expanded={open}
+                    onClick={() => setOpen((o) => !o)}
+                  >
+                    <ChevronRight
+                      className={cn("w-4 h-4 shrink-0 text-gray-400 transition-transform", open && "rotate-90")}
+                      aria-hidden
+                    />
+                    {line.label}
+                  </button>
+                ) : (
+                  line.label
+                )}
+              </div>
+              <div
+                className={cn(
+                  "text-right num text-sm sm:col-start-3 sm:row-start-1",
+                  line.total ? "font-semibold" : "text-gray-600",
+                  negative && "text-red-700",
+                )}
+              >
+                {formatMoney(line.value)}
+                <span className="sm:hidden font-normal text-gray-500"> · {share(line.value)}</span>
+              </div>
+              <div
+                className="relative col-span-2 h-3 rounded-sm bg-slate-100 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:h-4"
+                title={`${line.label}: ${formatMoney(line.value)} (${share(line.value)})`}
+              >
+                <div
+                  className="absolute inset-y-0 rounded-sm"
+                  style={{
+                    left: at(a),
+                    width: `max(2px, calc(${at(b)} - ${at(a)}))`,
+                    background: negative ? "#e34948" : line.total ? COLOR_CURRENT : i === 0 ? "#334155" : "#94a3b8",
+                  }}
+                />
+              </div>
+              <div className="hidden sm:block text-right num text-sm text-gray-600">{share(line.value)}</div>
+              <div className="hidden sm:block text-right text-sm">
+                {/* Costs: how much bigger they got (red when up). Subtotals: signed,
+                    so a loss turning into a profit reads as an improvement. */}
+                <ChangeCell
+                  value={
+                    line.cost
+                      ? change(Math.abs(line.value), prev === undefined ? undefined : Math.abs(prev))
+                      : change(line.value, prev)
+                  }
+                  inverse={line.cost}
+                />
+              </div>
+            </div>
+            {line.expandable && open && (
+              <div className="mb-1 rounded-md bg-slate-50 py-1">
+                {accounts
+                  .filter((acc) => acc.monto || acc.anterior)
+                  .map((acc) => (
+                    // As they hit the result: costs negative, gains positive. Nothing this
+                    // month only matters next to last year's amount, hidden on phones.
+                    <div
+                      key={acc.cuenta}
+                      className={cn(
+                        "grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_8.5rem_5.5rem_5rem] gap-x-3 py-1 text-xs",
+                        !acc.monto && "hidden sm:grid",
+                      )}
+                    >
+                      <span className="pl-7 text-gray-500">{acc.cuenta}</span>
+                      <span className="text-right num text-gray-600">{formatMoney(0 - acc.monto || 0)}</span>
+                      <span className="hidden sm:block text-right num text-gray-500">{share(0 - acc.monto || 0)}</span>
+                      <span className="hidden sm:block text-right">
+                        <ChangeCell
+                          value={change(Math.abs(acc.monto), Math.abs(acc.anterior))}
+                          inverse={(acc.monto || acc.anterior) > 0}
+                        />
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 function lastCompleteMonth() {
   const d = new Date();
   return monthToISO(new Date(d.getFullYear(), d.getMonth() - 1, 1));
@@ -351,21 +489,9 @@ function compactMoney(value: number) {
   return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
 }
 
-// `inverse` is for costs: the number keeps its sign, but going up is red.
-function Delta({
-  value,
-  label,
-  unit = "%",
-  inverse = false,
-}: {
-  value: number | null;
-  label: string;
-  unit?: "%" | "pp";
-  inverse?: boolean;
-}) {
+function Delta({ value, label, unit = "%" }: { value: number | null; label: string; unit?: "%" | "pp" }) {
   if (value === null) return <p className="text-xs text-gray-400">sin dato {label}</p>;
   const up = value >= 0;
-  const good = up !== inverse;
   const Icon = up ? ArrowUpRight : ArrowDownRight;
   const text =
     unit === "pp"
@@ -373,7 +499,7 @@ function Delta({
       : `${up ? "+" : ""}${percent(value)}`;
   return (
     <p className="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
-      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", good ? "text-green-700" : "text-red-700")}>
+      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", up ? "text-green-700" : "text-red-700")}>
         <Icon className="w-3.5 h-3.5" aria-hidden />
         {text}
       </span>
@@ -382,6 +508,7 @@ function Delta({
   );
 }
 
+// `inverse` is for costs: the number keeps its sign, but going up is red.
 function ChangeCell({ value, inverse = false }: { value: number | null; inverse?: boolean }) {
   if (value === null) return <span className="text-gray-400">-</span>;
   return (
@@ -419,7 +546,6 @@ export default function SalesBIView() {
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
-  const [financialOpen, setFinancialOpen] = useState(false);
   // On a phone the indicator matrix scrolls sideways; start it at the picked
   // month (its last column) rather than at January.
   const indicatorTable = useRef<HTMLTableElement>(null);
@@ -467,7 +593,6 @@ export default function SalesBIView() {
     const res = results.get(data.month)!;
     const resLastYear = results.get(key(year - 1, m));
     const expenses = (r?: ResultsRow) => (r ? sum(Object.values(r.gastos)) : 0);
-    const opMargin = (r?: ResultsRow) => (r && r.ingresos ? r.utilidad_operativa / r.ingresos : null);
     const categories = Object.keys(res.gastos);
     const indicators = new Map(data.indicadores.map((r) => [r.month, r]));
     const lastYearIndicators = data.indicadores.filter((r) => r.month.startsWith(`${year - 1}-`) && r.posted);
@@ -507,10 +632,7 @@ export default function SalesBIView() {
       resLastYear,
       // Until the accountant posts the month's cost of sales, its result is meaningless.
       resPosted: res.costo > 0,
-      opMargin: opMargin(res),
-      opMarginLastYear: opMargin(resLastYear),
       expenses: expenses(res),
-      expensesLastYear: expenses(resLastYear),
       categories,
       // The picked month alone, largest first; colors stay with the category.
       expenseMonth: categories
@@ -797,150 +919,20 @@ export default function SalesBIView() {
           )}
 
           {view.resPosted && (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <Tile label={`Utilidad operativa de ${monthName}`} value={formatMoney(view.res.utilidad_operativa)}>
-                <Delta
-                  value={change(view.res.utilidad_operativa, view.resLastYear?.utilidad_operativa)}
-                  label={`vs ${monthShort} ${view.year - 1}`}
-                />
-                <p className="text-xs text-gray-400">ingresos - costo - gastos de operación</p>
-              </Tile>
-              <Tile label="Margen operativo" value={view.opMargin === null ? "-" : percent(view.opMargin)}>
-                <Delta
-                  value={
-                    view.opMargin !== null && view.opMarginLastYear !== null
-                      ? view.opMargin - view.opMarginLastYear
-                      : null
-                  }
-                  label={`vs ${monthShort} ${view.year - 1}`}
-                  unit="pp"
-                />
-              </Tile>
-              <Tile label="Gastos de operación" value={formatMoney(view.expenses)}>
-                <Delta
-                  value={change(view.expenses, view.expensesLastYear)}
-                  label={`vs ${monthShort} ${view.year - 1}`}
-                  inverse
-                />
-                <p className="text-xs text-gray-400">
-                  {view.res.ingresos ? percent(view.expenses / view.res.ingresos) : "-"} de los ingresos
-                </p>
-              </Tile>
-            </div>
-          )}
-
-          {view.resPosted && (
             <Card>
-              <CardHeader className="p-4 pb-2">
+              <CardHeader className="p-4 pb-3">
                 <CardTitle className="text-base">Estado de resultados de {monthName}</CardTitle>
                 <CardDescription>
-                  Del ingreso a la utilidad; el costo de ventas es lo que costaron los productos vendidos en el mes.
+                  Cada barra parte del ingreso del mes: los costos lo van reduciendo y las utilidades muestran lo que
+                  queda.
                 </CardDescription>
               </CardHeader>
-              <Table className={cn(TABLE_CLASS, "table-fixed")}>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Concepto</TableHead>
-                    <TableHead className={cn("text-right", COL_MONEY)}>Monto</TableHead>
-                    <TableHead className={cn("text-right", COL_PERCENT)}>
-                      <span className="sm:hidden">%</span>
-                      <span className="hidden sm:inline">% ingresos</span>
-                    </TableHead>
-                    <TableHead className={cn("text-right w-40", HIDE_BELOW_MD)}>
-                      {monthShort} {view.year - 1}
-                    </TableHead>
-                    <TableHead className={cn("text-right w-24", HIDE_BELOW_SM)}>Cambio</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {incomeStatement(view.res).map((line, i) => {
-                    const prev = view.resLastYear ? incomeStatement(view.resLastYear)[i].value : undefined;
-                    const open = line.expandable && financialOpen;
-                    return (
-                      <Fragment key={line.label}>
-                        {/* ! overrides the table's zebra and first-column styles: subtotals stand out. */}
-                        <TableRow
-                          className={cn(
-                            line.total
-                              ? "!bg-slate-100 font-semibold"
-                              : "!bg-white [&_td:first-child]:pl-5 sm:[&_td:first-child]:pl-8",
-                            line.expandable && "cursor-pointer",
-                          )}
-                          onClick={line.expandable ? () => setFinancialOpen((o) => !o) : undefined}
-                        >
-                          <TableCell className={cn(!line.total && "!font-normal !text-gray-600")}>
-                            {line.expandable ? (
-                              <button type="button" className="-ml-5 flex items-center gap-1 text-left" aria-expanded={open}>
-                                <ChevronRight
-                                  className={cn("w-4 h-4 shrink-0 text-gray-400 transition-transform", open && "rotate-90")}
-                                  aria-hidden
-                                />
-                                {line.label}
-                              </button>
-                            ) : (
-                              line.label
-                            )}
-                          </TableCell>
-                          <TableCell
-                            className={cn(
-                              "text-right num",
-                              line.value < 0 && !line.total && "text-gray-600",
-                              line.total && line.value < 0 && "text-red-700",
-                            )}
-                          >
-                            {formatMoney(line.value)}
-                          </TableCell>
-                          <TableCell className="text-right num text-gray-600">
-                            {view.res.ingresos ? percent(line.value / view.res.ingresos) : "-"}
-                          </TableCell>
-                          <TableCell className={cn("text-right num text-gray-500", HIDE_BELOW_MD)}>
-                            {prev === undefined ? "-" : formatMoney(prev)}
-                          </TableCell>
-                          <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
-                            {/* Costs: how much bigger they got (red when up). Subtotals: signed,
-                                so a loss turning into a profit reads as an improvement. */}
-                            <ChangeCell
-                              value={
-                                line.cost
-                                  ? change(Math.abs(line.value), prev === undefined ? undefined : Math.abs(prev))
-                                  : change(line.value, prev)
-                              }
-                              inverse={line.cost}
-                            />
-                          </TableCell>
-                        </TableRow>
-                        {open &&
-                          data!.financieros_cuentas.map((a) => (
-                            // Shown as they hit the result: costs negative, gains positive. Accounts with
-                            // nothing this month only matter next to last year's amount, hidden on phones.
-                            <TableRow
-                              key={a.cuenta}
-                              className={cn(
-                                "!bg-white text-xs sm:text-sm [&_td]:py-2",
-                                !a.monto && "hidden sm:table-row",
-                              )}
-                            >
-                              <TableCell className="pl-6 sm:pl-14 !font-normal !text-gray-500">{a.cuenta}</TableCell>
-                              <TableCell className="text-right num text-gray-600">{formatMoney(0 - a.monto || 0)}</TableCell>
-                              <TableCell className="text-right num text-gray-500">
-                                {view.res.ingresos ? percent((0 - a.monto || 0) / view.res.ingresos) : "-"}
-                              </TableCell>
-                              <TableCell className={cn("text-right num text-gray-500", HIDE_BELOW_MD)}>
-                                {formatMoney(0 - a.anterior || 0)}
-                              </TableCell>
-                              <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
-                                <ChangeCell
-                                  value={change(Math.abs(a.monto), Math.abs(a.anterior))}
-                                  inverse={(a.monto || a.anterior) > 0}
-                                />
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <IncomeWaterfall
+                res={view.res}
+                resLastYear={view.resLastYear}
+                accounts={data!.financieros_cuentas}
+                prevLabel={`${monthShort} ${view.year - 1}`}
+              />
             </Card>
           )}
 
