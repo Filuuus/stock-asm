@@ -1,6 +1,6 @@
 from django.test import SimpleTestCase
 
-from .services import expense_category, summarize, summarize_results
+from .services import expense_category, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -42,3 +42,27 @@ class ResultsTests(SimpleTestCase):
         self.assertEqual((aug['ingresos'], aug['costo'], aug['financieros']), (900.0, 500.0, 40.0))
         self.assertEqual(aug['gastos']['Nómina'], 150.0)
         self.assertEqual(aug['utilidad_operativa'], 250.0)
+
+
+class IndicatorTests(SimpleTestCase):
+    def test_month_end_balances_include_year_end_periods(self):
+        rows = [(2025, 12, '100102', 100.0), (2025, 13, '100102', 5.0), (2026, 1, '100102', 10.0)]
+        b = month_end_balances(rows, ['2025-12', '2026-01'])
+        self.assertEqual((b['2025-12']['100102'], b['2026-01']['100102']), (100.0, 115.0))
+
+    def test_ratios_and_break_even(self):
+        resultados = [{'month': '2026-01', 'ingresos': 1000.0, 'costo': 600.0, 'financieros': 10.0,
+                       'utilidad_operativa': 200.0, 'gastos': {'Nómina': 200.0}}]
+        balances = {'2026-01': {'100102': 50.0, '103103': 310.0, '100109': 600.0, '200101': -300.0}}
+        [k] = indicators(resultados, balances)
+        self.assertEqual(k['margen_operativo'], 0.2)
+        self.assertEqual(k['razon_circulante'], round(960 / 300, 4))
+        self.assertEqual(k['prueba_acida'], 1.2)
+        self.assertEqual(k['dias_cxc'], 9.61)  # 310 / (1000 / 31 days)
+        self.assertEqual(k['pe_operativo_ytd'], 500.0)  # 200 / 40% gross margin
+        self.assertEqual(k['cobertura_pef'], round(1000 / 525, 4))
+
+    def test_unposted_month(self):
+        r = {'month': '2026-09', 'ingresos': 3.0, 'costo': 0.0, 'financieros': 0.0,
+             'utilidad_operativa': 3.0, 'gastos': {'Nómina': 0.0}}
+        self.assertEqual(indicators([r], {}), [{'month': '2026-09', 'posted': False}])

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Loader2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, CircleAlert, CircleCheck, Loader2 } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -50,6 +50,13 @@ interface ResultsRow {
   gastos: Record<string, number>; // category -> amount
 }
 
+// Her financial model's INDICADORES, per month. Absent when not posted yet.
+type IndicatorKey =
+  | "margen_bruto" | "margen_operativo" | "margen_neto" | "gasto_operativo_ingresos" | "saldo_caja"
+  | "razon_circulante" | "prueba_acida" | "dias_cxc" | "dias_inventario" | "dias_cxp" | "ciclo_efectivo"
+  | "endeudamiento" | "roa_ytd" | "roe_ytd" | "pe_operativo_ytd" | "pe_financiero_ytd" | "cobertura_pef";
+type IndicatorRow = { month: string; posted: boolean } & Partial<Record<IndicatorKey, number | null>>;
+
 interface SalesSummary {
   month: string;
   months: MonthRow[]; // January of last year through `month`
@@ -57,6 +64,7 @@ interface SalesSummary {
   cobrado: Partial<Record<Zone, number>>;
   cuentas_por_cobrar: { pendiente: number; dias_cobro: number | null };
   resultados: ResultsRow[]; // same months as `months`
+  indicadores: IndicatorRow[]; // same months as `months`
 }
 
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -64,6 +72,82 @@ const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep
 const COLOR_CURRENT = "#2a78d6";
 const COLOR_PREVIOUS = "#eb6834";
 const TOP_BRANDS = 8;
+type Unit = "%" | "x" | "dias" | "$";
+// Rows of her INDICADORES sheet that we can compute, in her order.
+const INDICATORS: { key: IndicatorKey; label: string; unit: Unit; group?: string }[] = [
+  { group: "Rentabilidad", key: "margen_bruto", label: "Margen bruto", unit: "%" },
+  { key: "margen_operativo", label: "Margen operativo", unit: "%" },
+  { key: "margen_neto", label: "Margen neto (antes de impuestos)", unit: "%" },
+  { key: "gasto_operativo_ingresos", label: "Gasto operativo / ingresos", unit: "%" },
+  { group: "Liquidez", key: "saldo_caja", label: "Caja y bancos al cierre", unit: "$" },
+  { key: "razon_circulante", label: "Razón circulante", unit: "x" },
+  { key: "prueba_acida", label: "Prueba ácida", unit: "x" },
+  { group: "Ciclo de efectivo", key: "dias_cxc", label: "Días de cuentas por cobrar", unit: "dias" },
+  { key: "dias_inventario", label: "Días de inventario", unit: "dias" },
+  { key: "dias_cxp", label: "Días de cuentas por pagar", unit: "dias" },
+  { key: "ciclo_efectivo", label: "Ciclo de conversión de efectivo", unit: "dias" },
+  { group: "Endeudamiento y retorno", key: "endeudamiento", label: "Nivel de endeudamiento", unit: "%" },
+  { key: "roa_ytd", label: "ROA acumulado", unit: "%" },
+  { key: "roe_ytd", label: "ROE acumulado", unit: "%" },
+  { group: "Punto de equilibrio", key: "pe_operativo_ytd", label: "Punto de equilibrio operativo (acum.)", unit: "$" },
+  { key: "pe_financiero_ytd", label: "Punto de equilibrio financiero (acum.)", unit: "$" },
+  { key: "cobertura_pef", label: "Cobertura del punto de equilibrio", unit: "x" },
+];
+// Targets from her model's "semáforo" - provisional, set for another organization.
+const TARGETS: { key: IndicatorKey; label: string; goal: string; ok: (v: number) => boolean; reading: [string, string] }[] = [
+  {
+    key: "margen_operativo", label: "Margen operativo", goal: "≥ 10%", ok: (v) => v >= 0.1,
+    reading: ["La operación cubre su estructura de gastos.", "La operación no deja suficiente margen sobre sus gastos."],
+  },
+  {
+    key: "razon_circulante", label: "Razón circulante", goal: "≥ 1.5x", ok: (v) => v >= 1.5,
+    reading: ["Hay holgura para cubrir las obligaciones de corto plazo.", "Poca holgura para cubrir obligaciones de corto plazo."],
+  },
+  {
+    key: "ciclo_efectivo", label: "Ciclo de efectivo", goal: "≤ 30 días", ok: (v) => v <= 30,
+    reading: ["El efectivo se recupera rápido.", "El efectivo tarda en regresar (inventario + cobranza - pagos)."],
+  },
+  {
+    key: "cobertura_pef", label: "Cobertura del punto de equilibrio", goal: "≥ 1.0x", ok: (v) => v >= 1,
+    reading: ["Los ingresos del año superan el punto de equilibrio.", "Los ingresos del año no alcanzan el punto de equilibrio."],
+  },
+];
+
+// Shared look for every table here: tinted header with small caps labels,
+// alternating row shading, row label in medium weight.
+const TABLE_CLASS =
+  "[&_thead_tr]:bg-slate-100 [&_thead_tr:hover]:bg-slate-100 [&_th]:h-9 [&_th]:text-[11px] [&_th]:font-semibold " +
+  "[&_th]:uppercase [&_th]:tracking-wide [&_th]:text-slate-500 [&_tbody_tr]:bg-white " +
+  "[&_tbody_tr:nth-child(even)]:bg-slate-50 [&_tbody_tr:hover]:bg-blue-50/60 [&_td:first-child]:font-medium " +
+  "[&_td:first-child]:text-slate-800";
+
+function SectionHeading({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1 border-l-4 border-slate-900 pl-3">
+      <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+      <p className="text-sm text-gray-500">{children}</p>
+    </div>
+  );
+}
+
+function formatIndicator(value: number | null | undefined, unit: Unit) {
+  if (value === null || value === undefined) return "-";
+  if (unit === "%") return percent(value);
+  if (unit === "x") return `${value.toLocaleString("es-MX", { maximumFractionDigits: 2 })}x`;
+  if (unit === "dias") return value.toLocaleString("es-MX", { maximumFractionDigits: 0 });
+  return compactMoney(value);
+}
+
+// Text color for a matrix cell: targeted indicators by their target (the
+// semáforo above carries the icon + label), other money/percent values red
+// when negative.
+function indicatorTone(key: IndicatorKey, value: number | null | undefined) {
+  if (typeof value !== "number") return "text-gray-400";
+  const target = TARGETS.find((t) => t.key === key);
+  if (target) return target.ok(value) ? "text-green-700" : "text-red-700";
+  return value < 0 ? "text-red-700" : "";
+}
+
 // Categorical slots 1-5, in the order the backend lists the categories.
 const EXPENSE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
 
@@ -177,6 +261,13 @@ export default function SalesBIView() {
     const expenses = (r?: ResultsRow) => (r ? sum(Object.values(r.gastos)) : 0);
     const opMargin = (r?: ResultsRow) => (r && r.ingresos ? r.utilidad_operativa / r.ingresos : null);
     const categories = Object.keys(res.gastos);
+    const indicators = new Map(data.indicadores.map((r) => [r.month, r]));
+    const lastYearIndicators = data.indicadores.filter((r) => r.month.startsWith(`${year - 1}-`) && r.posted);
+    // Her "PROM. 2025" column: plain average of last year's posted months.
+    const indicatorAverage = (k: IndicatorKey) => {
+      const values = lastYearIndicators.map((r) => r[k]).filter((v): v is number => typeof v === "number");
+      return values.length ? sum(values) / values.length : null;
+    };
     const zoneYtd = (rows: MonthRow[], z: Zone) => sum(rows.map((r) => r.zonas[z] ?? 0));
 
     const brandTotal = sum(data.brands.map((b) => b.ytd));
@@ -221,6 +312,9 @@ export default function SalesBIView() {
       expenses: expenses(res),
       expensesLastYear: expenses(resLastYear),
       categories,
+      indicator: indicators.get(data.month),
+      indicatorMonths: MONTH_ABBR.slice(0, m).map((label, i) => ({ label, row: indicators.get(key(year, i + 1)) })),
+      indicatorAverage,
       expenseChart: MONTH_ABBR.slice(0, m).map((label, i) => {
         const r = results.get(key(year, i + 1));
         return { label, ...(r && r.costo > 0 ? r.gastos : {}) };
@@ -349,7 +443,7 @@ export default function SalesBIView() {
                   {monthName} contra {monthShort} {view.year - 1}
                 </CardDescription>
               </CardHeader>
-              <Table>
+              <Table className={TABLE_CLASS}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Zona</TableHead>
@@ -382,7 +476,7 @@ export default function SalesBIView() {
                   Acumulado ene-{monthShort} {view.year} contra el mismo periodo de {view.year - 1}
                 </CardDescription>
               </CardHeader>
-              <Table>
+              <Table className={TABLE_CLASS}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Marca</TableHead>
@@ -399,7 +493,19 @@ export default function SalesBIView() {
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(b.ytd)}</TableCell>
                       <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
-                        {view.brandTotal ? percent(b.ytd / view.brandTotal) : "-"}
+                        {view.brandTotal ? (
+                          <span className="flex items-center justify-end gap-2">
+                            <span className="h-1.5 w-16 rounded-full bg-slate-200" aria-hidden>
+                              <span
+                                className="block h-full rounded-full"
+                                style={{ width: `${(b.ytd / view.brandTotal) * 100}%`, background: COLOR_CURRENT }}
+                              />
+                            </span>
+                            {percent(b.ytd / view.brandTotal)}
+                          </span>
+                        ) : (
+                          "-"
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <ChangeCell value={change(b.ytd, b.ytd_prev)} />
@@ -411,13 +517,10 @@ export default function SalesBIView() {
             </Card>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold text-gray-900">Resultados</h2>
-            <p className="text-sm text-gray-500">
+          <SectionHeading title="Resultados">
               Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos
               pueden no coincidir con las ventas facturadas. Gastos agrupados por el nombre de la cuenta.
-            </p>
-          </div>
+            </SectionHeading>
 
           {!view.resPosted ? (
             <p className="rounded-xl border border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-600">
@@ -500,7 +603,7 @@ export default function SalesBIView() {
                       Contra {monthShort} {view.year - 1}
                     </CardDescription>
                   </CardHeader>
-                  <Table>
+                  <Table className={TABLE_CLASS}>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Categoría</TableHead>
@@ -531,6 +634,127 @@ export default function SalesBIView() {
                   </Table>
                 </Card>
               </div>
+
+              <SectionHeading title="Indicadores">
+                  Mismas fórmulas que el modelo financiero mensual, con los saldos de Contabilidad al cierre de cada
+                  mes. Las metas del semáforo son provisionales: vienen de ese modelo, hecho para otra organización.
+                </SectionHeading>
+
+              <Card>
+                <CardHeader className="p-4 pb-2">
+                  <CardTitle className="text-base">Semáforo de {monthName}</CardTitle>
+                </CardHeader>
+                <Table className={TABLE_CLASS}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Indicador</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Meta</TableHead>
+                      <TableHead>Estatus</TableHead>
+                      <TableHead className={HIDE_BELOW_MD}>Lectura</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {TARGETS.map((t) => {
+                      const value = view.indicator?.[t.key];
+                      const unit = INDICATORS.find((i) => i.key === t.key)!.unit;
+                      const ok = typeof value === "number" ? t.ok(value) : null;
+                      return (
+                        <TableRow key={t.key}>
+                          <TableCell>{t.label}</TableCell>
+                          <TableCell className="text-right num">
+                            {formatIndicator(value, unit)}
+                            {unit === "dias" && typeof value === "number" ? " días" : ""}
+                          </TableCell>
+                          <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{t.goal}</TableCell>
+                          <TableCell>
+                            {ok === null ? (
+                              "-"
+                            ) : (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap",
+                                  ok ? "text-green-700" : "text-red-700",
+                                )}
+                              >
+                                {ok ? <CircleCheck className="w-4 h-4" aria-hidden /> : <CircleAlert className="w-4 h-4" aria-hidden />}
+                                {ok ? "Cumple" : "No cumple"}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className={cn("text-sm text-gray-500", HIDE_BELOW_MD)}>
+                            {ok === null ? "" : t.reading[ok ? 0 : 1]}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+
+              <Card>
+                <CardHeader className="p-4 pb-2">
+                  <CardTitle className="text-base">Indicadores por mes</CardTitle>
+                  <CardDescription>
+                    {view.year} y promedio mensual de {view.year - 1}; días = saldo al cierre entre el flujo diario
+                    acumulado del año
+                  </CardDescription>
+                </CardHeader>
+                <Table className={TABLE_CLASS}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="sticky left-0 bg-inherit min-w-[11rem]">Indicador</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Prom. {view.year - 1}</TableHead>
+                      {view.indicatorMonths.map((mm, i) => (
+                        <TableHead
+                          key={mm.label}
+                          className={cn("text-right", i === view.indicatorMonths.length - 1 && "bg-blue-100 text-blue-800")}
+                        >
+                          {mm.label}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {INDICATORS.map((ind) => (
+                      <Fragment key={ind.key}>
+                        {ind.group && (
+                          // Group label row: ! overrides the table's row and first-column styles.
+                          <tr className="border-b !bg-slate-200">
+                            <td
+                              colSpan={view.indicatorMonths.length + 2}
+                              className="sticky left-0 px-4 py-1.5 text-[11px] !font-semibold uppercase tracking-wide !text-slate-600"
+                            >
+                              {ind.group}
+                            </td>
+                          </tr>
+                        )}
+                        <TableRow>
+                          <TableCell className="sticky left-0 bg-inherit">{ind.label}</TableCell>
+                          <TableCell className="text-right num text-gray-500">
+                            {formatIndicator(view.indicatorAverage(ind.key), ind.unit)}
+                          </TableCell>
+                          {view.indicatorMonths.map((mm, i) => {
+                            const value = mm.row?.[ind.key];
+                            return (
+                              <TableCell
+                                key={mm.label}
+                                className={cn(
+                                  "text-right num",
+                                  indicatorTone(ind.key, value),
+                                  i === view.indicatorMonths.length - 1 && "bg-blue-50 font-semibold",
+                                )}
+                              >
+                                {formatIndicator(value, ind.unit)}
+                              </TableCell>
+                            );
+                          })}
+                        </TableRow>
+                      </Fragment>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
             </>
           )}
         </>

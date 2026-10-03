@@ -43,6 +43,15 @@ EXPENSE_CATEGORIES = [
 ]
 OTHER_EXPENSES = 'Otros'
 
+# Balance-sheet groups, by Cuentas.Codigo prefix (the ledger's own headers:
+# 100101 caja, 100102 bancos, 1031 clientes sub-ledger, 100109 inventario,
+# 200101/200102 proveedores/acreedores, 2011 proveedores extranjeros).
+CASH_PREFIXES = ('100101', '100102')
+RECEIVABLE_PREFIXES = ('1031',)
+INVENTORY_PREFIXES = ('100109',)
+CURRENT_ASSET_PREFIXES = ('1001', '1031')
+PAYABLE_PREFIXES = ('200101', '200102', '2011')
+
 
 def fetch_month_lines(date_from, date_to):
     """Sales, returns and credit-note lines in [date_from, date_to), summed per
@@ -151,6 +160,107 @@ def summarize_results(rows, keys):
     return [months[k] for k in keys]
 
 
+def fetch_ledger_balances(date_to):
+    """Net debit per (year, period, 6-digit code prefix) for balance-sheet
+    accounts (1xxx assets, 2xxx liabilities) through date_to's month, from the
+    start of the ledger - month-end balances are the running sum."""
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT mp.Ejercicio, mp.Periodo, LEFT(cu.Codigo, 6),
+                   SUM(CASE WHEN mp.TipoMovto = 0 THEN mp.Importe ELSE -mp.Importe END)
+            FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza mp
+            JOIN {LEDGER_DATABASE}.dbo.Cuentas cu ON cu.Id = mp.IdCuenta
+            WHERE mp.Ejercicio * 100 + mp.Periodo <= %s AND LEFT(cu.Codigo, 1) IN ('1', '2')
+            GROUP BY mp.Ejercicio, mp.Periodo, LEFT(cu.Codigo, 6)
+            """,
+            [date_to.year * 100 + date_to.month],
+        )
+        return cursor.fetchall()
+
+
+def month_end_balances(rows, keys):
+    """{key: {prefix6: balance}} at the end of each "YYYY-MM" key. Year-end
+    periods 13/14 sort after December, so they land before next January."""
+    wanted = {(int(k[:4]), int(k[5:])): k for k in keys}
+    running, result = defaultdict(float), {}
+    by_period = defaultdict(list)
+    for y, period, prefix, amount in rows:
+        by_period[(y, period)].append((prefix, amount or 0))
+    periods = sorted(set(by_period) | set(wanted))
+    for p in periods:
+        for prefix, amount in by_period.get(p, ()):
+            running[prefix] += amount
+        if p in wanted:
+            result[wanted[p]] = dict(running)
+    return result
+
+
+def _sum_prefixes(balances, prefixes):
+    return sum(v for k, v in balances.items() if k.startswith(prefixes))
+
+
+def indicators(resultados, balances):
+    """Her financial model's INDICADORES, per month (same formulas as
+    "1 Modelo Analisis Financiero"): margins, break-even, liquidity, days,
+    cash cycle, ROA/ROE. None for months Contabilidad hasn't posted."""
+    out = []
+    ytd = defaultdict(float)
+    for r in resultados:
+        y, m = int(r['month'][:4]), int(r['month'][5:])
+        if m == 1:
+            ytd.clear()
+        expenses = sum(r['gastos'].values())
+        for name, value in (('ingresos', r['ingresos']), ('costo', r['costo']), ('gastos', expenses),
+                            ('financieros', r['financieros'])):
+            ytd[name] += value
+        if r['costo'] <= 0:
+            out.append({'month': r['month'], 'posted': False})
+            continue
+        b = balances.get(r['month'], {})
+        days = (date(y + m // 12, m % 12 + 1, 1) - date(y, 1, 1)).days
+        assets = _sum_prefixes(b, ('1',))
+        liabilities = -_sum_prefixes(b, ('2',))
+        current_assets = _sum_prefixes(b, CURRENT_ASSET_PREFIXES)
+        inventory = _sum_prefixes(b, INVENTORY_PREFIXES)
+        net_ytd = ytd['ingresos'] - ytd['costo'] - ytd['gastos'] - ytd['financieros']
+        gross_ytd_pct = (ytd['ingresos'] - ytd['costo']) / ytd['ingresos'] if ytd['ingresos'] else None
+
+        def ratio(a, b_):
+            return a / b_ if b_ else None
+
+        def days_of(balance, flow):
+            return balance / (flow / days) if flow else None
+
+        dias_cxc = days_of(_sum_prefixes(b, RECEIVABLE_PREFIXES), ytd['ingresos'])
+        dias_inv = days_of(inventory, ytd['costo'])
+        dias_cxp = days_of(-_sum_prefixes(b, PAYABLE_PREFIXES), ytd['costo'])
+        pe_operativo = ratio(ytd['gastos'], gross_ytd_pct)
+        pe_financiero = ratio(ytd['gastos'] + ytd['financieros'], gross_ytd_pct)
+        values = {
+            'margen_bruto': ratio(r['ingresos'] - r['costo'], r['ingresos']),
+            'margen_operativo': ratio(r['utilidad_operativa'], r['ingresos']),
+            'margen_neto': ratio(r['utilidad_operativa'] - r['financieros'], r['ingresos']),
+            'gasto_operativo_ingresos': ratio(expenses, r['ingresos']),
+            'saldo_caja': _sum_prefixes(b, CASH_PREFIXES),
+            'razon_circulante': ratio(current_assets, liabilities),
+            'prueba_acida': ratio(current_assets - inventory, liabilities),
+            'dias_cxc': dias_cxc,
+            'dias_inventario': dias_inv,
+            'dias_cxp': dias_cxp,
+            'ciclo_efectivo': None if None in (dias_cxc, dias_inv, dias_cxp) else dias_cxc + dias_inv - dias_cxp,
+            'endeudamiento': ratio(liabilities, assets),
+            'roa_ytd': ratio(net_ytd, assets),
+            'roe_ytd': ratio(net_ytd, assets - liabilities),
+            'pe_operativo_ytd': pe_operativo,
+            'pe_financiero_ytd': pe_financiero,
+            'cobertura_pef': ratio(ytd['ingresos'], pe_financiero),
+        }
+        out.append({'month': r['month'], 'posted': True,
+                    **{k: None if v is None else round(v, 4) for k, v in values.items()}})
+    return out
+
+
 def receivables_today():
     """Outstanding balance today and DSO over the last 365 days, both with IVA.
     ponytail: only invoices from the last year count - older unpaid ones are
@@ -173,6 +283,10 @@ def calculate_sales(year, month):
     result['resultados'] = summarize_results(
         fetch_ledger_results(date(year - 1, 1, 1), date(year, month, 1)),
         [m['month'] for m in result['months']],
+    )
+    result['indicadores'] = indicators(
+        result['resultados'],
+        month_end_balances(fetch_ledger_balances(date(year, month, 1)), [m['month'] for m in result['months']]),
     )
     result['cobrado'] = {z: round(float(v), 2) for z, v in corte['zone_totals'].items()}
     result['cuentas_por_cobrar'] = receivables_today()
