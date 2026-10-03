@@ -37,6 +37,7 @@ export default function HeaderNav() {
       label: "Facturas",
       show: isAccounting || isManagement,
     },
+    { href: "/ventas", label: "Ventas", show: isManagement },
     { href: "/usuarios", label: "Usuarios", show: isManagement },
   ].filter((l) => l.show);
 
