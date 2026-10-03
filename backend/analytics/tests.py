@@ -2,7 +2,7 @@ from django.test import SimpleTestCase
 
 from datetime import date
 
-from .services import chart_end_month, expense_accounts, expense_category, indicators, month_end_balances, summarize, summarize_results
+from .services import chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -69,6 +69,19 @@ class ResultsTests(SimpleTestCase):
                          [{'cuenta': 'HONORARIOS A PERSONAS MORALES', 'monto': 150.0, 'anterior': 40.0}])
         self.assertEqual(r['Mantenimiento y servicios'], [{'cuenta': 'ENERGIA ELECTRICA', 'monto': 0.0, 'anterior': 9.0}])
         self.assertEqual(set(r), {'Honorarios y publicidad', 'Mantenimiento y servicios'})
+
+    def test_financial_accounts(self):
+        rows = [
+            (2026, 8, '500701000', 'PERDIDA CAMBIARIA', 270.0),
+            (2026, 8, '400401000', 'UTILIDAD CAMBIARIA', -20.0),  # a gain: negative, listed last
+            (2025, 8, '500701000', 'PERDIDA CAMBIARIA', 8.0),
+            (2026, 8, '500503010', 'SEGUROS Y FIANZAS', 99.0),  # operating expense, not financial
+        ]
+        self.assertEqual(financial_accounts(rows, '2026-08', '2025-08'), [
+            {'cuenta': 'PERDIDA CAMBIARIA', 'monto': 270.0, 'anterior': 8.0},
+            {'cuenta': 'UTILIDAD CAMBIARIA', 'monto': -20.0, 'anterior': 0.0},
+        ])
+        self.assertEqual(financial_accounts([], '2026-08', '2025-08'), [])
 
     def test_operating_result(self):
         rows = [

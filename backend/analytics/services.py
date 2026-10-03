@@ -191,23 +191,34 @@ def summarize_results(rows, keys):
     return [months[k] for k in keys]
 
 
-def expense_accounts(rows, key, prev_key):
-    """The operating expenses of month `key` per account, with the same
-    account in `prev_key` (same month last year): {category: [{cuenta, monto,
-    anterior}]}, largest first. Accounts are merged by name across the
-    selling/administration branches - "HONORARIOS" is one expense to the owner."""
+def account_detail(rows, key, prev_key, groups, category_of):
+    """Net debit of month `key` per account in `groups` (4-digit prefixes),
+    with the same account in `prev_key` (same month last year): {category:
+    [{cuenta, monto, anterior}]}, largest first. Accounts are merged by name
+    across the selling/administration branches - "HONORARIOS" is one expense
+    to the owner."""
     wanted = {key: 'monto', prev_key: 'anterior'}
     accounts = defaultdict(lambda: {'monto': 0.0, 'anterior': 0.0})
     for y, period, code, name, net_debit in rows:
         field = wanted.get(f'{y}-{period:02d}')
-        if field and code[:4] in LEDGER_EXPENSE_GROUPS:
+        if field and code[:4] in groups:
             name = ' '.join((name or '').split())
-            accounts[(expense_category(code, name), name)][field] += net_debit or 0
+            accounts[(category_of(code, name), name)][field] += net_debit or 0
     result = defaultdict(list)
     for (category, name), v in accounts.items():
         if round(v['monto'], 2) or round(v['anterior'], 2):
             result[category].append({'cuenta': name, 'monto': round(v['monto'], 2), 'anterior': round(v['anterior'], 2)})
     return {c: sorted(items, key=lambda a: -a['monto']) for c, items in result.items()}
+
+
+def expense_accounts(rows, key, prev_key):
+    return account_detail(rows, key, prev_key, LEDGER_EXPENSE_GROUPS, expense_category)
+
+
+def financial_accounts(rows, key, prev_key):
+    """The "gastos financieros netos" line per account: exchange losses and
+    gains, bank fees, interest. Gains come back negative."""
+    return account_detail(rows, key, prev_key, LEDGER_FINANCIAL_GROUPS, lambda code, name: 'all').get('all', [])
 
 
 def fetch_ledger_balances(date_to):
@@ -333,7 +344,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v5_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v6_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)
@@ -359,7 +370,9 @@ def _calculate_sales(year, month):
     keys = [m['month'] for m in result['months']]
     result['month'] = f'{year}-{month:02d}'
     result['resultados'] = summarize_results(ledger_results.result(), keys)
-    result['gastos_cuentas'] = expense_accounts(ledger_results.result(), result['month'], f'{year - 1}-{month:02d}')
+    prev_key = f'{year - 1}-{month:02d}'
+    result['gastos_cuentas'] = expense_accounts(ledger_results.result(), result['month'], prev_key)
+    result['financieros_cuentas'] = financial_accounts(ledger_results.result(), result['month'], prev_key)
     result['indicadores'] = indicators(result['resultados'], month_end_balances(ledger_balances.result(), keys))
     result['cobrado'] = {z: round(float(v), 2) for z, v in corte.result()['zone_totals'].items()}
     result['cuentas_por_cobrar'] = receivables.result()

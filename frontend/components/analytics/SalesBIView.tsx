@@ -80,7 +80,15 @@ interface SalesSummary {
   resultados: ResultsRow[]; // same months as `months`
   indicadores: IndicatorRow[]; // same months as `months`
   // The picked month's operating expenses per account, by category.
-  gastos_cuentas: Record<string, { cuenta: string; monto: number; anterior: number }[]>;
+  gastos_cuentas: Record<string, AccountLine[]>;
+  financieros_cuentas: AccountLine[]; // "Gastos financieros netos" per account; gains negative
+}
+
+// One ledger account in a month, with the same month last year (net debit).
+interface AccountLine {
+  cuenta: string;
+  monto: number;
+  anterior: number;
 }
 
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -299,6 +307,22 @@ function ExpenseSplit({
   );
 }
 
+// The month's income statement, top to bottom: each line's sign and whether
+// it's a subtotal. Costs come back positive from the backend.
+function incomeStatement(r: ResultsRow) {
+  const expenses = sum(Object.values(r.gastos));
+  const gross = r.ingresos - r.costo;
+  return [
+    { label: "Ingresos", value: r.ingresos },
+    { label: "Costo de ventas", value: -r.costo, cost: true },
+    { label: "Utilidad bruta", value: gross, total: true },
+    { label: "Gastos de operación", value: -expenses, cost: true },
+    { label: "Utilidad operativa", value: r.utilidad_operativa, total: true },
+    { label: "Gastos financieros netos", value: -r.financieros, cost: true, expandable: true },
+    { label: "Utilidad antes de impuestos", value: r.utilidad_operativa - r.financieros, total: true },
+  ];
+}
+
 function lastCompleteMonth() {
   const d = new Date();
   return monthToISO(new Date(d.getFullYear(), d.getMonth() - 1, 1));
@@ -322,9 +346,21 @@ function compactMoney(value: number) {
   return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
 }
 
-function Delta({ value, label, unit = "%" }: { value: number | null; label: string; unit?: "%" | "pp" }) {
+// `inverse` is for costs: the number keeps its sign, but going up is red.
+function Delta({
+  value,
+  label,
+  unit = "%",
+  inverse = false,
+}: {
+  value: number | null;
+  label: string;
+  unit?: "%" | "pp";
+  inverse?: boolean;
+}) {
   if (value === null) return <p className="text-xs text-gray-400">sin dato {label}</p>;
   const up = value >= 0;
+  const good = up !== inverse;
   const Icon = up ? ArrowUpRight : ArrowDownRight;
   const text =
     unit === "pp"
@@ -332,7 +368,7 @@ function Delta({ value, label, unit = "%" }: { value: number | null; label: stri
       : `${up ? "+" : ""}${percent(value)}`;
   return (
     <p className="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
-      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", up ? "text-green-700" : "text-red-700")}>
+      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", good ? "text-green-700" : "text-red-700")}>
         <Icon className="w-3.5 h-3.5" aria-hidden />
         {text}
       </span>
@@ -341,10 +377,10 @@ function Delta({ value, label, unit = "%" }: { value: number | null; label: stri
   );
 }
 
-function ChangeCell({ value }: { value: number | null }) {
+function ChangeCell({ value, inverse = false }: { value: number | null; inverse?: boolean }) {
   if (value === null) return <span className="text-gray-400">-</span>;
   return (
-    <span className={cn("num", value >= 0 ? "text-green-700" : "text-red-700")}>
+    <span className={cn("num", value >= 0 !== inverse ? "text-green-700" : "text-red-700")}>
       {value >= 0 ? "+" : ""}
       {percent(value, 0)}
     </span>
@@ -378,6 +414,7 @@ export default function SalesBIView() {
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
+  const [financialOpen, setFinancialOpen] = useState(false);
   // On a phone the indicator matrix scrolls sideways; start it at the picked
   // month (its last column) rather than at January.
   const indicatorTable = useRef<HTMLTableElement>(null);
@@ -778,12 +815,128 @@ export default function SalesBIView() {
                 <Delta
                   value={change(view.expenses, view.expensesLastYear)}
                   label={`vs ${monthShort} ${view.year - 1}`}
+                  inverse
                 />
                 <p className="text-xs text-gray-400">
                   {view.res.ingresos ? percent(view.expenses / view.res.ingresos) : "-"} de los ingresos
                 </p>
               </Tile>
             </div>
+          )}
+
+          {view.resPosted && (
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Estado de resultados de {monthName}</CardTitle>
+                <CardDescription>
+                  Del ingreso a la utilidad; el costo de ventas es lo que costaron los productos vendidos en el mes.
+                </CardDescription>
+              </CardHeader>
+              <Table className={TABLE_CLASS}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Concepto</TableHead>
+                    <TableHead className="text-right">Monto</TableHead>
+                    <TableHead className="text-right">
+                      <span className="sm:hidden">%</span>
+                      <span className="hidden sm:inline">% ingresos</span>
+                    </TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_MD)}>
+                      {monthShort} {view.year - 1}
+                    </TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Cambio</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {incomeStatement(view.res).map((line, i) => {
+                    const prev = view.resLastYear ? incomeStatement(view.resLastYear)[i].value : undefined;
+                    const open = line.expandable && financialOpen;
+                    return (
+                      <Fragment key={line.label}>
+                        {/* ! overrides the table's zebra and first-column styles: subtotals stand out. */}
+                        <TableRow
+                          className={cn(
+                            line.total
+                              ? "!bg-slate-100 font-semibold"
+                              : "!bg-white [&_td:first-child]:pl-5 sm:[&_td:first-child]:pl-8",
+                            line.expandable && "cursor-pointer",
+                          )}
+                          onClick={line.expandable ? () => setFinancialOpen((o) => !o) : undefined}
+                        >
+                          <TableCell className={cn("min-w-[8rem]", !line.total && "!font-normal !text-gray-600")}>
+                            {line.expandable ? (
+                              <button type="button" className="-ml-5 flex items-center gap-1 text-left" aria-expanded={open}>
+                                <ChevronRight
+                                  className={cn("w-4 h-4 shrink-0 text-gray-400 transition-transform", open && "rotate-90")}
+                                  aria-hidden
+                                />
+                                {line.label}
+                              </button>
+                            ) : (
+                              line.label
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              "text-right num",
+                              line.value < 0 && !line.total && "text-gray-600",
+                              line.total && line.value < 0 && "text-red-700",
+                            )}
+                          >
+                            {formatMoney(line.value)}
+                          </TableCell>
+                          <TableCell className="text-right num text-gray-600">
+                            {view.res.ingresos ? percent(line.value / view.res.ingresos) : "-"}
+                          </TableCell>
+                          <TableCell className={cn("text-right num text-gray-500", HIDE_BELOW_MD)}>
+                            {prev === undefined ? "-" : formatMoney(prev)}
+                          </TableCell>
+                          <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
+                            {/* Costs: how much bigger they got (red when up). Subtotals: signed,
+                                so a loss turning into a profit reads as an improvement. */}
+                            <ChangeCell
+                              value={
+                                line.cost
+                                  ? change(Math.abs(line.value), prev === undefined ? undefined : Math.abs(prev))
+                                  : change(line.value, prev)
+                              }
+                              inverse={line.cost}
+                            />
+                          </TableCell>
+                        </TableRow>
+                        {open &&
+                          data!.financieros_cuentas.map((a) => (
+                            // Shown as they hit the result: costs negative, gains positive. Accounts with
+                            // nothing this month only matter next to last year's amount, hidden on phones.
+                            <TableRow
+                              key={a.cuenta}
+                              className={cn(
+                                "!bg-white text-xs sm:text-sm [&_td]:py-2",
+                                !a.monto && "hidden sm:table-row",
+                              )}
+                            >
+                              <TableCell className="pl-9 sm:pl-14 !font-normal !text-gray-500">{a.cuenta}</TableCell>
+                              <TableCell className="text-right num text-gray-600">{formatMoney(0 - a.monto || 0)}</TableCell>
+                              <TableCell className="text-right num text-gray-500">
+                                {view.res.ingresos ? percent((0 - a.monto || 0) / view.res.ingresos) : "-"}
+                              </TableCell>
+                              <TableCell className={cn("text-right num text-gray-500", HIDE_BELOW_MD)}>
+                                {formatMoney(0 - a.anterior || 0)}
+                              </TableCell>
+                              <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
+                                <ChangeCell
+                                  value={change(Math.abs(a.monto), Math.abs(a.anterior))}
+                                  inverse={(a.monto || a.anterior) > 0}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
           )}
 
           <Card>
@@ -907,7 +1060,7 @@ export default function SalesBIView() {
                               {view.res.ingresos ? percent(view.res.gastos[c] / view.res.ingresos) : "-"}
                             </TableCell>
                             <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
-                              <ChangeCell value={change(view.res.gastos[c], view.resLastYear?.gastos[c])} />
+                              <ChangeCell value={change(view.res.gastos[c], view.resLastYear?.gastos[c])} inverse />
                             </TableCell>
                           </TableRow>
                           {open &&
@@ -928,7 +1081,7 @@ export default function SalesBIView() {
                                   {view.res.ingresos ? percent(a.monto / view.res.ingresos) : "-"}
                                 </TableCell>
                                 <TableCell className={cn("text-right", HIDE_BELOW_SM)}>
-                                  <ChangeCell value={change(a.monto, a.anterior)} />
+                                  <ChangeCell value={change(a.monto, a.anterior)} inverse />
                                 </TableCell>
                               </TableRow>
                             ))}
