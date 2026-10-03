@@ -206,7 +206,7 @@ function topBrands(brands: Brand[], period: "ytd" | "mes") {
       value: sum(rest.map((b) => b[period])),
       prev: sum(rest.map((b) => b[prevKey])),
     });
-  return { rows, total: sum(brands.map((b) => b[period])) };
+  return { rows, total: sum(brands.map((b) => b[period])), prevTotal: sum(brands.map((b) => b[prevKey])) };
 }
 
 // Card header with tabs: title and tabs share a row, the description gets
@@ -498,7 +498,18 @@ function compactMoney(value: number) {
   return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
 }
 
-function Delta({ value, label, unit = "%" }: { value: number | null; label: string; unit?: "%" | "pp" }) {
+// `inverse` is for costs and returns: the number keeps its sign, but going up is red.
+function Delta({
+  value,
+  label,
+  unit = "%",
+  inverse = false,
+}: {
+  value: number | null;
+  label: string;
+  unit?: "%" | "pp";
+  inverse?: boolean;
+}) {
   if (value === null) return <p className="text-xs text-gray-400">sin dato {label}</p>;
   const up = value >= 0;
   const Icon = up ? ArrowUpRight : ArrowDownRight;
@@ -508,12 +519,29 @@ function Delta({ value, label, unit = "%" }: { value: number | null; label: stri
       : `${up ? "+" : ""}${percent(value)}`;
   return (
     <p className="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
-      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", up ? "text-green-700" : "text-red-700")}>
+      <span className={cn("inline-flex items-center whitespace-nowrap font-medium", up !== inverse ? "text-green-700" : "text-red-700")}>
         <Icon className="w-3.5 h-3.5" aria-hidden />
         {text}
       </span>
       {label}
     </p>
+  );
+}
+
+// A share of the total as a small bar plus the percentage. Fixed track and
+// number widths, so every row's bar starts and ends at the same place.
+function ShareBar({ value, total }: { value: number; total: number }) {
+  if (!total) return <>-</>;
+  return (
+    <span className="flex items-center justify-end gap-2">
+      <span className="h-1.5 w-16 shrink-0 rounded-full bg-slate-200" aria-hidden>
+        <span
+          className="block h-full rounded-full"
+          style={{ width: `${Math.max(0, value / total) * 100}%`, background: COLOR_CURRENT }}
+        />
+      </span>
+      <span className="w-12 shrink-0 text-right">{percent(value / total)}</span>
+    </span>
   );
 }
 
@@ -550,7 +578,8 @@ export default function SalesBIView() {
   // and flags that one fetch to skip the cache.
   const [reload, setReload] = useState(0);
   const forceRefresh = useRef(false);
-  const [brandPeriod, setBrandPeriod] = useState<"ytd" | "mes">("ytd");
+  const [brandPeriod, setBrandPeriod] = useState<"ytd" | "mes">("mes");
+  const [zonePeriod, setZonePeriod] = useState<"ytd" | "mes">("mes");
   const [expensePeriod, setExpensePeriod] = useState<"anual" | "mes">("anual");
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
@@ -635,7 +664,6 @@ export default function SalesBIView() {
         lastYear: lastYear?.zonas[z],
         ytd: zoneYtd(thisYearRows, z),
         ytdPrev: zoneYtd(lastYearToDate, z),
-        cobrado: data.cobrado[z] ?? 0,
       })),
       brands: topBrands(data.brands, brandPeriod),
       res,
@@ -731,13 +759,15 @@ export default function SalesBIView() {
             <Tile label={`Acumulado ene-${monthShort} ${view.year}`} value={formatMoney(view.ytd)}>
               <Delta value={change(view.ytd, view.ytdPrev)} label={`vs ene-${monthShort} ${view.year - 1}`} />
             </Tile>
-            <Tile label="Margen bruto del mes" value={view.margin === null ? "-" : percent(view.margin)}>
+            <Tile label="Margen bruto del mes (costo del ERP)" value={view.margin === null ? "-" : percent(view.margin)}>
               <Delta
                 value={view.margin !== null && view.marginLastYear !== null ? view.margin - view.marginLastYear : null}
                 label={`vs ${monthShort} ${view.year - 1}`}
                 unit="pp"
               />
-              <p className="text-xs text-gray-400">aproximado, con el costo registrado en el ERP</p>
+              <p className="text-xs text-gray-400">
+                por fecha de factura; el de Contabilidad, cuando cierra el mes, está en Resultados
+              </p>
             </Tile>
             <Tile label={`Cobrado en ${monthName}`} value={formatMoney(view.cobrado)}>
               <p className="text-xs text-gray-400">con IVA, igual que Corte de Caja</p>
@@ -749,7 +779,16 @@ export default function SalesBIView() {
               <p className="text-xs text-gray-400">con IVA, facturas de los últimos 12 meses</p>
             </Tile>
             <Tile label="Devoluciones y notas de crédito" value={formatMoney(view.cur.devoluciones)}>
-              <p className="text-xs text-gray-400">del mes, ya descontadas de las ventas</p>
+              <Delta
+                value={change(view.cur.devoluciones, view.lastYear?.devoluciones)}
+                label={`vs ${monthShort} ${view.year - 1}`}
+                inverse
+              />
+              <p className="text-xs text-gray-500">
+                {view.cur.ventas ? percent(view.cur.devoluciones / (view.cur.ventas + view.cur.devoluciones)) : "-"} de
+                lo facturado en el mes
+              </p>
+              <p className="text-xs text-gray-400">ya descontadas de las ventas</p>
             </Tile>
           </div>
 
@@ -825,34 +864,54 @@ export default function SalesBIView() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base">Por zona</CardTitle>
-                <CardDescription>
-                  {monthName} contra {monthShort} {view.year - 1}
-                </CardDescription>
-              </CardHeader>
+              <TabbedHeader
+                title="Por zona"
+                description={
+                  zonePeriod === "ytd"
+                    ? `Acumulado ene-${monthShort} ${view.year} contra el mismo periodo de ${view.year - 1}`
+                    : `${monthName} contra ${monthShort} ${view.year - 1}`
+                }
+                tabs={[
+                  ["ytd", "Acumulado"],
+                  ["mes", "Mensual"],
+                ]}
+                value={zonePeriod}
+                onChange={(v) => setZonePeriod(v as "ytd" | "mes")}
+              />
               <Table className={TABLE_CLASS}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Zona</TableHead>
                     <TableHead className="text-right">Ventas</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
                     <TableHead className="text-right">Cambio</TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Acumulado</TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_MD)}>Cobrado</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {view.zones.map((z) => (
-                    <TableRow key={z.zone}>
-                      <TableCell>{ZONE_LABELS[z.zone]}</TableCell>
-                      <TableCell className="text-right num">{formatMoney(z.ventas)}</TableCell>
-                      <TableCell className="text-right">
-                        <ChangeCell value={change(z.ventas, z.lastYear)} />
-                      </TableCell>
-                      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(z.ytd)}</TableCell>
-                      <TableCell className={cn("text-right num", HIDE_BELOW_MD)}>{formatMoney(z.cobrado)}</TableCell>
-                    </TableRow>
-                  ))}
+                  {(() => {
+                    const rows = view.zones.map((z) => ({
+                      key: z.zone,
+                      label: ZONE_LABELS[z.zone],
+                      value: zonePeriod === "ytd" ? z.ytd : z.ventas,
+                      prev: zonePeriod === "ytd" ? z.ytdPrev : z.lastYear,
+                    }));
+                    // Totals from the rows themselves, so the column always adds up.
+                    const total = sum(rows.map((r) => r.value));
+                    const prevTotal = rows.some((r) => r.prev !== undefined) ? sum(rows.map((r) => r.prev ?? 0)) : undefined;
+                    return [...rows, { key: "total", label: "Total", value: total, prev: prevTotal }].map((r) => (
+                      // ! overrides the table's zebra: the total row stands out.
+                      <TableRow key={r.key} className={cn(r.key === "total" && "!bg-slate-100 font-semibold")}>
+                        <TableCell>{r.label}</TableCell>
+                        <TableCell className="text-right num">{formatMoney(r.value)}</TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                          <ShareBar value={r.value} total={total} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <ChangeCell value={change(r.value, r.prev)} />
+                        </TableCell>
+                      </TableRow>
+                    ));
+                  })()}
                 </TableBody>
               </Table>
             </Card>
@@ -884,33 +943,28 @@ export default function SalesBIView() {
                 <TableBody>
                   {view.brands.rows.map((b) => (
                     <TableRow key={b.brand}>
-                      <TableCell className="max-w-[7rem] sm:max-w-[14rem] truncate" title={b.brand}>
+                      <TableCell className="max-w-[7rem] sm:max-w-[12rem] truncate" title={b.brand}>
                         {b.brand}
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(b.value)}</TableCell>
                       <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
-                        {view.brands.total ? (
-                          <span className="flex items-center justify-end gap-2">
-                            <span className="h-1.5 w-16 rounded-full bg-slate-200" aria-hidden>
-                              <span
-                                className="block h-full rounded-full"
-                                style={{
-                                  width: `${Math.max(0, b.value / view.brands.total) * 100}%`,
-                                  background: COLOR_CURRENT,
-                                }}
-                              />
-                            </span>
-                            {percent(b.value / view.brands.total)}
-                          </span>
-                        ) : (
-                          "-"
-                        )}
+                        <ShareBar value={b.value} total={view.brands.total} />
                       </TableCell>
                       <TableCell className="text-right">
                         <ChangeCell value={change(b.value, b.prev)} />
                       </TableCell>
                     </TableRow>
                   ))}
+                  <TableRow className="!bg-slate-100 font-semibold">
+                    <TableCell>Total</TableCell>
+                    <TableCell className="text-right num">{formatMoney(view.brands.total)}</TableCell>
+                    <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                      <ShareBar value={view.brands.total} total={view.brands.total} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <ChangeCell value={change(view.brands.total, view.brands.prevTotal)} />
+                    </TableCell>
+                  </TableRow>
                 </TableBody>
               </Table>
             </Card>
