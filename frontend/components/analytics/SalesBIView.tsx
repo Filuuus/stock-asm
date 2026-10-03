@@ -97,32 +97,15 @@ const COLOR_CURRENT = "#2a78d6";
 const COLOR_PREVIOUS = "#eb6834";
 const TOP_BRANDS = 8;
 type Unit = "%" | "x" | "dias" | "$";
-// Rows of her INDICADORES sheet that we can compute, in her order.
-const INDICATORS: {
-  key: IndicatorKey;
-  label: string;
-  unit: Unit;
-  group?: string;
-}[] = [
-  {
-    group: "Rentabilidad",
-    key: "margen_bruto",
-    label: "Margen bruto",
-    unit: "%",
-  },
+// Rows of her INDICADORES sheet that we can compute, in her order. `note` is a
+// caveat about our data, shown as a footnote - not a definition (the owner is
+// an accountant).
+const INDICATORS: { key: IndicatorKey; label: string; unit: Unit; group?: string; note?: string }[] = [
+  { group: "Rentabilidad", key: "margen_bruto", label: "Margen bruto", unit: "%" },
   { key: "margen_operativo", label: "Margen operativo", unit: "%" },
   { key: "margen_neto", label: "Margen neto (antes de impuestos)", unit: "%" },
-  {
-    key: "gasto_operativo_ingresos",
-    label: "Gasto operativo / ingresos",
-    unit: "%",
-  },
-  {
-    group: "Liquidez",
-    key: "saldo_caja",
-    label: "Caja y bancos al cierre",
-    unit: "$",
-  },
+  { key: "gasto_operativo_ingresos", label: "Gasto operativo / ingresos", unit: "%" },
+  { group: "Liquidez", key: "saldo_caja", label: "Caja y bancos al cierre", unit: "$" },
   { key: "razon_circulante", label: "Razón circulante", unit: "x" },
   { key: "prueba_acida", label: "Prueba ácida", unit: "x" },
   {
@@ -130,20 +113,21 @@ const INDICATORS: {
     key: "dias_cxc",
     label: "Días de cuentas por cobrar",
     unit: "dias",
+    note:
+      "Con los saldos de Contabilidad y las ventas del año; los días promedio de cobro de arriba usan " +
+      "Comercial y los últimos 12 meses, por eso difieren.",
   },
   { key: "dias_inventario", label: "Días de inventario", unit: "dias" },
-  { key: "dias_cxp", label: "Días de cuentas por pagar", unit: "dias" },
   {
-    key: "ciclo_efectivo",
-    label: "Ciclo de conversión de efectivo",
+    key: "dias_cxp",
+    label: "Días de cuentas por pagar",
     unit: "dias",
+    note:
+      "Bajo por el anticipo a un proveedor extranjero, que hoy se resta de lo que se debe; pendiente de " +
+      "revisar con Contabilidad. Afecta también el ciclo de efectivo.",
   },
-  {
-    group: "Endeudamiento y retorno",
-    key: "endeudamiento",
-    label: "Nivel de endeudamiento",
-    unit: "%",
-  },
+  { key: "ciclo_efectivo", label: "Ciclo de conversión de efectivo", unit: "dias" },
+  { group: "Endeudamiento y retorno", key: "endeudamiento", label: "Nivel de endeudamiento", unit: "%" },
   { key: "roa_ytd", label: "ROA acumulado", unit: "%" },
   { key: "roe_ytd", label: "ROE acumulado", unit: "%" },
   {
@@ -152,36 +136,19 @@ const INDICATORS: {
     label: "Punto de equilibrio operativo (acum.)",
     unit: "$",
   },
-  {
-    key: "pe_financiero_ytd",
-    label: "Punto de equilibrio financiero (acum.)",
-    unit: "$",
-  },
-  {
-    key: "cobertura_pef",
-    label: "Cobertura del punto de equilibrio",
-    unit: "x",
-  },
+  { key: "pe_financiero_ytd", label: "Punto de equilibrio financiero (acum.)", unit: "$" },
+  { key: "cobertura_pef", label: "Cobertura del punto de equilibrio", unit: "x" },
 ];
+// Footnote markers, in list order.
+const NOTED = INDICATORS.filter((i) => i.note);
+const noteMark = (key: IndicatorKey) => "*".repeat(NOTED.findIndex((i) => i.key === key) + 1);
 // Targets from her model's "semáforo" - provisional, set for another organization.
-const TARGETS: { key: IndicatorKey; label: string; goal: string; ok: (v: number) => boolean; reading: [string, string] }[] = [
-  {
-    key: "margen_operativo", label: "Margen operativo", goal: "≥ 10%", ok: (v) => v >= 0.1,
-    reading: ["La operación cubre su estructura de gastos.", "La operación no deja suficiente margen sobre sus gastos."],
-  },
-  {
-    key: "razon_circulante", label: "Razón circulante", goal: "≥ 1.5x", ok: (v) => v >= 1.5,
-    reading: ["Hay holgura para cubrir las obligaciones de corto plazo.", "Poca holgura para cubrir obligaciones de corto plazo."],
-  },
-  {
-    key: "ciclo_efectivo", label: "Ciclo de efectivo", goal: "≤ 30 días", ok: (v) => v <= 30,
-    reading: ["El efectivo se recupera rápido.", "El efectivo tarda en regresar (inventario + cobranza - pagos)."],
-  },
-  {
-    key: "cobertura_pef", label: "Cobertura del punto de equilibrio", goal: "≥ 1.0x", ok: (v) => v >= 1,
-    reading: ["Los ingresos del año superan el punto de equilibrio.", "Los ingresos del año no alcanzan el punto de equilibrio."],
-  },
-];
+const TARGETS: { key: IndicatorKey; goal: string; ok: (v: number) => boolean }[] = [
+  { key: "margen_operativo", goal: "≥ 10%", ok: (v) => v >= 0.1 },
+  { key: "razon_circulante", goal: "≥ 1.5x", ok: (v) => v >= 1.5 },
+  { key: "ciclo_efectivo", goal: "≤ 30 días", ok: (v) => v <= 30 },
+  { key: "cobertura_pef", goal: "≥ 1.0x", ok: (v) => v >= 1 },
+]
 
 // Shared look for every table here: tinted header with small caps labels,
 // alternating row shading, row label in medium weight.
@@ -214,9 +181,8 @@ function formatIndicator(value: number | null | undefined, unit: Unit) {
   return compactMoney(value);
 }
 
-// Text color for a matrix cell: targeted indicators by their target (the
-// semáforo above carries the icon + label), other money/percent values red
-// when negative.
+// Text color for an indicator value: by its target when it has one, otherwise
+// red only when negative.
 function indicatorTone(key: IndicatorKey, value: number | null | undefined) {
   if (typeof value !== "number") return "text-gray-400";
   const target = TARGETS.find((t) => t.key === key);
@@ -466,6 +432,49 @@ function IncomeWaterfall({
   );
 }
 
+// One indicator's trend this year: a line through the months so far (gaps
+// where Contabilidad hasn't closed), last year's monthly average dashed, and
+// a dot on the picked month (the last one).
+function Sparkline({ values, reference }: { values: (number | null)[]; reference: number | null }) {
+  const known = values.filter((v): v is number => v !== null);
+  if (!known.length) return <div className="h-7" />;
+  const all = reference === null ? known : [...known, reference];
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  const x = (i: number) => (values.length === 1 ? 50 : (i / (values.length - 1)) * 100);
+  const y = (v: number) => (hi === lo ? 50 : 10 + (1 - (v - lo) / (hi - lo)) * 80); // % of the height
+  const path = values
+    .map((v, i) => (v === null ? "" : `${i > 0 && values[i - 1] !== null ? "L" : "M"}${x(i)},${y(v)}`))
+    .join("");
+  const last = values[values.length - 1];
+  return (
+    <div className="relative h-7">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible">
+        {reference !== null && (
+          <line
+            x1={0}
+            x2={100}
+            y1={y(reference)}
+            y2={y(reference)}
+            stroke="#94a3b8"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+        <path d={path} fill="none" stroke={COLOR_CURRENT} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+      </svg>
+      {last !== null && (
+        // A dot drawn in HTML so it stays round while the line stretches.
+        <span
+          className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white"
+          style={{ left: `${x(values.length - 1)}%`, top: `${y(last)}%`, background: COLOR_CURRENT }}
+        />
+      )}
+    </div>
+  );
+}
+
 function lastCompleteMonth() {
   const d = new Date();
   return monthToISO(new Date(d.getFullYear(), d.getMonth() - 1, 1));
@@ -546,7 +555,8 @@ export default function SalesBIView() {
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
-  // On a phone the indicator matrix scrolls sideways; start it at the picked
+  const [openIndicator, setOpenIndicator] = useState<IndicatorKey | null>(null);
+  // When the indicator table is wider than the screen, start it at the picked
   // month (its last column) rather than at January.
   const indicatorTable = useRef<HTMLTableElement>(null);
   useEffect(() => {
@@ -1103,63 +1113,105 @@ export default function SalesBIView() {
           {view.resPosted && (
             <>
               <SectionHeading title="Indicadores">
-                  Mismas fórmulas que el modelo financiero mensual, con los saldos de Contabilidad al cierre de cada
-                  mes. Las metas del semáforo son provisionales: vienen de ese modelo, hecho para otra organización.
-                </SectionHeading>
+                Mismas fórmulas que el modelo financiero mensual, con los saldos de Contabilidad al cierre de cada mes.
+                Las metas son provisionales: vienen de ese modelo, hecho para otra organización.
+              </SectionHeading>
 
-              <Card>
-                <CardHeader className="p-4 pb-2">
-                  <CardTitle className="text-base">Semáforo de {monthName}</CardTitle>
-                </CardHeader>
-                <Table className={TABLE_CLASS}>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Indicador</TableHead>
-                      <TableHead className="text-right">Actual</TableHead>
-                      <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Meta</TableHead>
-                      <TableHead>Estatus</TableHead>
-                      <TableHead className={HIDE_BELOW_MD}>Lectura</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {TARGETS.map((t) => {
-                      const value = view.indicator?.[t.key];
-                      const unit = INDICATORS.find((i) => i.key === t.key)!.unit;
-                      const ok = typeof value === "number" ? t.ok(value) : null;
-                      return (
-                        <TableRow key={t.key}>
-                          <TableCell>{t.label}</TableCell>
-                          <TableCell className="text-right num">
-                            {formatIndicator(value, unit)}
-                            {unit === "dias" && typeof value === "number" ? " días" : ""}
-                          </TableCell>
-                          <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{t.goal}</TableCell>
-                          <TableCell>
-                            {ok === null ? (
-                              "-"
-                            ) : (
-                              <span
-                                className={cn(
-                                  "inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap",
-                                  ok ? "text-green-700" : "text-red-700",
-                                )}
-                              >
-                                {ok ? <CircleCheck className="w-4 h-4" aria-hidden /> : <CircleAlert className="w-4 h-4" aria-hidden />}
-                                {ok ? "Cumple" : "No cumple"}
-                              </span>
+              {/* Phones: one row per indicator with its trend; tapping shows every month. */}
+              <Card className="sm:hidden">
+                <div className="px-4 py-2">
+                  <div className="hidden sm:grid grid-cols-[15rem_1fr_7rem_10rem] gap-x-4 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    <span>Indicador</span>
+                    <span>Tendencia {view.year}</span>
+                    <span className="text-right">{MONTH_ABBR[Number(data!.month.slice(5)) - 1]}</span>
+                    <span className="text-right">Referencia</span>
+                  </div>
+                  {INDICATORS.map((ind) => {
+                    const value = view.indicator?.[ind.key];
+                    const target = TARGETS.find((t) => t.key === ind.key);
+                    const ok = target && typeof value === "number" ? target.ok(value) : null;
+                    const average = view.indicatorAverage(ind.key);
+                    const series = view.indicatorMonths.map((mm) => mm.row?.[ind.key] ?? null);
+                    const open = openIndicator === ind.key;
+                    const show = (v: number | null | undefined) =>
+                      formatIndicator(v, ind.unit) + (ind.unit === "dias" && typeof v === "number" ? " días" : "");
+                    return (
+                      <Fragment key={ind.key}>
+                        {ind.group && (
+                          <p className="mt-3 border-b border-slate-200 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            {ind.group}
+                          </p>
+                        )}
+                        <div
+                          className="grid cursor-pointer grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 border-b border-slate-100 py-2 sm:grid-cols-[15rem_1fr_7rem_10rem]"
+                          onClick={() => setOpenIndicator(open ? null : ind.key)}
+                        >
+                          <button type="button" className="flex items-center gap-1 text-left text-sm text-gray-800" aria-expanded={open}>
+                            <ChevronRight
+                              className={cn("w-4 h-4 shrink-0 text-gray-400 transition-transform", open && "rotate-90")}
+                              aria-hidden
+                            />
+                            {ind.label}
+                          </button>
+                          <span
+                            className={cn(
+                              "flex items-center justify-end gap-1 text-sm num font-semibold sm:col-start-3 sm:row-start-1",
+                              indicatorTone(ind.key, value),
                             )}
-                          </TableCell>
-                          <TableCell className={cn("text-sm text-gray-500", HIDE_BELOW_MD)}>
-                            {ok === null ? "" : t.reading[ok ? 0 : 1]}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                          >
+                            {ok !== null &&
+                              (ok ? (
+                                <CircleCheck className="w-4 h-4" aria-label="Cumple la meta" />
+                              ) : (
+                                <CircleAlert className="w-4 h-4" aria-label="No cumple la meta" />
+                              ))}
+                            {show(value)}
+                          </span>
+                          <div className="col-span-2 pl-5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:pl-0">
+                            <Sparkline values={series} reference={average} />
+                          </div>
+                          <span className="hidden sm:block text-right text-xs leading-tight text-gray-500">
+                            <span className="whitespace-nowrap">
+                              prom. {view.year - 1}: <span className="num">{show(average)}</span>
+                            </span>
+                            {target && (
+                              <>
+                                <br />
+                                meta {target.goal}
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        {open && (
+                          <div className="space-y-2 border-b border-slate-100 bg-slate-50 px-5 py-3 text-sm">
+                            <p className="text-xs text-gray-500">
+                              Promedio mensual {view.year - 1}: <span className="num">{show(average)}</span>
+                              {target && ` · meta ${target.goal}`}
+                            </p>
+                            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                              {view.indicatorMonths.map((mm, i) => (
+                                <li
+                                  key={mm.label}
+                                  className={cn(
+                                    "num",
+                                    i === view.indicatorMonths.length - 1 ? "font-semibold text-gray-900" : "text-gray-600",
+                                  )}
+                                >
+                                  <span className="text-gray-400">{mm.label}</span> {show(mm.row?.[ind.key])}
+                                </li>
+                              ))}
+                            </ul>
+                            {ind.note && <p className="text-xs text-gray-500">{ind.note}</p>}
+                          </div>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </div>
               </Card>
 
-              <Card>
+              {/* Tablet and desktop: the full table, as in her model, with the targets in it. */}
+              <Card className="hidden sm:block">
                 <CardHeader className="p-4 pb-2">
                   <CardTitle className="text-base">Indicadores por mes</CardTitle>
                   <CardDescription>
@@ -1171,6 +1223,7 @@ export default function SalesBIView() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="sticky left-0 bg-inherit min-w-[11rem]">Indicador</TableHead>
+                      <TableHead className="text-right">Meta</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Prom. {view.year - 1}</TableHead>
                       {view.indicatorMonths.map((mm, i) => (
                         <TableHead
@@ -1183,44 +1236,69 @@ export default function SalesBIView() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {INDICATORS.map((ind) => (
-                      <Fragment key={ind.key}>
-                        {ind.group && (
-                          // Group label row: ! overrides the table's row and first-column styles.
-                          // The label sits in the first (pinned) cell alone - a cell spanning the
-                          // whole row can't stay pinned and scrolls out of view on phones.
-                          <tr className="border-b !bg-slate-200">
-                            <td className="sticky left-0 bg-slate-200 px-4 py-1.5 text-[11px] !font-semibold uppercase tracking-wide whitespace-nowrap !text-slate-600">
-                              {ind.group}
-                            </td>
-                            <td colSpan={view.indicatorMonths.length + 1} />
-                          </tr>
-                        )}
-                        <TableRow>
-                          <TableCell className="sticky left-0 bg-inherit">{ind.label}</TableCell>
-                          <TableCell className="text-right num text-gray-500">
-                            {formatIndicator(view.indicatorAverage(ind.key), ind.unit)}
-                          </TableCell>
-                          {view.indicatorMonths.map((mm, i) => {
-                            const value = mm.row?.[ind.key];
-                            return (
-                              <TableCell
-                                key={mm.label}
-                                className={cn(
-                                  "text-right num",
-                                  indicatorTone(ind.key, value),
-                                  i === view.indicatorMonths.length - 1 && "bg-blue-50 font-semibold",
-                                )}
-                              >
-                                {formatIndicator(value, ind.unit)}
-                              </TableCell>
-                            );
-                          })}
-                        </TableRow>
-                      </Fragment>
-                    ))}
+                    {INDICATORS.map((ind) => {
+                      const target = TARGETS.find((t) => t.key === ind.key);
+                      return (
+                        <Fragment key={ind.key}>
+                          {ind.group && (
+                            // Group label row: ! overrides the table's row and first-column styles.
+                            // The label sits in the first (pinned) cell alone - a cell spanning the
+                            // whole row can't stay pinned when the table scrolls sideways.
+                            <tr className="border-b !bg-slate-200">
+                              <td className="sticky left-0 bg-slate-200 px-4 py-1.5 text-[11px] !font-semibold uppercase tracking-wide whitespace-nowrap !text-slate-600">
+                                {ind.group}
+                              </td>
+                              <td colSpan={view.indicatorMonths.length + 2} />
+                            </tr>
+                          )}
+                          <TableRow>
+                            <TableCell className="sticky left-0 bg-inherit">
+                              {ind.label}
+                              {ind.note && <span className="text-gray-400">{noteMark(ind.key)}</span>}
+                            </TableCell>
+                            <TableCell className="text-right num whitespace-nowrap text-gray-500">{target?.goal}</TableCell>
+                            <TableCell className="text-right num text-gray-500">
+                              {formatIndicator(view.indicatorAverage(ind.key), ind.unit)}
+                            </TableCell>
+                            {view.indicatorMonths.map((mm, i) => {
+                              const value = mm.row?.[ind.key];
+                              const picked = i === view.indicatorMonths.length - 1;
+                              // The semáforo: the picked month's value carries the target's icon.
+                              const ok = picked && target && typeof value === "number" ? target.ok(value) : null;
+                              return (
+                                <TableCell
+                                  key={mm.label}
+                                  className={cn(
+                                    "text-right num",
+                                    indicatorTone(ind.key, value),
+                                    picked && "bg-blue-50 font-semibold",
+                                  )}
+                                >
+                                  <span className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
+                                    {ok !== null &&
+                                      (ok ? (
+                                        <CircleCheck className="w-4 h-4" aria-label="Cumple la meta" />
+                                      ) : (
+                                        <CircleAlert className="w-4 h-4" aria-label="No cumple la meta" />
+                                      ))}
+                                    {formatIndicator(value, ind.unit)}
+                                  </span>
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        </Fragment>
+                      );
+                    })}
                   </TableBody>
                 </Table>
+                <div className="space-y-1 px-4 py-3 text-xs text-gray-500">
+                  {NOTED.map((ind) => (
+                    <p key={ind.key}>
+                      {noteMark(ind.key)} {ind.label}: {ind.note}
+                    </p>
+                  ))}
+                </div>
               </Card>
             </>
           )}
