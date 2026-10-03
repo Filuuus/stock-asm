@@ -20,7 +20,9 @@ from django.db import connections
 
 from api.models import AdmAgentes, AdmClasificacionesValores, AdmConceptos, AdmDocumentos, AdmMovimientos, AdmProductos
 
-from .models import CommissionCategoryRate, InvoiceCommissionOverride, PuntoVentaClientZone, ZeroCommissionProduct
+from .models import (
+    CommissionCategoryRate, InvoiceCommissionOverride, LineRateOverride, PuntoVentaClientZone, ZeroCommissionProduct,
+)
 
 FACTURA_DOC_TYPE = 4
 DEVOLUCION_DOC_TYPE = 5  # Devolucion sobre Venta - a return against a Factura, not a real sale.
@@ -335,7 +337,7 @@ class CommissionRepository:
                 CIDDOCUMENTO__in=invoice_ids,
                 CIDDOCUMENTODE=FACTURA_DOC_TYPE,
             ).values(
-                'CIDDOCUMENTO', 'CIDPRODUCTO', 'CNETO', 'CUNIDADES',
+                'CIDMOVIMIENTO', 'CIDDOCUMENTO', 'CIDPRODUCTO', 'CNETO', 'CUNIDADES',
                 'CDESCUENTO1', 'CDESCUENTO2', 'CDESCUENTO3', 'CDESCUENTO4', 'CDESCUENTO5',
             )
         )
@@ -360,10 +362,12 @@ class CommissionRepository:
         return dict(AdmAgentes.objects.values_list('CIDAGENTE', 'CCODIGOAGENTE'))
 
     @staticmethod
-    def fetch_puntoventa_client_zones():
-        return dict(
-            PuntoVentaClientZone.objects.filter(active=True).values_list('cliente_id', 'zone')
-        )
+    def fetch_puntoventa_clients():
+        return {c.cliente_id: c for c in PuntoVentaClientZone.objects.filter(active=True)}
+
+    @staticmethod
+    def fetch_line_rate_overrides():
+        return {o.movimiento_id: o for o in LineRateOverride.objects.all()}
 
     @staticmethod
     def search_facturas(folio):
@@ -602,6 +606,17 @@ def _paid_dates_from_ledger(facturas, accepted, cash_due=None):
     return paid_dates
 
 
+def _cash_share(factura, settlement):
+    """Share of the invoice settled with money, when credit notes/returns
+    settled part of it (1 otherwise). F 20951: $5,968.01 invoice, $895.21
+    credit note, $5,072.80 paid -> 0.85; management's sheet pays on 5,072.80.
+    """
+    total = Decimal(str(factura['CTOTAL'] or 0))
+    if not settlement or settlement['credit'] < LEDGER_FULL_PAYMENT_TOLERANCE or not total:
+        return Decimal('1')
+    return min(Decimal(str(settlement['cash'])) / total, Decimal('1'))
+
+
 def _classify_line(producto, brand_names, zero_codes):
     if producto['CCODIGOPRODUCTO'] in zero_codes:
         return 'ZERO'
@@ -810,16 +825,21 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     # credit-noted ones - a missing zone assignment is a different problem
     # from a missing payment date and shouldn't get lumped into that bucket.
     agent_codes = CommissionRepository.fetch_agent_codes()
-    puntoventa_client_zones = CommissionRepository.fetch_puntoventa_client_zones()
+    # A listed client is Punto de Venta whatever agent its invoice carries
+    # (some are registered under a route in the ERP), possibly for a few
+    # products only - see PuntoVentaClientZone.product_codes.
+    puntoventa_clients = CommissionRepository.fetch_puntoventa_clients()
     puntoventa_zone_override = {}
+    puntoventa_client_of = {}
     puntoventa_unassigned = []
     _facturas = []
     for f in facturas:
-        origin_zone = agent_codes.get(f['CIDAGENTE'])
-        if origin_zone == PUNTOVENTA_ZONE_NAME:
-            reassigned_zone = puntoventa_client_zones.get(f['CIDCLIENTEPROVEEDOR'])
-            if reassigned_zone:
-                puntoventa_zone_override[f['CIDDOCUMENTO']] = reassigned_zone
+        pv_client = puntoventa_clients.get(f['CIDCLIENTEPROVEEDOR'])
+        if pv_client:
+            puntoventa_client_of[f['CIDDOCUMENTO']] = pv_client
+        if agent_codes.get(f['CIDAGENTE']) == PUNTOVENTA_ZONE_NAME:
+            if pv_client:
+                puntoventa_zone_override[f['CIDDOCUMENTO']] = pv_client.zone
                 _facturas.append(f)
             else:
                 puntoventa_unassigned.append(f)
@@ -872,6 +892,7 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
 
     zero_codes = set(ZeroCommissionProduct.objects.filter(active=True).values_list('producto_codigo', flat=True))
     rates_by_code = {r.code: r for r in CommissionCategoryRate.objects.filter(active=True)}
+    line_rates = CommissionRepository.fetch_line_rate_overrides()
 
     lines = []
     zone_totals = defaultdict(Decimal)
@@ -883,15 +904,14 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             continue
 
         category = _classify_line(producto, brand_names, zero_codes)
-        reassigned_zone = puntoventa_zone_override.get(m['CIDDOCUMENTO'])
-        if reassigned_zone:
-            # Flat Punto de Venta rate overrides the usual per-category one
-            # regardless of what the product is - category is still shown
-            # in the drilldown for transparency, just not used for the rate.
-            zone_code = reassigned_zone
+        zone_code = puntoventa_zone_override.get(m['CIDDOCUMENTO']) or agent_codes.get(factura['CIDAGENTE'])
+        pv_client = puntoventa_client_of.get(m['CIDDOCUMENTO'])
+        if pv_client and pv_client.applies_to(producto['CCODIGOPRODUCTO']):
+            # Flat Punto de Venta rate overrides the usual per-category one -
+            # category is still shown in the drilldown for transparency,
+            # just not used for the rate.
             rate_code = None if category == 'ZERO' else PUNTOVENTA_RATE_CODE
         else:
-            zone_code = agent_codes.get(factura['CIDAGENTE'])
             rate_code = _rate_code_for(category, zone_code)
         rate_row = rates_by_code.get(rate_code) if rate_code else None
 
@@ -900,6 +920,9 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         days_late = (paid_date - due_date).days if due_date else 0
 
         rate = _effective_rate(rate_row, days_late)
+        line_rate = line_rates.get(m['CIDMOVIMIENTO'])
+        if line_rate:
+            rate = line_rate.rate
         # CNETO is pre-discount (verified against real data 2026-09-19: a
         # $64,192 line with an 8% discount posts CNETO=64192, CTOTAL=59,056.64
         # - commission was being computed on the undiscounted price, real
@@ -909,13 +932,17 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         # taxed+discounted lines too.
         discount = sum(Decimal(str(m[f'CDESCUENTO{i}'] or 0)) for i in range(1, 6))
         net_amount = Decimal(str(m['CNETO'])) - discount
-        commission = net_amount * rate
+        # Partly settled by a credit note/return: commission only on the part
+        # paid with money (management 2026-09-29).
+        cash_share = _cash_share(factura, settlements.get(m['CIDDOCUMENTO']))
+        commission = net_amount * cash_share * rate
         quantity = Decimal(str(m['CUNIDADES']))
         unit_amount = net_amount / quantity if quantity else None
 
         zone_totals[zone_code] += commission
         lines.append({
             'invoice_id': m['CIDDOCUMENTO'],
+            'movimiento_id': m['CIDMOVIMIENTO'],
             'folio': factura['CFOLIO'],
             # Display only ("F 20844"); `folio` stays the bare number.
             'folio_display': f"{concepto_series.get(factura['CIDCONCEPTODOCUMENTO'], 'F')} {int(factura['CFOLIO'])}",
@@ -934,6 +961,9 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             'paid_date': paid_date,
             'due_date': due_date,
             'commission': commission,
+            'cash_share': cash_share if cash_share < 1 else None,
+            'auto_rate': _effective_rate(rate_row, days_late) if line_rate else None,
+            'rate_note': line_rate.note if line_rate else None,
         })
 
     overrides = CommissionRepository.fetch_overrides()

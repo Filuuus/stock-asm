@@ -1,11 +1,12 @@
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.permissions import IsManagement, IsWorker
 
-from .models import InvoiceCommissionOverride
+from .models import InvoiceCommissionOverride, LineRateOverride
 from .services import CommissionRepository, calculate_commissions
 
 
@@ -96,4 +97,36 @@ def override_create(request):
 @permission_classes([IsManagement])
 def override_delete(request, invoice_id):
     InvoiceCommissionOverride.objects.filter(invoice_id=invoice_id).delete()
+    return Response(status=204)
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def line_rate_save(request):
+    """Management's rate for one invoice line (a fraction: 0.06 = 6%)."""
+    try:
+        movimiento_id = int(request.data.get('movimiento_id'))
+        invoice_id = int(request.data.get('invoice_id'))
+        rate = Decimal(str(request.data.get('rate')))
+    except (TypeError, ValueError, InvalidOperation):
+        return Response({'error': 'movimiento_id, invoice_id y rate son requeridos.'}, status=400)
+    if not Decimal('0') <= rate <= Decimal('0.2'):
+        return Response({'error': 'La tasa debe estar entre 0% y 20%.'}, status=400)
+
+    LineRateOverride.objects.update_or_create(
+        movimiento_id=movimiento_id,
+        defaults={
+            'invoice_id': invoice_id,
+            'rate': rate,
+            'note': request.data.get('note', '') or '',
+            'created_by': request.user,
+        },
+    )
+    return Response(status=204)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsManagement])
+def line_rate_delete(request, movimiento_id):
+    LineRateOverride.objects.filter(movimiento_id=movimiento_id).delete()
     return Response(status=204)
