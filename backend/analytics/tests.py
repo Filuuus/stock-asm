@@ -158,3 +158,16 @@ class AgingTests(SimpleTestCase):
         self.assertEqual(result['pendiente'], 110)
         self.assertEqual(result['saldo_a_favor'], 275)
         self.assertEqual([(c['client_id'], c['vencido'], c['pendiente']) for c in result['clientes']], [(1, 60, 110)])
+        # Invoices default to no agent here, so everything left is "no zone".
+        self.assertEqual([(z['zona'], z['pendiente'], z['vencido']) for z in result['por_zona']], [(None, 110, 60)])
+
+    def test_splits_by_the_invoice_zone(self):
+        rows = [
+            {'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 2,
+             'CFECHA': datetime(2026, 1, 1), 'CFECHAVENCIMIENTO': datetime(2026, 9, 1), 'CPENDIENTE': 70},
+            {'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 1,
+             'CFECHA': datetime(2026, 1, 1), 'CFECHAVENCIMIENTO': datetime(2026, 11, 1), 'CPENDIENTE': 30},
+        ]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(z['zona'], z['pendiente'], z['vencido'], z['por_antiguedad']['31-60 días'])
+                          for z in result['por_zona']], [('ZONA1', 30, 0, 0), ('ZONA2', 70, 70, 70)])

@@ -341,7 +341,8 @@ def fetch_open_documents():
     """Every non-cancelled client document with a balance today, however old:
     scoped Facturas, plus notas de cargo and unapplied credits for any client
     (they carry no zone; they're netted per client)."""
-    fields = ('CIDDOCUMENTODE', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA', 'CFECHAVENCIMIENTO', 'CPENDIENTE')
+    fields = ('CIDDOCUMENTODE', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CFECHA', 'CFECHAVENCIMIENTO',
+              'CPENDIENTE')
     open_docs = AdmDocumentos.objects.filter(CCANCELADO=0, CPENDIENTE__gt=0.005)
     return [
         *open_docs.filter(CIDDOCUMENTODE=FACTURA_DOC_TYPE, CIDAGENTE__in=ZONE_SCOPE.values()).values(*fields),
@@ -351,7 +352,8 @@ def fetch_open_documents():
 
 def aging(documents, today):
     """Open balance by days past due (Comercial CFECHAVENCIMIENTO) and the
-    clients with the most overdue. With IVA, like CPENDIENTE. Each client's
+    clients with the most overdue, overall and per zone (the invoice's agent;
+    notas de cargo carry none). With IVA, like CPENDIENTE. Each client's
     unapplied credits pay off their oldest charges first; whatever is left over
     is saldo a favor, not counted against anyone else."""
     charges, credits = defaultdict(list), defaultdict(float)
@@ -362,6 +364,9 @@ def aging(documents, today):
             charges[d['CIDCLIENTEPROVEEDOR']].append(d)
 
     buckets = {label: [0.0, 0] for label, _ in AGING_BUCKETS + [(AGING_LAST_BUCKET, None)]}
+    zone_by_id = {v: k for k, v in ZONE_SCOPE.items()}
+    zones = {z: {'zona': z, 'pendiente': 0.0, 'vencido': 0.0, 'por_antiguedad': dict.fromkeys(buckets, 0.0)}
+             for z in [*ZONE_SCOPE, None]}
     clients = []
     for client_id, docs in charges.items():
         credit = credits.pop(client_id, 0.0)
@@ -377,6 +382,11 @@ def aging(documents, today):
             label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
             buckets[label][0] += pending
             buckets[label][1] += 1
+            z = zones[zone_by_id.get(d.get('CIDAGENTE'))]
+            z['pendiente'] += pending
+            z['por_antiguedad'][label] += pending
+            if days > 0:
+                z['vencido'] += pending
             c['pendiente'] += pending
             c['por_antiguedad'][label] += pending
             if days > 0:
@@ -393,6 +403,11 @@ def aging(documents, today):
         'pendiente': round(sum(b[0] for b in buckets.values()), 2),
         'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'documentos': v[1]} for k, v in buckets.items()],
         'saldo_a_favor': round(sum(credits.values()), 2),
+        'por_zona': [
+            {'zona': z['zona'], 'pendiente': round(z['pendiente'], 2), 'vencido': round(z['vencido'], 2),
+             'por_antiguedad': {k: round(v, 2) for k, v in z['por_antiguedad'].items()}}
+            for z in zones.values() if z['pendiente'] >= 0.005
+        ],
         'clientes_vencidos': len(overdue),
         'clientes': overdue,  # every client with something overdue, most overdue first
     }
@@ -430,7 +445,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v9_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v10_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)

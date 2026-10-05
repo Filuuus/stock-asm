@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
 import ClientLink from "@/components/facturas/ClientLink";
 import { useInvoiceDialog } from "@/components/facturas/invoice-dialog-context";
 import type { OverdueClient } from "@/components/analytics/OverdueClients";
@@ -87,6 +87,8 @@ interface SalesSummary {
     dias_cobro: number | null;
     antiguedad: { bucket: string; pendiente: number; documentos: number }[];
     saldo_a_favor: number;
+    // zona null = notas de cargo, which carry no agent.
+    por_zona: { zona: Zone | null; pendiente: number; vencido: number; por_antiguedad: Record<string, number> }[];
     clientes_vencidos: number;
     clientes: OverdueClient[]; // the top ones; the full list opens in the dialog
   };
@@ -1078,6 +1080,63 @@ export default function SalesBIView() {
               </Table>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-base">Por zona</CardTitle>
+              <CardDescription>Saldo de cada zona por días de vencido, según la zona de la factura</CardDescription>
+            </CardHeader>
+            {(() => {
+              const { por_zona: zones, antiguedad, pendiente } = data!.cuentas_por_cobrar;
+              const buckets = antiguedad.map((b) => b.bucket);
+              const vencido = sum(zones.map((z) => z.vencido));
+              const rows = [
+                ...zones.map((z) => ({ ...z, key: z.zona ?? "none", label: z.zona ? ZONE_LABELS[z.zona] : "Sin zona" })),
+                {
+                  key: "total",
+                  label: "Total",
+                  pendiente,
+                  vencido,
+                  por_antiguedad: Object.fromEntries(antiguedad.map((b) => [b.bucket, b.pendiente])),
+                },
+              ];
+              // The age split from lg; below that, one Vencido column.
+              return (
+                <Table className={cn(TABLE_CLASS, "table-fixed")}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Zona</TableHead>
+                      {buckets.map((b) => (
+                        <TableHead key={b} className={cn("text-right", HIDE_BELOW_LG, COL_SIDE_MONEY)}>
+                          {b.replace(" días", "")}
+                        </TableHead>
+                      ))}
+                      <TableHead className={cn("text-right lg:hidden", COL_SIDE_MONEY)}>Vencido</TableHead>
+                      <TableHead className="text-right w-[5.5rem]">% vencido</TableHead>
+                      <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((z) => (
+                      <TableRow key={z.key} className={cn(z.key === "total" && "!bg-slate-100 font-semibold")}>
+                        <TableCell>{z.label}</TableCell>
+                        {buckets.map((b) => (
+                          <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
+                            {z.por_antiguedad[b] ? formatMoney(z.por_antiguedad[b]) : "-"}
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right num lg:hidden">{formatMoney(z.vencido)}</TableCell>
+                        <TableCell className="text-right num">
+                          {z.pendiente ? percent(z.vencido / z.pendiente, 0) : "-"}
+                        </TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(z.pendiente)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              );
+            })()}
+          </Card>
 
           <SectionHeading title="Resultados">
               Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos
