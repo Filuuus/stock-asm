@@ -124,16 +124,35 @@ class IndicatorTests(SimpleTestCase):
 
 class AgingTests(SimpleTestCase):
     def test_buckets_by_days_past_due_and_ranks_overdue_clients(self):
-        def f(client, due, pending):
-            return {'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}', 'CFECHA': datetime(2026, 1, 1),
+        def f(client, due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}', 'CFECHA': datetime(2026, 1, 1),
                     'CFECHAVENCIMIENTO': datetime.fromisoformat(due), 'CPENDIENTE': pending}
         rows = [f(1, '2026-10-05', 100), f(1, '2026-10-04', 10), f(2, '2026-09-05', 20), f(2, '2026-09-04', 30),
                 f(3, '2026-07-07', 40), f(3, '2026-07-06', 50)]
         result = aging(rows, date(2026, 10, 5))
-        self.assertEqual([(b['bucket'], b['pendiente'], b['facturas']) for b in result['antiguedad']], [
+        self.assertEqual([(b['bucket'], b['pendiente'], b['documentos']) for b in result['antiguedad']], [
             ('Por vencer', 100, 1), ('1-30 días', 30, 2), ('31-60 días', 30, 1),
             ('61-90 días', 40, 1), ('Más de 90 días', 50, 1)])
         self.assertEqual(result['pendiente'], 250)
         self.assertEqual([(c['client_id'], c['vencido'], c['dias_vencido']) for c in result['clientes']],
                          [(3, 90, 91), (2, 50, 31), (1, 10, 1)])
         self.assertEqual(result['clientes'][2]['pendiente'], 110)
+
+    def test_credits_pay_the_clients_oldest_charges_first(self):
+        def f(client, due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}',
+                    'CFECHA': datetime(2018, 1, 1), 'CFECHAVENCIMIENTO': datetime.fromisoformat(due),
+                    'CPENDIENTE': pending}
+        rows = [
+            f(1, '2018-04-01', 25, doc_type=13), f(1, '2026-09-01', 100), f(1, '2026-10-20', 50),
+            f(1, '2019-01-01', 25, doc_type=9), f(1, '2026-01-01', 40, doc_type=7),  # 65: the 13, then 40 of 100
+            f(2, '2026-09-01', 30), f(2, '2026-01-01', 45, doc_type=5),  # covered, 15 left over
+            f(3, '2021-03-05', 260, doc_type=5),  # credit with nothing open
+        ]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(b['bucket'], b['pendiente'], b['documentos']) for b in result['antiguedad']], [
+            ('Por vencer', 50, 1), ('1-30 días', 0, 0), ('31-60 días', 60, 1), ('61-90 días', 0, 0),
+            ('Más de 90 días', 0, 0)])
+        self.assertEqual(result['pendiente'], 110)
+        self.assertEqual(result['saldo_a_favor'], 275)
+        self.assertEqual([(c['client_id'], c['vencido'], c['pendiente']) for c in result['clientes']], [(1, 60, 110)])

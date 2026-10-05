@@ -77,11 +77,14 @@ interface SalesSummary {
   months: MonthRow[];
   brands: Brand[];
   cobrado: Partial<Record<Zone, number>>;
-  // Open invoices today, however old; dias_cobro uses the last 12 months only.
+  // Open invoices and notas de cargo today, however old, net of each client's
+  // unapplied credits (leftover credit is saldo_a_favor); dias_cobro uses the
+  // last 12 months only.
   cuentas_por_cobrar: {
     pendiente: number;
     dias_cobro: number | null;
-    antiguedad: { bucket: string; pendiente: number; facturas: number }[];
+    antiguedad: { bucket: string; pendiente: number; documentos: number }[];
+    saldo_a_favor: number;
     clientes_vencidos: number;
     clientes: { client_id: number; cliente: string; pendiente: number; vencido: number; dias_vencido: number }[];
   };
@@ -784,7 +787,7 @@ export default function SalesBIView() {
               <p className="text-xs text-gray-500">
                 {data!.cuentas_por_cobrar.dias_cobro ?? "-"} días promedio de cobro (últimos 12 meses)
               </p>
-              <p className="text-xs text-gray-400">con IVA, todas las facturas abiertas</p>
+              <p className="text-xs text-gray-400">con IVA, todas las facturas abiertas, menos saldos a favor</p>
             </Tile>
             <Tile label="Devoluciones y notas de crédito" value={formatMoney(view.cur.devoluciones)}>
               <Delta
@@ -979,14 +982,21 @@ export default function SalesBIView() {
           </div>
 
           <SectionHeading title="Cuentas por cobrar">
-            Facturas abiertas hoy según Comercial, con IVA, por días de vencidas. No depende del mes elegido.
+            Facturas abiertas hoy según Comercial, con IVA, por días de vencidas, menos los pagos, notas de crédito y
+            devoluciones de cada cliente que no se han aplicado a una factura. No depende del mes elegido.
           </SectionHeading>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader className="p-4 pb-2">
                 <CardTitle className="text-base">Antigüedad</CardTitle>
-                <CardDescription>Saldo por días desde el vencimiento</CardDescription>
+                <CardDescription>
+                  Saldo por días desde el vencimiento.
+                  {data!.cuentas_por_cobrar.saldo_a_favor > 0 &&
+                    ` Saldos a favor de clientes sin facturas que cubrir: ${formatMoney(
+                      data!.cuentas_por_cobrar.saldo_a_favor,
+                    )}, no restados.`}
+                </CardDescription>
               </CardHeader>
               <Table className={TABLE_CLASS}>
                 <TableHeader>
@@ -994,7 +1004,7 @@ export default function SalesBIView() {
                     <TableHead>Vencimiento</TableHead>
                     <TableHead className="text-right">Por cobrar</TableHead>
                     <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
-                    <TableHead className="text-right">Facturas</TableHead>
+                    <TableHead className="text-right">Documentos</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1002,7 +1012,7 @@ export default function SalesBIView() {
                     const { antiguedad, pendiente } = data!.cuentas_por_cobrar;
                     const rows = [
                       ...antiguedad,
-                      { bucket: "Total", pendiente, facturas: sum(antiguedad.map((b) => b.facturas)) },
+                      { bucket: "Total", pendiente, documentos: sum(antiguedad.map((b) => b.documentos)) },
                     ];
                     return rows.map((b) => (
                       <TableRow key={b.bucket} className={cn(b.bucket === "Total" && "!bg-slate-100 font-semibold")}>
@@ -1011,7 +1021,7 @@ export default function SalesBIView() {
                         <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
                           <ShareBar value={b.pendiente} total={pendiente} />
                         </TableCell>
-                        <TableCell className="text-right num">{b.facturas}</TableCell>
+                        <TableCell className="text-right num">{b.documentos}</TableCell>
                       </TableRow>
                     ));
                   })()}

@@ -329,56 +329,81 @@ AGING_LAST_BUCKET = 'Más de 90 días'
 TOP_OVERDUE_CLIENTS = 10
 
 
-def fetch_open_facturas():
-    """Every scoped, non-cancelled Factura with a balance today, however old."""
-    return list(
-        AdmDocumentos.objects.filter(
-            CIDDOCUMENTODE=FACTURA_DOC_TYPE,
-            CCANCELADO=0,
-            CIDAGENTE__in=ZONE_SCOPE.values(),
-            CPENDIENTE__gt=0.005,
-        ).values('CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA', 'CFECHAVENCIMIENTO', 'CPENDIENTE')
-    )
+# Open client documents besides Facturas. Notas de cargo (13) are charges:
+# in practice 2018-2021 opening balances, most matching an unapplied payment of
+# the same client. Returns, credit notes, payments and abonos never applied to
+# an invoice are credits. Checked against the live ERP 2026-10-05.
+NOTA_CARGO_DOC_TYPE = 13
+CREDIT_DOC_TYPES = (DEVOLUCION_DOC_TYPE, NOTA_CREDITO_DOC_TYPE, 9, 12)
 
 
-def aging(facturas, today):
+def fetch_open_documents():
+    """Every non-cancelled client document with a balance today, however old:
+    scoped Facturas, plus notas de cargo and unapplied credits for any client
+    (they carry no zone; they're netted per client)."""
+    fields = ('CIDDOCUMENTODE', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA', 'CFECHAVENCIMIENTO', 'CPENDIENTE')
+    open_docs = AdmDocumentos.objects.filter(CCANCELADO=0, CPENDIENTE__gt=0.005)
+    return [
+        *open_docs.filter(CIDDOCUMENTODE=FACTURA_DOC_TYPE, CIDAGENTE__in=ZONE_SCOPE.values()).values(*fields),
+        *open_docs.filter(CIDDOCUMENTODE__in=(NOTA_CARGO_DOC_TYPE, *CREDIT_DOC_TYPES)).values(*fields),
+    ]
+
+
+def aging(documents, today):
     """Open balance by days past due (Comercial CFECHAVENCIMIENTO) and the
-    clients with the most overdue. With IVA, like CPENDIENTE."""
+    clients with the most overdue. With IVA, like CPENDIENTE. Each client's
+    unapplied credits pay off their oldest charges first; whatever is left over
+    is saldo a favor, not counted against anyone else."""
+    charges, credits = defaultdict(list), defaultdict(float)
+    for d in documents:
+        if d['CIDDOCUMENTODE'] in CREDIT_DOC_TYPES:
+            credits[d['CIDCLIENTEPROVEEDOR']] += float(d['CPENDIENTE'])
+        else:
+            charges[d['CIDCLIENTEPROVEEDOR']].append(d)
+
     buckets = {label: [0.0, 0] for label, _ in AGING_BUCKETS + [(AGING_LAST_BUCKET, None)]}
-    clients = {}
-    for f in facturas:
-        pending = float(f['CPENDIENTE'])
-        days = (today - (f['CFECHAVENCIMIENTO'] or f['CFECHA']).date()).days
-        label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
-        buckets[label][0] += pending
-        buckets[label][1] += 1
-        c = clients.setdefault(f['CIDCLIENTEPROVEEDOR'], {
-            'client_id': f['CIDCLIENTEPROVEEDOR'], 'cliente': f['CRAZONSOCIAL'],
-            'pendiente': 0.0, 'vencido': 0.0, 'dias_vencido': 0})
-        c['pendiente'] += pending
-        if days > 0:
-            c['vencido'] += pending
-            c['dias_vencido'] = max(c['dias_vencido'], days)
-    overdue = sorted((c for c in clients.values() if c['vencido']), key=lambda c: -c['vencido'])
+    clients = []
+    for client_id, docs in charges.items():
+        credit = credits.pop(client_id, 0.0)
+        c = {'client_id': client_id, 'cliente': docs[0]['CRAZONSOCIAL'], 'pendiente': 0.0, 'vencido': 0.0,
+             'dias_vencido': 0}
+        for d in sorted(docs, key=lambda d: d['CFECHAVENCIMIENTO'] or d['CFECHA']):
+            applied = min(credit, float(d['CPENDIENTE']))
+            credit -= applied
+            pending = float(d['CPENDIENTE']) - applied
+            if pending < 0.005:
+                continue
+            days = (today - (d['CFECHAVENCIMIENTO'] or d['CFECHA']).date()).days
+            label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
+            buckets[label][0] += pending
+            buckets[label][1] += 1
+            c['pendiente'] += pending
+            if days > 0:
+                c['vencido'] += pending
+                c['dias_vencido'] = max(c['dias_vencido'], days)
+        credits[client_id] = credit  # leftover, if any
+        clients.append(c)
+    overdue = sorted((c for c in clients if c['vencido'] >= 0.005), key=lambda c: -c['vencido'])
     for c in overdue:
         c['pendiente'], c['vencido'] = round(c['pendiente'], 2), round(c['vencido'], 2)
     return {
         'pendiente': round(sum(b[0] for b in buckets.values()), 2),
-        'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'facturas': v[1]} for k, v in buckets.items()],
+        'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'documentos': v[1]} for k, v in buckets.items()],
+        'saldo_a_favor': round(sum(credits.values()), 2),
         'clientes_vencidos': len(overdue),
         'clientes': overdue[:TOP_OVERDUE_CLIENTS],
     }
 
 
 def receivables_today():
-    """Open balance today by age, plus DSO over the last 365 days, with IVA.
+    """Open balance today by age (net of unapplied credits), plus DSO over the last 365 days, with IVA.
     ponytail: DSO only counts last year's invoices - older unpaid ones are
     collection problems (they show in the aging), not the normal cycle."""
     today = date.today()
     facturas = CommissionRepository.fetch_scoped_facturas(today - timedelta(days=365), today)
     pending = sum(f['CPENDIENTE'] or 0 for f in facturas)
     sold = sum(f['CTOTAL'] or 0 for f in facturas)
-    return {**aging(fetch_open_facturas(), today),
+    return {**aging(fetch_open_documents(), today),
             'dias_cobro': round(pending / sold * 365, 1) if sold else None}
 
 
@@ -393,7 +418,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v7_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v8_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)
