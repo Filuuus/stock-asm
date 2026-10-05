@@ -401,7 +401,14 @@ function IncomeWaterfall({
     <div className="px-4 pb-4">
       <div className={cn(ROW, "hidden sm:grid pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500")}>
         <span />
-        <span />
+        {/* With a loss the axis starts below zero: mark where zero is. */}
+        <span className="relative h-full">
+          {lo < 0 && (
+            <span className="absolute bottom-0 -translate-x-1/2 normal-case" style={{ left: at(0) }}>
+              0
+            </span>
+          )}
+        </span>
         <span className="text-right">Monto</span>
         <span className="text-right whitespace-nowrap">% ingresos</span>
         <span className="text-right whitespace-nowrap">vs {prevLabel}</span>
@@ -453,6 +460,10 @@ function IncomeWaterfall({
                     background: negative ? "#e34948" : line.total ? COLOR_CURRENT : i === 0 ? "#334155" : "#94a3b8",
                   }}
                 />
+                {lo < 0 && (
+                  // Through the row's padding too, so the rows draw one continuous zero line.
+                  <div className="absolute -inset-y-1 sm:-inset-y-2 w-px bg-slate-500" style={{ left: at(0) }} aria-hidden />
+                )}
               </div>
               <div className="hidden sm:block text-right num text-sm text-gray-600">{share(line.value)}</div>
               <div className="hidden sm:block text-right text-sm">
