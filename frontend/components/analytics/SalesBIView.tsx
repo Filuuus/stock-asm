@@ -176,6 +176,10 @@ const TABLE_CLASS =
 // account names wrap in the first column instead of resizing the table.
 const COL_MONEY = "w-32 sm:w-40";
 const COL_PERCENT = "w-[4.5rem] sm:w-24";
+// The side-by-side cards (brands, aging, overdue clients) are under 480px wide
+// between lg and ~1150px: fixed number columns, the name column truncates.
+const COL_SIDE_MONEY = "w-[7.5rem]";
+const COL_SHARE = "w-[8.5rem]"; // ShareBar is 7.5rem plus padding
 
 function SectionHeading({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -945,19 +949,19 @@ export default function SalesBIView() {
                 value={brandPeriod}
                 onChange={(v) => setBrandPeriod(v as "ytd" | "mes")}
               />
-              <Table className={TABLE_CLASS}>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Marca</TableHead>
-                    <TableHead className="text-right">Ventas</TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
-                    <TableHead className="text-right">Cambio</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Ventas</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% del total</TableHead>
+                    <TableHead className="text-right w-24">Cambio</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {view.brands.rows.map((b) => (
                     <TableRow key={b.brand}>
-                      <TableCell className="max-w-[7rem] sm:max-w-[12rem] truncate" title={b.brand}>
+                      <TableCell className="truncate" title={b.brand}>
                         {b.brand}
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(b.value)}</TableCell>
@@ -1001,13 +1005,13 @@ export default function SalesBIView() {
                     )}, no restados.`}
                 </CardDescription>
               </CardHeader>
-              <Table className={TABLE_CLASS}>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Vencimiento</TableHead>
-                    <TableHead className="text-right">Por cobrar</TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
-                    <TableHead className="text-right">Documentos</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Por cobrar</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% del total</TableHead>
+                    <TableHead className="text-right w-28">Documentos</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1045,22 +1049,22 @@ export default function SalesBIView() {
                   con facturas vencidas. Haga clic en un cliente para ver sus facturas.
                 </CardDescription>
               </CardHeader>
-              <Table className={TABLE_CLASS}>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Cliente</TableHead>
-                    <TableHead className="text-right">Vencido</TableHead>
-                    <TableHead className="text-right">
-                      <span className="sm:hidden">Días</span>
-                      <span className="hidden sm:inline">Días de atraso</span>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Vencido</TableHead>
+                    <TableHead className="text-right w-20 xl:w-32">
+                      <span className="xl:hidden">Días</span>
+                      <span className="hidden xl:inline">Días de atraso</span>
                     </TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Saldo total</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Saldo total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {data!.cuentas_por_cobrar.clientes.map((c) => (
                     <TableRow key={c.client_id}>
-                      <TableCell className="max-w-[7rem] sm:max-w-[12rem] truncate" title={c.cliente}>
+                      <TableCell className="truncate" title={c.cliente}>
                         <ClientLink clientId={c.client_id} label={c.cliente} />
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(c.vencido)}</TableCell>

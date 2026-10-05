@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import ClientLink from "@/components/facturas/ClientLink";
-import { EmptyRow, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, SortColumn, SortDir, useSort } from "@/components/sortable-table";
+import { EmptyRow, HIDE_BELOW_LG, HIDE_BELOW_SM, SortableHead, SortColumn, SortDir, useSort } from "@/components/sortable-table";
 import { cn, formatMoney } from "@/lib/utils";
 
 // Same labels as the backend's AGING_BUCKETS, past due only.
@@ -26,8 +26,11 @@ export interface OverdueClientsList {
   saldo_a_favor: number;
 }
 
-// The count is the least needed column; without it the table fits a tablet.
+// Columns come in as the screen widens: the age split from lg (a landscape
+// tablet), the count from xl. Fixed widths ("table-fixed") with the client
+// column taking what's left and truncating, so it fits at every width.
 const HIDE_BELOW_XL = "hidden xl:table-cell";
+const COL_MONEY = "w-28";
 
 type SortKey = "cliente" | "vencido" | (typeof OVERDUE_BUCKETS)[number] | "documentos" | "dias" | "pendiente";
 
@@ -44,19 +47,20 @@ const SORT_COLUMNS: Record<SortKey, SortColumn<OverdueClient>> = {
 
 const SORT_HEADERS: [SortKey, ReactNode, "left" | "right", string?][] = [
   ["cliente", "Cliente", "left"],
-  ["vencido", "Vencido", "right"],
+  ["vencido", "Vencido", "right", COL_MONEY],
   // "días" is in the description; the short labels let the table fit a tablet.
-  ...OVERDUE_BUCKETS.map((b): [SortKey, ReactNode, "right", string] => [b, b.replace(" días", ""), "right", HIDE_BELOW_MD]),
-  ["documentos", "Documentos", "right", HIDE_BELOW_XL],
+  ...OVERDUE_BUCKETS.map((b): [SortKey, ReactNode, "right", string] => [b, b.replace(" días", ""), "right", cn(HIDE_BELOW_LG, COL_MONEY)]),
+  ["documentos", "Documentos", "right", cn(HIDE_BELOW_XL, "w-28")],
   [
     "dias",
     <>
-      <span className="sm:hidden">Días</span>
-      <span className="hidden sm:inline">Días de atraso</span>
+      <span className="xl:hidden">Días</span>
+      <span className="hidden xl:inline">Días de atraso</span>
     </>,
     "right",
+    "w-20 xl:w-32",
   ],
-  ["pendiente", "Saldo total", "right", HIDE_BELOW_SM],
+  ["pendiente", "Saldo total", "right", cn(HIDE_BELOW_SM, COL_MONEY)],
 ];
 
 const byName = (a: OverdueClient, b: OverdueClient) => a.cliente.localeCompare(b.cliente, "es");
@@ -92,7 +96,7 @@ export function OverdueClientsView({ list }: { list: OverdueClientsList }) {
         />
       </div>
       <div className="overflow-x-auto rounded-lg border bg-white">
-        <Table className="[&_td]:px-2 [&_th]:px-2 lg:[&_td]:px-3 lg:[&_th]:px-3">
+        <Table className="table-fixed [&_td]:px-2 [&_th]:px-2">
           <TableHeader>
             <TableRow>
               {SORT_HEADERS.map(([key, label, align, className]) => (
@@ -116,12 +120,12 @@ export function OverdueClientsView({ list }: { list: OverdueClientsList }) {
               <>
                 {sorted.map((c) => (
                   <TableRow key={c.client_id}>
-                    <TableCell className="max-w-[6.5rem] sm:max-w-[14rem] truncate" title={c.cliente}>
+                    <TableCell className="truncate" title={c.cliente}>
                       <ClientLink clientId={c.client_id} label={c.cliente} />
                     </TableCell>
                     <TableCell className="text-right num">{formatMoney(c.vencido)}</TableCell>
                     {OVERDUE_BUCKETS.map((b) => (
-                      <TableCell key={b} className={cn("text-right num", HIDE_BELOW_MD)}>
+                      <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
                         {c.por_antiguedad[b] ? formatMoney(c.por_antiguedad[b]) : "-"}
                       </TableCell>
                     ))}
@@ -136,7 +140,7 @@ export function OverdueClientsView({ list }: { list: OverdueClientsList }) {
                   <TableCell>Total{query && " (filtrados)"}</TableCell>
                   <TableCell className="text-right num">{formatMoney(sum(rows.map((c) => c.vencido)))}</TableCell>
                   {OVERDUE_BUCKETS.map((b) => (
-                    <TableCell key={b} className={cn("text-right num", HIDE_BELOW_MD)}>
+                    <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
                       {formatMoney(sum(rows.map((c) => c.por_antiguedad[b] || 0)))}
                     </TableCell>
                   ))}
