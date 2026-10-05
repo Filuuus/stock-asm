@@ -413,6 +413,84 @@ def aging(documents, today):
     }
 
 
+TREND_MONTHS = 24
+
+
+def fetch_aging_history(first_end, last_end):
+    """Open documents as fetch_open_documents() would have returned them at any
+    month-end in [first_end, last_end]: every non-cancelled client document
+    dated by last_end that is open today or had something applied after
+    first_end, plus those applications (admAsocCargosAbonos, both sides).
+    A document's balance at date D is CPENDIENTE plus everything applied to it
+    after D (checked 2023-2026: applications add up to CTOTAL - CPENDIENTE for
+    every credit and all but 2 invoices; cancelled documents have none)."""
+    doc_types = (FACTURA_DOC_TYPE, NOTA_CARGO_DOC_TYPE, *CREDIT_DOC_TYPES)
+    zone_ids = list(ZONE_SCOPE.values())
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCLIENTEPROVEEDOR, d.CRAZONSOCIAL, d.CIDAGENTE,
+                   d.CFECHA, d.CFECHAVENCIMIENTO, d.CPENDIENTE
+            FROM admDocumentos d
+            WHERE d.CCANCELADO = 0 AND d.CIDDOCUMENTODE IN ({', '.join(['%s'] * len(doc_types))})
+              AND (d.CIDDOCUMENTODE <> %s OR d.CIDAGENTE IN ({', '.join(['%s'] * len(zone_ids))}))
+              AND d.CFECHA < %s
+              AND (d.CPENDIENTE > 0.005 OR EXISTS (
+                   SELECT 1 FROM admAsocCargosAbonos a
+                   WHERE (a.CIDDOCUMENTOCARGO = d.CIDDOCUMENTO OR a.CIDDOCUMENTOABONO = d.CIDDOCUMENTO)
+                     AND a.CFECHAABONOCARGO > %s))
+            """,
+            [*doc_types, FACTURA_DOC_TYPE, *zone_ids, last_end + timedelta(days=1), first_end],
+        )
+        columns = [c[0] for c in cursor.description]
+        documents = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT CIDDOCUMENTOCARGO, CIDDOCUMENTOABONO, CFECHAABONOCARGO, CIMPORTEABONO
+            FROM admAsocCargosAbonos WHERE CFECHAABONOCARGO > %s
+            """,
+            [first_end],
+        )
+        applications = cursor.fetchall()
+    return documents, applications
+
+
+def aging_history(documents, applications, month_ends):
+    """The aging (see aging()) at each date in month_ends."""
+    applied = defaultdict(list)
+    for charge, credit, when, amount in applications:
+        applied[charge].append((when.date(), float(amount)))
+        applied[credit].append((when.date(), float(amount)))
+    out = []
+    for end in month_ends:
+        at_end = []
+        for d in documents:
+            if d['CFECHA'].date() > end:
+                continue
+            pending = float(d['CPENDIENTE']) + sum(a for when, a in applied.get(d['CIDDOCUMENTO'], ()) if when > end)
+            if pending >= 0.005:
+                at_end.append({**d, 'CPENDIENTE': pending})
+        result = aging(at_end, end)
+        out.append({'fecha': end.isoformat(), 'pendiente': result['pendiente'], 'antiguedad': result['antiguedad']})
+    return out
+
+
+def trend_month_ends(today, months=TREND_MONTHS):
+    """The last `months` complete month-ends before today, oldest first."""
+    ends, end = [], today.replace(day=1) - timedelta(days=1)
+    for _ in range(months):
+        ends.append(end)
+        end = end.replace(day=1) - timedelta(days=1)
+    return ends[::-1]
+
+
+def aging_trend():
+    ends = trend_month_ends(date.today())
+    # ponytail: rebuilds every month-end from scratch (~24 x a few thousand docs, well under a second);
+    # snapshot past months in SQLite if it ever gets slow.
+    return aging_history(*fetch_aging_history(ends[0], ends[-1]), ends)
+
+
 def receivables_today():
     """Open balance today by age (net of unapplied credits), plus DSO over the last 365 days, with IVA.
     ponytail: DSO only counts last year's invoices - older unpaid ones are
@@ -445,7 +523,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v10_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v11_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)
@@ -459,13 +537,14 @@ def _calculate_sales(year, month):
     chart_end = date(year + end_month // 12, end_month % 12 + 1, 1)
     # The ERP queries are independent, so run them side by side: the request
     # takes as long as the slowest one (Corte de Caja) instead of their sum.
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=7) as pool:
         lines = pool.submit(_in_thread, fetch_month_lines, date(year - 1, 1, 1), chart_end)
         brand_names = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
         corte = pool.submit(_in_thread, calculate_corte_de_caja, date(year, month, 1), next_month - timedelta(days=1))
         ledger_results = pool.submit(_in_thread, fetch_ledger_results, date(year - 1, 1, 1), date(year, end_month, 1))
         ledger_balances = pool.submit(_in_thread, fetch_ledger_balances, date(year, end_month, 1))
         receivables = pool.submit(_in_thread, receivables_today)
+        trend = pool.submit(_in_thread, aging_trend)
 
     result = summarize(lines.result(), year, month, brand_names.result(), end_month)
     keys = [m['month'] for m in result['months']]
@@ -476,5 +555,5 @@ def _calculate_sales(year, month):
     result['financieros_cuentas'] = financial_accounts(ledger_results.result(), result['month'], prev_key)
     result['indicadores'] = indicators(result['resultados'], month_end_balances(ledger_balances.result(), keys))
     result['cobrado'] = {z: round(float(v), 2) for z, v in corte.result()['zone_totals'].items()}
-    result['cuentas_por_cobrar'] = receivables.result()
+    result['cuentas_por_cobrar'] = {**receivables.result(), 'historial': trend.result()}
     return result

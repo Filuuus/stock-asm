@@ -2,7 +2,7 @@ from django.test import SimpleTestCase
 
 from datetime import date, datetime
 
-from .services import aging, chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
+from .services import aging, aging_history, trend_month_ends, chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -171,3 +171,33 @@ class AgingTests(SimpleTestCase):
         result = aging(rows, date(2026, 10, 5))
         self.assertEqual([(z['zona'], z['pendiente'], z['vencido'], z['por_antiguedad']['31-60 días'])
                           for z in result['por_zona']], [('ZONA1', 30, 0, 0), ('ZONA2', 70, 70, 70)])
+
+
+class AgingHistoryTests(SimpleTestCase):
+    def test_balance_at_a_date_adds_back_later_applications(self):
+        invoice = {'CIDDOCUMENTO': 10, 'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                   'CIDAGENTE': 1, 'CFECHA': datetime(2026, 7, 10), 'CFECHAVENCIMIENTO': datetime(2026, 7, 25),
+                   'CPENDIENTE': 0}
+        def payment(doc_id, day):
+            return {'CIDDOCUMENTO': doc_id, 'CIDDOCUMENTODE': 9, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                    'CIDAGENTE': 1, 'CFECHA': day, 'CFECHAVENCIMIENTO': day, 'CPENDIENTE': 0}
+        # Paid 60 on Aug 5 and 40 on Sep 3, each applied the day it came in.
+        applications = [(10, 20, datetime(2026, 8, 5), 60), (10, 21, datetime(2026, 9, 3), 40)]
+        result = aging_history([invoice, payment(20, datetime(2026, 8, 5)), payment(21, datetime(2026, 9, 3))],
+                               applications,
+                               [date(2026, 6, 30), date(2026, 7, 31), date(2026, 8, 31), date(2026, 9, 30)])
+        self.assertEqual([r['pendiente'] for r in result], [0, 100, 40, 0])  # not issued yet in June
+        self.assertEqual(result[1]['antiguedad'][1], {'bucket': '1-30 días', 'pendiente': 100, 'documentos': 1})
+        self.assertEqual(result[2]['antiguedad'][2]['pendiente'], 40)  # 37 days past due on Aug 31
+
+    def test_a_payment_applied_late_still_nets_on_the_day_it_came_in(self):
+        invoice = {'CIDDOCUMENTO': 10, 'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                   'CIDAGENTE': 1, 'CFECHA': datetime(2026, 7, 10), 'CFECHAVENCIMIENTO': datetime(2026, 7, 25),
+                   'CPENDIENTE': 0}
+        payment = {**invoice, 'CIDDOCUMENTO': 20, 'CIDDOCUMENTODE': 9, 'CFECHA': datetime(2026, 8, 5)}
+        # Received Aug 5, applied to the invoice only on Sep 3: unapplied credit on Aug 31.
+        result = aging_history([invoice, payment], [(10, 20, datetime(2026, 9, 3), 100)], [date(2026, 8, 31)])
+        self.assertEqual(result[0]['pendiente'], 0)
+
+    def test_month_ends_are_the_complete_months_before_today(self):
+        self.assertEqual(trend_month_ends(date(2026, 3, 15), 3), [date(2025, 12, 31), date(2026, 1, 31), date(2026, 2, 28)])

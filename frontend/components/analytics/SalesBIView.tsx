@@ -89,6 +89,8 @@ interface SalesSummary {
     saldo_a_favor: number;
     // zona null = notas de cargo, which carry no agent.
     por_zona: { zona: Zone | null; pendiente: number; vencido: number; por_antiguedad: Record<string, number> }[];
+    // The aging at each of the last 24 month-ends, oldest first.
+    historial: { fecha: string; pendiente: number; antiguedad: { bucket: string; pendiente: number }[] }[];
     clientes_vencidos: number;
     clientes: OverdueClient[]; // the top ones; the full list opens in the dialog
   };
@@ -230,6 +232,55 @@ function topBrands(brands: Brand[], period: "ytd" | "mes") {
 
 // Card header with tabs: title and tabs share a row, the description gets
 // its own line so it isn't squeezed next to the tabs on a phone.
+// Aging colors: neutral for not yet due, then one orange ramp, light to dark,
+// by how late (validated as an ordinal ramp; the gray clears the lightest step).
+const AGING_COLORS = ["#94a3b8", "#fb923c", "#ea580c", "#c2410c", "#9a3412"];
+
+interface AgingRow {
+  key: string;
+  label: string;
+  pendiente: number;
+  vencido: number;
+  por_antiguedad: Record<string, number>;
+}
+
+// Balance by age, one row per zone or month: the age split from lg; below
+// that a single Vencido column. The last row is styled as the total.
+function AgingTable({ first, buckets, rows }: { first: string; buckets: string[]; rows: AgingRow[] }) {
+  return (
+    <Table className={cn(TABLE_CLASS, "table-fixed")}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{first}</TableHead>
+          {buckets.map((b) => (
+            <TableHead key={b} className={cn("text-right", HIDE_BELOW_LG, COL_SIDE_MONEY)}>
+              {b.replace(" días", "")}
+            </TableHead>
+          ))}
+          <TableHead className={cn("text-right lg:hidden", COL_SIDE_MONEY)}>Vencido</TableHead>
+          <TableHead className="text-right w-[5.5rem]">% vencido</TableHead>
+          <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <TableRow key={r.key} className={cn(r.key === "total" && "!bg-slate-100 font-semibold")}>
+            <TableCell>{r.label}</TableCell>
+            {buckets.map((b) => (
+              <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
+                {r.por_antiguedad[b] ? formatMoney(r.por_antiguedad[b]) : "-"}
+              </TableCell>
+            ))}
+            <TableCell className="text-right num lg:hidden">{formatMoney(r.vencido)}</TableCell>
+            <TableCell className="text-right num">{r.pendiente ? percent(r.vencido / r.pendiente, 0) : "-"}</TableCell>
+            <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.pendiente)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
 function TabbedHeader({
   title,
   description,
@@ -601,6 +652,7 @@ export default function SalesBIView() {
   const [brandPeriod, setBrandPeriod] = useState<"ytd" | "mes">("mes");
   const [zonePeriod, setZonePeriod] = useState<"ytd" | "mes">("mes");
   const [expensePeriod, setExpensePeriod] = useState<"anual" | "mes">("anual");
+  const [agingView, setAgingView] = useState<"grafica" | "tabla">("grafica");
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
@@ -1100,43 +1152,100 @@ export default function SalesBIView() {
                   por_antiguedad: Object.fromEntries(antiguedad.map((b) => [b.bucket, b.pendiente])),
                 },
               ];
-              // The age split from lg; below that, one Vencido column.
-              return (
-                <Table className={cn(TABLE_CLASS, "table-fixed")}>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Zona</TableHead>
-                      {buckets.map((b) => (
-                        <TableHead key={b} className={cn("text-right", HIDE_BELOW_LG, COL_SIDE_MONEY)}>
-                          {b.replace(" días", "")}
-                        </TableHead>
-                      ))}
-                      <TableHead className={cn("text-right lg:hidden", COL_SIDE_MONEY)}>Vencido</TableHead>
-                      <TableHead className="text-right w-[5.5rem]">% vencido</TableHead>
-                      <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((z) => (
-                      <TableRow key={z.key} className={cn(z.key === "total" && "!bg-slate-100 font-semibold")}>
-                        <TableCell>{z.label}</TableCell>
-                        {buckets.map((b) => (
-                          <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
-                            {z.por_antiguedad[b] ? formatMoney(z.por_antiguedad[b]) : "-"}
-                          </TableCell>
-                        ))}
-                        <TableCell className="text-right num lg:hidden">{formatMoney(z.vencido)}</TableCell>
-                        <TableCell className="text-right num">
-                          {z.pendiente ? percent(z.vencido / z.pendiente, 0) : "-"}
-                        </TableCell>
-                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(z.pendiente)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              );
+              return <AgingTable first="Zona" buckets={buckets} rows={rows} />;
             })()}
           </Card>
+
+          {(() => {
+            const history = data!.cuentas_por_cobrar.historial;
+            const buckets = data!.cuentas_por_cobrar.antiguedad.map((b) => b.bucket);
+            const months = history.map((h) => {
+              const [y, m] = h.fecha.split("-").map(Number);
+              const por_antiguedad = Object.fromEntries(h.antiguedad.map((b) => [b.bucket, b.pendiente]));
+              return {
+                key: h.fecha,
+                label: `${MONTH_ABBR[m - 1]} ${String(y).slice(2)}`,
+                pendiente: h.pendiente,
+                vencido: h.pendiente - (por_antiguedad[buckets[0]] ?? 0),
+                por_antiguedad,
+              };
+            });
+            return (
+              <Card>
+                <TabbedHeader
+                  title="Antigüedad al cierre de cada mes"
+                  description={`Últimos ${months.length} meses, con IVA y menos saldos a favor, según la fecha en que se aplicó cada pago en Comercial`}
+                  tabs={[
+                    ["grafica", "Gráfica"],
+                    ["tabla", "Tabla"],
+                  ]}
+                  value={agingView}
+                  onChange={(v) => setAgingView(v as "grafica" | "tabla")}
+                />
+                {agingView === "grafica" ? (
+                  <div className="h-72 px-2 pb-10">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={months.map((m) => ({ label: m.label, ...m.por_antiguedad, row: m }))}
+                        margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+                        className="[&_:focus:not(:focus-visible)]:outline-none"
+                      >
+                        <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          axisLine={false}
+                          minTickGap={8}
+                          tick={{ fontSize: 12, fill: "#6b7280" }}
+                        />
+                        <YAxis
+                          tickFormatter={compactMoney}
+                          tickLine={false}
+                          axisLine={false}
+                          width={52}
+                          tick={{ fontSize: 12, fill: "#6b7280" }}
+                        />
+                        <Tooltip
+                          formatter={(value, name) => [formatMoney(Number(value)), name]}
+                          labelFormatter={(label, payload) => {
+                            const row = payload?.[0]?.payload?.row as AgingRow | undefined;
+                            return row
+                              ? `${label}: ${formatMoney(row.pendiente)}, ${percent(row.vencido / row.pendiente, 0)} vencido`
+                              : label;
+                          }}
+                          contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                          cursor={{ fill: "#f3f4f6" }}
+                          // Most severe on top, like the stack.
+                          itemSorter={(item) => -buckets.indexOf(String(item.dataKey))}
+                        />
+                        {buckets.map((b, i) => (
+                          <Bar
+                            key={b}
+                            dataKey={b}
+                            stackId="aging"
+                            fill={AGING_COLORS[i]}
+                            stroke="#fff"
+                            strokeWidth={1}
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-1 text-xs text-gray-600">
+                      {buckets.map((b, i) => (
+                        <span key={b} className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: AGING_COLORS[i] }} />
+                          {b}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <AgingTable first="Cierre" buckets={buckets} rows={[...months].reverse()} />
+                )}
+              </Card>
+            );
+          })()}
 
           <SectionHeading title="Resultados">
               Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos
