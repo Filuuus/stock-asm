@@ -366,7 +366,7 @@ def aging(documents, today):
     for client_id, docs in charges.items():
         credit = credits.pop(client_id, 0.0)
         c = {'client_id': client_id, 'cliente': docs[0]['CRAZONSOCIAL'], 'pendiente': 0.0, 'vencido': 0.0,
-             'dias_vencido': 0}
+             'dias_vencido': 0, 'documentos_vencidos': 0, 'por_antiguedad': dict.fromkeys(buckets, 0.0)}
         for d in sorted(docs, key=lambda d: d['CFECHAVENCIMIENTO'] or d['CFECHA']):
             applied = min(credit, float(d['CPENDIENTE']))
             credit -= applied
@@ -378,7 +378,9 @@ def aging(documents, today):
             buckets[label][0] += pending
             buckets[label][1] += 1
             c['pendiente'] += pending
+            c['por_antiguedad'][label] += pending
             if days > 0:
+                c['documentos_vencidos'] += 1
                 c['vencido'] += pending
                 c['dias_vencido'] = max(c['dias_vencido'], days)
         credits[client_id] = credit  # leftover, if any
@@ -386,12 +388,13 @@ def aging(documents, today):
     overdue = sorted((c for c in clients if c['vencido'] >= 0.005), key=lambda c: -c['vencido'])
     for c in overdue:
         c['pendiente'], c['vencido'] = round(c['pendiente'], 2), round(c['vencido'], 2)
+        c['por_antiguedad'] = {k: round(v, 2) for k, v in c['por_antiguedad'].items()}
     return {
         'pendiente': round(sum(b[0] for b in buckets.values()), 2),
         'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'documentos': v[1]} for k, v in buckets.items()],
         'saldo_a_favor': round(sum(credits.values()), 2),
         'clientes_vencidos': len(overdue),
-        'clientes': overdue[:TOP_OVERDUE_CLIENTS],
+        'clientes': overdue,  # every client with something overdue, most overdue first
     }
 
 
@@ -403,8 +406,17 @@ def receivables_today():
     facturas = CommissionRepository.fetch_scoped_facturas(today - timedelta(days=365), today)
     pending = sum(f['CPENDIENTE'] or 0 for f in facturas)
     sold = sum(f['CTOTAL'] or 0 for f in facturas)
-    return {**aging(fetch_open_documents(), today),
-            'dias_cobro': round(pending / sold * 365, 1) if sold else None}
+    result = aging(fetch_open_documents(), today)
+    # The page shows the top ones; the full list is overdue_clients().
+    result['clientes'] = result['clientes'][:TOP_OVERDUE_CLIENTS]
+    return {**result, 'dias_cobro': round(pending / sold * 365, 1) if sold else None}
+
+
+def overdue_clients():
+    """Every client with an overdue balance, live (no cache): the page's
+    "Ver todos" list. Same netting as the aging."""
+    result = aging(fetch_open_documents(), date.today())
+    return {k: result[k] for k in ('clientes', 'pendiente', 'saldo_a_favor')}
 
 
 def _in_thread(fn, *args):
@@ -418,7 +430,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v8_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v9_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)

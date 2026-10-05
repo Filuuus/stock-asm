@@ -10,6 +10,7 @@ export interface InvoiceDialogContextValue {
   canView: boolean;
   openInvoice: (invoiceId: number) => void;
   openClient: (clientId: number) => void;
+  openOverdueClients: () => void; // management only (Ventas)
 }
 
 export const InvoiceDialogContext = createContext<InvoiceDialogContextValue | null>(null);

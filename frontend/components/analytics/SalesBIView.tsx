@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/table";
 import { HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
 import ClientLink from "@/components/facturas/ClientLink";
+import { useInvoiceDialog } from "@/components/facturas/invoice-dialog-context";
+import type { OverdueClient } from "@/components/analytics/OverdueClients";
 import { MonthControl } from "@/components/date-controls";
 import { formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
@@ -86,7 +88,7 @@ interface SalesSummary {
     antiguedad: { bucket: string; pendiente: number; documentos: number }[];
     saldo_a_favor: number;
     clientes_vencidos: number;
-    clientes: { client_id: number; cliente: string; pendiente: number; vencido: number; dias_vencido: number }[];
+    clientes: OverdueClient[]; // the top ones; the full list opens in the dialog
   };
   resultados: ResultsRow[]; // same months as `months`
   indicadores: IndicatorRow[]; // same months as `months`
@@ -581,6 +583,7 @@ function Tile({ label, value, children }: { label: string; value: string; childr
 
 export default function SalesBIView() {
   const { loading: authLoading, isManagement } = useAuth();
+  const { openOverdueClients } = useInvoiceDialog();
   const [month, setMonth] = useState(lastCompleteMonth);
   const [data, setData] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1031,7 +1034,12 @@ export default function SalesBIView() {
 
             <Card>
               <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-base">Clientes con más saldo vencido</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base">Clientes con más saldo vencido</CardTitle>
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openOverdueClients}>
+                    Ver los {data!.cuentas_por_cobrar.clientes_vencidos}
+                  </Button>
+                </div>
                 <CardDescription>
                   {data!.cuentas_por_cobrar.clientes.length} de {data!.cuentas_por_cobrar.clientes_vencidos} clientes
                   con facturas vencidas. Haga clic en un cliente para ver sus facturas.
@@ -1052,7 +1060,7 @@ export default function SalesBIView() {
                 <TableBody>
                   {data!.cuentas_por_cobrar.clientes.map((c) => (
                     <TableRow key={c.client_id}>
-                      <TableCell className="max-w-[7rem] sm:max-w-[14rem] truncate" title={c.cliente}>
+                      <TableCell className="max-w-[7rem] sm:max-w-[12rem] truncate" title={c.cliente}>
                         <ClientLink clientId={c.client_id} label={c.cliente} />
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(c.vencido)}</TableCell>

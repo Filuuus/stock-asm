@@ -137,6 +137,8 @@ class AgingTests(SimpleTestCase):
         self.assertEqual([(c['client_id'], c['vencido'], c['dias_vencido']) for c in result['clientes']],
                          [(3, 90, 91), (2, 50, 31), (1, 10, 1)])
         self.assertEqual(result['clientes'][2]['pendiente'], 110)
+        self.assertEqual(result['clientes'][0]['documentos_vencidos'], 2)
+        self.assertEqual(result['clientes'][0]['por_antiguedad']['Más de 90 días'], 50)
 
     def test_credits_pay_the_clients_oldest_charges_first(self):
         def f(client, due, pending, doc_type=4):

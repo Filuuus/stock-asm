@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsManagement
 
-from .services import calculate_sales
+from .services import calculate_sales, overdue_clients
 
 
 @api_view(['GET'])
@@ -20,3 +20,9 @@ def sales_summary(request):
     except ValueError:
         return Response({'error': 'month debe tener formato YYYY-MM.'}, status=400)
     return Response(calculate_sales(year, month, refresh=request.query_params.get('refresh') == '1'))
+
+
+@api_view(['GET'])
+@permission_classes([IsManagement])
+def overdue_clients_list(request):
+    return Response(overdue_clients())

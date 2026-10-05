@@ -67,7 +67,7 @@ export function SortableHead<K extends string>({
   align = "left",
   className,
 }: {
-  label: string;
+  label: ReactNode;
   column: K;
   sortKey: K;
   sortDir: SortDir;
