@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import ClientLink from "@/components/facturas/ClientLink";
 import { MonthControl } from "@/components/date-controls";
 import { formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
@@ -76,7 +77,14 @@ interface SalesSummary {
   months: MonthRow[];
   brands: Brand[];
   cobrado: Partial<Record<Zone, number>>;
-  cuentas_por_cobrar: { pendiente: number; dias_cobro: number | null };
+  // Open invoices today, however old; dias_cobro uses the last 12 months only.
+  cuentas_por_cobrar: {
+    pendiente: number;
+    dias_cobro: number | null;
+    antiguedad: { bucket: string; pendiente: number; facturas: number }[];
+    clientes_vencidos: number;
+    clientes: { client_id: number; cliente: string; pendiente: number; vencido: number; dias_vencido: number }[];
+  };
   resultados: ResultsRow[]; // same months as `months`
   indicadores: IndicatorRow[]; // same months as `months`
   // The picked month's operating expenses per account, by category.
@@ -774,9 +782,9 @@ export default function SalesBIView() {
             </Tile>
             <Tile label="Por cobrar hoy" value={formatMoney(data!.cuentas_por_cobrar.pendiente)}>
               <p className="text-xs text-gray-500">
-                {data!.cuentas_por_cobrar.dias_cobro ?? "-"} días promedio de cobro
+                {data!.cuentas_por_cobrar.dias_cobro ?? "-"} días promedio de cobro (últimos 12 meses)
               </p>
-              <p className="text-xs text-gray-400">con IVA, facturas de los últimos 12 meses</p>
+              <p className="text-xs text-gray-400">con IVA, todas las facturas abiertas</p>
             </Tile>
             <Tile label="Devoluciones y notas de crédito" value={formatMoney(view.cur.devoluciones)}>
               <Delta
@@ -965,6 +973,85 @@ export default function SalesBIView() {
                       <ChangeCell value={change(view.brands.total, view.brands.prevTotal)} />
                     </TableCell>
                   </TableRow>
+                </TableBody>
+              </Table>
+            </Card>
+          </div>
+
+          <SectionHeading title="Cuentas por cobrar">
+            Facturas abiertas hoy según Comercial, con IVA, por días de vencidas. No depende del mes elegido.
+          </SectionHeading>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Antigüedad</CardTitle>
+                <CardDescription>Saldo por días desde el vencimiento</CardDescription>
+              </CardHeader>
+              <Table className={TABLE_CLASS}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vencimiento</TableHead>
+                    <TableHead className="text-right">Por cobrar</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
+                    <TableHead className="text-right">Facturas</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    const { antiguedad, pendiente } = data!.cuentas_por_cobrar;
+                    const rows = [
+                      ...antiguedad,
+                      { bucket: "Total", pendiente, facturas: sum(antiguedad.map((b) => b.facturas)) },
+                    ];
+                    return rows.map((b) => (
+                      <TableRow key={b.bucket} className={cn(b.bucket === "Total" && "!bg-slate-100 font-semibold")}>
+                        <TableCell>{b.bucket}</TableCell>
+                        <TableCell className="text-right num">{formatMoney(b.pendiente)}</TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                          <ShareBar value={b.pendiente} total={pendiente} />
+                        </TableCell>
+                        <TableCell className="text-right num">{b.facturas}</TableCell>
+                      </TableRow>
+                    ));
+                  })()}
+                </TableBody>
+              </Table>
+            </Card>
+
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Clientes con más saldo vencido</CardTitle>
+                <CardDescription>
+                  {data!.cuentas_por_cobrar.clientes.length} de {data!.cuentas_por_cobrar.clientes_vencidos} clientes
+                  con facturas vencidas. Haga clic en un cliente para ver sus facturas.
+                </CardDescription>
+              </CardHeader>
+              <Table className={TABLE_CLASS}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead className="text-right">Vencido</TableHead>
+                    <TableHead className="text-right">
+                      <span className="sm:hidden">Días</span>
+                      <span className="hidden sm:inline">Días de atraso</span>
+                    </TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Saldo total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data!.cuentas_por_cobrar.clientes.map((c) => (
+                    <TableRow key={c.client_id}>
+                      <TableCell className="max-w-[7rem] sm:max-w-[14rem] truncate" title={c.cliente}>
+                        <ClientLink clientId={c.client_id} label={c.cliente} />
+                      </TableCell>
+                      <TableCell className="text-right num">{formatMoney(c.vencido)}</TableCell>
+                      <TableCell className={cn("text-right num", c.dias_vencido > 90 && "text-red-700")}>
+                        {c.dias_vencido}
+                      </TableCell>
+                      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(c.pendiente)}</TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </Card>

@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from django.core.cache import cache
 from django.db import connections
 
+from api.models import AdmDocumentos
 from commissions.services import (
     DEVOLUCION_DOC_TYPE,
     FACTURA_DOC_TYPE,
@@ -322,15 +323,63 @@ def indicators(resultados, balances):
     return out
 
 
+# Days past due, as (label, upper bound inclusive); anything later is the last bucket.
+AGING_BUCKETS = [('Por vencer', 0), ('1-30 días', 30), ('31-60 días', 60), ('61-90 días', 90)]
+AGING_LAST_BUCKET = 'Más de 90 días'
+TOP_OVERDUE_CLIENTS = 10
+
+
+def fetch_open_facturas():
+    """Every scoped, non-cancelled Factura with a balance today, however old."""
+    return list(
+        AdmDocumentos.objects.filter(
+            CIDDOCUMENTODE=FACTURA_DOC_TYPE,
+            CCANCELADO=0,
+            CIDAGENTE__in=ZONE_SCOPE.values(),
+            CPENDIENTE__gt=0.005,
+        ).values('CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CFECHA', 'CFECHAVENCIMIENTO', 'CPENDIENTE')
+    )
+
+
+def aging(facturas, today):
+    """Open balance by days past due (Comercial CFECHAVENCIMIENTO) and the
+    clients with the most overdue. With IVA, like CPENDIENTE."""
+    buckets = {label: [0.0, 0] for label, _ in AGING_BUCKETS + [(AGING_LAST_BUCKET, None)]}
+    clients = {}
+    for f in facturas:
+        pending = float(f['CPENDIENTE'])
+        days = (today - (f['CFECHAVENCIMIENTO'] or f['CFECHA']).date()).days
+        label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
+        buckets[label][0] += pending
+        buckets[label][1] += 1
+        c = clients.setdefault(f['CIDCLIENTEPROVEEDOR'], {
+            'client_id': f['CIDCLIENTEPROVEEDOR'], 'cliente': f['CRAZONSOCIAL'],
+            'pendiente': 0.0, 'vencido': 0.0, 'dias_vencido': 0})
+        c['pendiente'] += pending
+        if days > 0:
+            c['vencido'] += pending
+            c['dias_vencido'] = max(c['dias_vencido'], days)
+    overdue = sorted((c for c in clients.values() if c['vencido']), key=lambda c: -c['vencido'])
+    for c in overdue:
+        c['pendiente'], c['vencido'] = round(c['pendiente'], 2), round(c['vencido'], 2)
+    return {
+        'pendiente': round(sum(b[0] for b in buckets.values()), 2),
+        'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'facturas': v[1]} for k, v in buckets.items()],
+        'clientes_vencidos': len(overdue),
+        'clientes': overdue[:TOP_OVERDUE_CLIENTS],
+    }
+
+
 def receivables_today():
-    """Outstanding balance today and DSO over the last 365 days, both with IVA.
-    ponytail: only invoices from the last year count - older unpaid ones are
-    collection problems, not the normal cycle; widen the floor if asked."""
+    """Open balance today by age, plus DSO over the last 365 days, with IVA.
+    ponytail: DSO only counts last year's invoices - older unpaid ones are
+    collection problems (they show in the aging), not the normal cycle."""
     today = date.today()
     facturas = CommissionRepository.fetch_scoped_facturas(today - timedelta(days=365), today)
     pending = sum(f['CPENDIENTE'] or 0 for f in facturas)
     sold = sum(f['CTOTAL'] or 0 for f in facturas)
-    return {'pendiente': round(pending, 2), 'dias_cobro': round(pending / sold * 365, 1) if sold else None}
+    return {**aging(fetch_open_facturas(), today),
+            'dias_cobro': round(pending / sold * 365, 1) if sold else None}
 
 
 def _in_thread(fn, *args):
@@ -344,7 +393,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v6_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v7_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)

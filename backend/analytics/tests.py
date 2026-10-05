@@ -1,8 +1,8 @@
 from django.test import SimpleTestCase
 
-from datetime import date
+from datetime import date, datetime
 
-from .services import chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
+from .services import aging, chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -120,3 +120,20 @@ class IndicatorTests(SimpleTestCase):
         r = {'month': '2026-09', 'ingresos': 3.0, 'costo': 0.0, 'financieros': 0.0,
              'utilidad_operativa': 3.0, 'gastos': {'Nómina': 0.0}}
         self.assertEqual(indicators([r], {}), [{'month': '2026-09', 'posted': False}])
+
+
+class AgingTests(SimpleTestCase):
+    def test_buckets_by_days_past_due_and_ranks_overdue_clients(self):
+        def f(client, due, pending):
+            return {'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}', 'CFECHA': datetime(2026, 1, 1),
+                    'CFECHAVENCIMIENTO': datetime.fromisoformat(due), 'CPENDIENTE': pending}
+        rows = [f(1, '2026-10-05', 100), f(1, '2026-10-04', 10), f(2, '2026-09-05', 20), f(2, '2026-09-04', 30),
+                f(3, '2026-07-07', 40), f(3, '2026-07-06', 50)]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(b['bucket'], b['pendiente'], b['facturas']) for b in result['antiguedad']], [
+            ('Por vencer', 100, 1), ('1-30 días', 30, 2), ('31-60 días', 30, 1),
+            ('61-90 días', 40, 1), ('Más de 90 días', 50, 1)])
+        self.assertEqual(result['pendiente'], 250)
+        self.assertEqual([(c['client_id'], c['vencido'], c['dias_vencido']) for c in result['clientes']],
+                         [(3, 90, 91), (2, 50, 31), (1, 10, 1)])
+        self.assertEqual(result['clientes'][2]['pendiente'], 110)
