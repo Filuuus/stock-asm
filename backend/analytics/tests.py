@@ -201,3 +201,18 @@ class AgingHistoryTests(SimpleTestCase):
 
     def test_month_ends_are_the_complete_months_before_today(self):
         self.assertEqual(trend_month_ends(date(2026, 3, 15), 3), [date(2025, 12, 31), date(2026, 1, 31), date(2026, 2, 28)])
+
+
+class ForecastTests(SimpleTestCase):
+    def test_not_yet_due_balance_by_week_from_today_after_credits(self):
+        def f(due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 1,
+                    'CFECHA': datetime(2026, 9, 1), 'CFECHAVENCIMIENTO': datetime.fromisoformat(due),
+                    'CPENDIENTE': pending}
+        rows = [f('2026-10-01', 5), f('2026-10-06', 10), f('2026-10-12', 20), f('2026-10-13', 30),
+                f('2026-11-03', 40), f('2026-11-30', 50), f('2026-01-01', 15, doc_type=9)]  # credit pays 5 + 10
+        weeks = aging(rows, date(2026, 10, 6))['por_vencer_semanas']
+        self.assertEqual([(w['desde'], w['hasta'], w['pendiente'], w['documentos']) for w in weeks], [
+            ('2026-10-06', '2026-10-12', 20, 1), ('2026-10-13', '2026-10-19', 30, 1),
+            ('2026-10-20', '2026-10-26', 0, 0), ('2026-10-27', '2026-11-02', 0, 0),
+            ('2026-11-03', None, 90, 2)])

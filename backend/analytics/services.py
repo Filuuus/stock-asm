@@ -327,6 +327,7 @@ def indicators(resultados, balances):
 AGING_BUCKETS = [('Por vencer', 0), ('1-30 días', 30), ('31-60 días', 60), ('61-90 días', 90)]
 AGING_LAST_BUCKET = 'Más de 90 días'
 TOP_OVERDUE_CLIENTS = 10
+FORECAST_WEEKS = 4  # 7-day windows from today for the not-yet-due balance; the rest is "later"
 
 
 # Open client documents besides Facturas. Notas de cargo (13) are charges:
@@ -367,6 +368,7 @@ def aging(documents, today):
     zone_by_id = {v: k for k, v in ZONE_SCOPE.items()}
     zones = {z: {'zona': z, 'pendiente': 0.0, 'vencido': 0.0, 'por_antiguedad': dict.fromkeys(buckets, 0.0)}
              for z in [*ZONE_SCOPE, None]}
+    weeks = [[0.0, 0] for _ in range(FORECAST_WEEKS + 1)]
     clients = []
     for client_id, docs in charges.items():
         credit = credits.pop(client_id, 0.0)
@@ -382,6 +384,10 @@ def aging(documents, today):
             label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
             buckets[label][0] += pending
             buckets[label][1] += 1
+            if days <= 0:
+                week = weeks[min(-days // 7, FORECAST_WEEKS)]
+                week[0] += pending
+                week[1] += 1
             z = zones[zone_by_id.get(d.get('CIDAGENTE'))]
             z['pendiente'] += pending
             z['por_antiguedad'][label] += pending
@@ -403,6 +409,13 @@ def aging(documents, today):
         'pendiente': round(sum(b[0] for b in buckets.values()), 2),
         'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'documentos': v[1]} for k, v in buckets.items()],
         'saldo_a_favor': round(sum(credits.values()), 2),
+        # The not-yet-due balance by due date: 7-day windows from today (hasta inclusive), then the rest.
+        'por_vencer_semanas': [
+            {'desde': (today + timedelta(days=7 * i)).isoformat(),
+             'hasta': (today + timedelta(days=7 * i + 6)).isoformat() if i < FORECAST_WEEKS else None,
+             'pendiente': round(w[0], 2), 'documentos': w[1]}
+            for i, w in enumerate(weeks)
+        ],
         'por_zona': [
             {'zona': z['zona'], 'pendiente': round(z['pendiente'], 2), 'vencido': round(z['vencido'], 2),
              'por_antiguedad': {k: round(v, 2) for k, v in z['por_antiguedad'].items()}}
@@ -523,7 +536,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v12_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v13_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)

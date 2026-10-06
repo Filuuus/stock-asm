@@ -31,7 +31,7 @@ import ClientLink from "@/components/facturas/ClientLink";
 import { useInvoiceDialog } from "@/components/facturas/invoice-dialog-context";
 import type { OverdueClient } from "@/components/analytics/OverdueClients";
 import { MonthControl } from "@/components/date-controls";
-import { formatMonth, isoToDate, monthToISO } from "@/lib/dates";
+import { formatDayShort, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
 import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -87,6 +87,8 @@ interface SalesSummary {
     dias_cobro: number | null;
     antiguedad: { bucket: string; pendiente: number; documentos: number }[];
     saldo_a_favor: number;
+    // The not-yet-due balance in 7-day windows from today; the last has hasta null (everything later).
+    por_vencer_semanas: { desde: string; hasta: string | null; pendiente: number; documentos: number }[];
     // zona null = notas de cargo, which carry no agent.
     por_zona: { zona: Zone | null; pendiente: number; vencido: number; por_antiguedad: Record<string, number> }[];
     // The aging at each of the last 12 month-ends, oldest first.
@@ -1094,6 +1096,40 @@ export default function SalesBIView() {
                           <ShareBar value={b.pendiente} total={pendiente} />
                         </TableCell>
                         <TableCell className="text-right num">{b.documentos}</TableCell>
+                      </TableRow>
+                    ));
+                  })()}
+                </TableBody>
+              </Table>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Por vencer por semana</CardTitle>
+                <CardDescription>Lo que vence en cada una de las próximas semanas, según la fecha de vencimiento</CardDescription>
+              </CardHeader>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vence</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Por cobrar</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% por vencer</TableHead>
+                    <TableHead className="text-right w-28">Documentos</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    const weeks = data!.cuentas_por_cobrar.por_vencer_semanas;
+                    const total = sum(weeks.map((w) => w.pendiente));
+                    return weeks.map((w) => (
+                      <TableRow key={w.desde}>
+                        <TableCell>
+                          {w.hasta
+                            ? `${formatDayShort(w.desde)} – ${formatDayShort(w.hasta)}`
+                            : `Desde ${formatDayShort(w.desde)}`}
+                        </TableCell>
+                        <TableCell className="text-right num">{formatMoney(w.pendiente)}</TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                          <ShareBar value={w.pendiente} total={total} />
+                        </TableCell>
+                        <TableCell className="text-right num">{w.documentos}</TableCell>
                       </TableRow>
                     ));
                   })()}
