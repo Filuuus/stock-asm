@@ -89,7 +89,7 @@ interface SalesSummary {
     saldo_a_favor: number;
     // zona null = notas de cargo, which carry no agent.
     por_zona: { zona: Zone | null; pendiente: number; vencido: number; por_antiguedad: Record<string, number> }[];
-    // The aging at each of the last 24 month-ends, oldest first.
+    // The aging at each of the last 12 month-ends, oldest first.
     historial: { fecha: string; pendiente: number; antiguedad: { bucket: string; pendiente: number }[] }[];
     clientes_vencidos: number;
     clientes: OverdueClient[]; // the top ones; the full list opens in the dialog

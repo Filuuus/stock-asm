@@ -413,7 +413,7 @@ def aging(documents, today):
     }
 
 
-TREND_MONTHS = 24
+TREND_MONTHS = 12
 
 
 def fetch_aging_history(first_end, last_end):
@@ -486,7 +486,7 @@ def trend_month_ends(today, months=TREND_MONTHS):
 
 def aging_trend():
     ends = trend_month_ends(date.today())
-    # ponytail: rebuilds every month-end from scratch (~24 x a few thousand docs, well under a second);
+    # ponytail: rebuilds every month-end from scratch (~12 x a few thousand docs, well under a second);
     # snapshot past months in SQLite if it ever gets slow.
     return aging_history(*fetch_aging_history(ends[0], ends[-1]), ends)
 
@@ -523,7 +523,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v11_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v12_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)
