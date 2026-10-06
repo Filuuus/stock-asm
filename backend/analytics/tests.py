@@ -1,8 +1,8 @@
 from django.test import SimpleTestCase
 
-from datetime import date
+from datetime import date, datetime
 
-from .services import chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
+from .services import aging, aging_history, trend_month_ends, chart_end_month, expense_accounts, expense_category, financial_accounts, indicators, month_end_balances, summarize, summarize_results
 
 
 class SummarizeTests(SimpleTestCase):
@@ -120,3 +120,99 @@ class IndicatorTests(SimpleTestCase):
         r = {'month': '2026-09', 'ingresos': 3.0, 'costo': 0.0, 'financieros': 0.0,
              'utilidad_operativa': 3.0, 'gastos': {'Nómina': 0.0}}
         self.assertEqual(indicators([r], {}), [{'month': '2026-09', 'posted': False}])
+
+
+class AgingTests(SimpleTestCase):
+    def test_buckets_by_days_past_due_and_ranks_overdue_clients(self):
+        def f(client, due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}', 'CFECHA': datetime(2026, 1, 1),
+                    'CFECHAVENCIMIENTO': datetime.fromisoformat(due), 'CPENDIENTE': pending}
+        rows = [f(1, '2026-10-05', 100), f(1, '2026-10-04', 10), f(2, '2026-09-05', 20), f(2, '2026-09-04', 30),
+                f(3, '2026-07-07', 40), f(3, '2026-07-06', 50)]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(b['bucket'], b['pendiente'], b['documentos']) for b in result['antiguedad']], [
+            ('Por vencer', 100, 1), ('1-30 días', 30, 2), ('31-60 días', 30, 1),
+            ('61-90 días', 40, 1), ('Más de 90 días', 50, 1)])
+        self.assertEqual(result['pendiente'], 250)
+        self.assertEqual([(c['client_id'], c['vencido'], c['dias_vencido']) for c in result['clientes']],
+                         [(3, 90, 91), (2, 50, 31), (1, 10, 1)])
+        self.assertEqual(result['clientes'][2]['pendiente'], 110)
+        self.assertEqual(result['clientes'][0]['documentos_vencidos'], 2)
+        self.assertEqual(result['clientes'][0]['por_antiguedad']['Más de 90 días'], 50)
+
+    def test_credits_pay_the_clients_oldest_charges_first(self):
+        def f(client, due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': client, 'CRAZONSOCIAL': f'C{client}',
+                    'CFECHA': datetime(2018, 1, 1), 'CFECHAVENCIMIENTO': datetime.fromisoformat(due),
+                    'CPENDIENTE': pending}
+        rows = [
+            f(1, '2018-04-01', 25, doc_type=13), f(1, '2026-09-01', 100), f(1, '2026-10-20', 50),
+            f(1, '2019-01-01', 25, doc_type=9), f(1, '2026-01-01', 40, doc_type=7),  # 65: the 13, then 40 of 100
+            f(2, '2026-09-01', 30), f(2, '2026-01-01', 45, doc_type=5),  # covered, 15 left over
+            f(3, '2021-03-05', 260, doc_type=5),  # credit with nothing open
+        ]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(b['bucket'], b['pendiente'], b['documentos']) for b in result['antiguedad']], [
+            ('Por vencer', 50, 1), ('1-30 días', 0, 0), ('31-60 días', 60, 1), ('61-90 días', 0, 0),
+            ('Más de 90 días', 0, 0)])
+        self.assertEqual(result['pendiente'], 110)
+        self.assertEqual(result['saldo_a_favor'], 275)
+        self.assertEqual([(c['client_id'], c['vencido'], c['pendiente']) for c in result['clientes']], [(1, 60, 110)])
+        # Invoices default to no agent here, so everything left is "no zone".
+        self.assertEqual([(z['zona'], z['pendiente'], z['vencido']) for z in result['por_zona']], [(None, 110, 60)])
+
+    def test_splits_by_the_invoice_zone(self):
+        rows = [
+            {'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 2,
+             'CFECHA': datetime(2026, 1, 1), 'CFECHAVENCIMIENTO': datetime(2026, 9, 1), 'CPENDIENTE': 70},
+            {'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 1,
+             'CFECHA': datetime(2026, 1, 1), 'CFECHAVENCIMIENTO': datetime(2026, 11, 1), 'CPENDIENTE': 30},
+        ]
+        result = aging(rows, date(2026, 10, 5))
+        self.assertEqual([(z['zona'], z['pendiente'], z['vencido'], z['por_antiguedad']['31-60 días'])
+                          for z in result['por_zona']], [('ZONA1', 30, 0, 0), ('ZONA2', 70, 70, 70)])
+
+
+class AgingHistoryTests(SimpleTestCase):
+    def test_balance_at_a_date_adds_back_later_applications(self):
+        invoice = {'CIDDOCUMENTO': 10, 'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                   'CIDAGENTE': 1, 'CFECHA': datetime(2026, 7, 10), 'CFECHAVENCIMIENTO': datetime(2026, 7, 25),
+                   'CPENDIENTE': 0}
+        def payment(doc_id, day):
+            return {'CIDDOCUMENTO': doc_id, 'CIDDOCUMENTODE': 9, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                    'CIDAGENTE': 1, 'CFECHA': day, 'CFECHAVENCIMIENTO': day, 'CPENDIENTE': 0}
+        # Paid 60 on Aug 5 and 40 on Sep 3, each applied the day it came in.
+        applications = [(10, 20, datetime(2026, 8, 5), 60), (10, 21, datetime(2026, 9, 3), 40)]
+        result = aging_history([invoice, payment(20, datetime(2026, 8, 5)), payment(21, datetime(2026, 9, 3))],
+                               applications,
+                               [date(2026, 6, 30), date(2026, 7, 31), date(2026, 8, 31), date(2026, 9, 30)])
+        self.assertEqual([r['pendiente'] for r in result], [0, 100, 40, 0])  # not issued yet in June
+        self.assertEqual(result[1]['antiguedad'][1], {'bucket': '1-30 días', 'pendiente': 100, 'documentos': 1})
+        self.assertEqual(result[2]['antiguedad'][2]['pendiente'], 40)  # 37 days past due on Aug 31
+
+    def test_a_payment_applied_late_still_nets_on_the_day_it_came_in(self):
+        invoice = {'CIDDOCUMENTO': 10, 'CIDDOCUMENTODE': 4, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1',
+                   'CIDAGENTE': 1, 'CFECHA': datetime(2026, 7, 10), 'CFECHAVENCIMIENTO': datetime(2026, 7, 25),
+                   'CPENDIENTE': 0}
+        payment = {**invoice, 'CIDDOCUMENTO': 20, 'CIDDOCUMENTODE': 9, 'CFECHA': datetime(2026, 8, 5)}
+        # Received Aug 5, applied to the invoice only on Sep 3: unapplied credit on Aug 31.
+        result = aging_history([invoice, payment], [(10, 20, datetime(2026, 9, 3), 100)], [date(2026, 8, 31)])
+        self.assertEqual(result[0]['pendiente'], 0)
+
+    def test_month_ends_are_the_complete_months_before_today(self):
+        self.assertEqual(trend_month_ends(date(2026, 3, 15), 3), [date(2025, 12, 31), date(2026, 1, 31), date(2026, 2, 28)])
+
+
+class ForecastTests(SimpleTestCase):
+    def test_not_yet_due_balance_by_week_from_today_after_credits(self):
+        def f(due, pending, doc_type=4):
+            return {'CIDDOCUMENTODE': doc_type, 'CIDCLIENTEPROVEEDOR': 1, 'CRAZONSOCIAL': 'C1', 'CIDAGENTE': 1,
+                    'CFECHA': datetime(2026, 9, 1), 'CFECHAVENCIMIENTO': datetime.fromisoformat(due),
+                    'CPENDIENTE': pending}
+        rows = [f('2026-10-01', 5), f('2026-10-06', 10), f('2026-10-12', 20), f('2026-10-13', 30),
+                f('2026-11-03', 40), f('2026-11-30', 50), f('2026-01-01', 15, doc_type=9)]  # credit pays 5 + 10
+        weeks = aging(rows, date(2026, 10, 6))['por_vencer_semanas']
+        self.assertEqual([(w['desde'], w['hasta'], w['pendiente'], w['documentos']) for w in weeks], [
+            ('2026-10-06', '2026-10-12', 20, 1), ('2026-10-13', '2026-10-19', 30, 1),
+            ('2026-10-20', '2026-10-26', 0, 0), ('2026-10-27', '2026-11-02', 0, 0),
+            ('2026-11-03', None, 90, 2)])

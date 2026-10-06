@@ -15,22 +15,31 @@ import { Button } from "@/components/ui/button";
 import { getJson, InvoiceDetailView } from "@/components/facturas/InvoiceDetail";
 import { ClientHistoryView } from "@/components/facturas/ClientHistory";
 import { InvoiceDialogContext } from "@/components/facturas/invoice-dialog-context";
+import { OverdueClientsView, type OverdueClientsList } from "@/components/analytics/OverdueClients";
 import { useAuth } from "@/hooks/use-auth";
 import type { ClientHistory, InvoiceDetail } from "@/types/facturas";
 
 type View =
   | { kind: "invoice"; id: number }
-  | { kind: "client"; id: number; full: boolean };
-
-function sameView(a: View | undefined, b: View) {
-  return !!a && a.kind === b.kind && a.id === b.id && (a.kind !== "client" || b.kind !== "client" || a.full === b.full);
-}
+  | { kind: "client"; id: number; full: boolean }
+  | { kind: "overdue" };
 
 function viewPath(view: View) {
+  if (view.kind === "overdue") return "/api/analytics/overdue-clients/";
   return view.kind === "invoice"
     ? `/api/facturas/${view.id}/`
     : `/api/facturas/clientes/${view.id}/${view.full ? "?completo=1" : ""}`;
 }
+
+function sameView(a: View | undefined, b: View) {
+  return !!a && viewPath(a) === viewPath(b);
+}
+
+const TITLES: Record<View["kind"], string> = {
+  invoice: "Factura",
+  client: "Historial del cliente",
+  overdue: "Clientes con saldo vencido",
+};
 
 // One dialog for the whole app: any screen that shows an invoice number or a
 // client name opens it through useInvoiceDialog() (see InvoiceLink and
@@ -45,9 +54,12 @@ export function InvoiceDialogProvider({ children }: { children: ReactNode }) {
   );
   const openInvoice = useCallback((id: number) => push({ kind: "invoice", id }), [push]);
   const openClient = useCallback((id: number) => push({ kind: "client", id, full: false }), [push]);
+  const openOverdueClients = useCallback(() => push({ kind: "overdue" }), [push]);
 
   return (
-    <InvoiceDialogContext.Provider value={{ canView: isAccounting || isManagement, openInvoice, openClient }}>
+    <InvoiceDialogContext.Provider
+      value={{ canView: isAccounting || isManagement, openInvoice, openClient, openOverdueClients }}
+    >
       {children}
       <DetailDialog
         view={stack[stack.length - 1] ?? null}
@@ -71,7 +83,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
 }) {
   // Loaded views are kept for this dialog session, so "Volver" is instant.
   // ERP data changes during the day, so the cache is dropped on close.
-  const [cache, setCache] = useState<Record<string, InvoiceDetail | ClientHistory>>({});
+  const [cache, setCache] = useState<Record<string, InvoiceDetail | ClientHistory | OverdueClientsList>>({});
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const path = view ? viewPath(view) : null;
@@ -88,7 +100,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingPath(path);
     setError(null);
-    getJson<InvoiceDetail | ClientHistory>(path)
+    getJson<InvoiceDetail | ClientHistory | OverdueClientsList>(path)
       .then((json) => {
         if (!cancelled) setCache((c) => ({ ...c, [path]: json }));
       })
@@ -105,6 +117,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
 
   const invoice = view?.kind === "invoice" ? (data as InvoiceDetail | undefined) : undefined;
   const client = view?.kind === "client" ? (data as ClientHistory | undefined) : undefined;
+  const overdue = view?.kind === "overdue" ? (data as OverdueClientsList | undefined) : undefined;
 
   return (
     <Dialog open={view !== null} onOpenChange={(open) => !open && close()}>
@@ -119,7 +132,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
                 </Button>
               )}
               <DialogTitle>
-                {view?.kind === "client" ? "Historial del cliente" : "Factura"}
+                {view ? TITLES[view.kind] : ""}
               </DialogTitle>
             </div>
             {invoice && (
@@ -145,6 +158,7 @@ function DetailDialog({ view, canGoBack, onBack, onReplace, onClose, openInvoice
             Cargando...
           </div>
         )}
+        {overdue && <OverdueClientsView list={overdue} />}
         {invoice && <InvoiceDetailView detail={invoice} onSelect={openInvoice} />}
         {client && view?.kind === "client" && (
           <ClientHistoryView

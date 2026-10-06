@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from django.core.cache import cache
 from django.db import connections
 
+from api.models import AdmDocumentos
 from commissions.services import (
     DEVOLUCION_DOC_TYPE,
     FACTURA_DOC_TYPE,
@@ -322,15 +323,206 @@ def indicators(resultados, balances):
     return out
 
 
+# Days past due, as (label, upper bound inclusive); anything later is the last bucket.
+AGING_BUCKETS = [('Por vencer', 0), ('1-30 días', 30), ('31-60 días', 60), ('61-90 días', 90)]
+AGING_LAST_BUCKET = 'Más de 90 días'
+TOP_OVERDUE_CLIENTS = 10
+FORECAST_WEEKS = 4  # 7-day windows from today for the not-yet-due balance; the rest is "later"
+
+
+# Open client documents besides Facturas. Notas de cargo (13) are charges:
+# in practice 2018-2021 opening balances, most matching an unapplied payment of
+# the same client. Returns, credit notes, payments and abonos never applied to
+# an invoice are credits. Checked against the live ERP 2026-10-05.
+NOTA_CARGO_DOC_TYPE = 13
+CREDIT_DOC_TYPES = (DEVOLUCION_DOC_TYPE, NOTA_CREDITO_DOC_TYPE, 9, 12)
+
+
+def fetch_open_documents():
+    """Every non-cancelled client document with a balance today, however old:
+    scoped Facturas, plus notas de cargo and unapplied credits for any client
+    (they carry no zone; they're netted per client)."""
+    fields = ('CIDDOCUMENTODE', 'CIDCLIENTEPROVEEDOR', 'CRAZONSOCIAL', 'CIDAGENTE', 'CFECHA', 'CFECHAVENCIMIENTO',
+              'CPENDIENTE')
+    open_docs = AdmDocumentos.objects.filter(CCANCELADO=0, CPENDIENTE__gt=0.005)
+    return [
+        *open_docs.filter(CIDDOCUMENTODE=FACTURA_DOC_TYPE, CIDAGENTE__in=ZONE_SCOPE.values()).values(*fields),
+        *open_docs.filter(CIDDOCUMENTODE__in=(NOTA_CARGO_DOC_TYPE, *CREDIT_DOC_TYPES)).values(*fields),
+    ]
+
+
+def aging(documents, today):
+    """Open balance by days past due (Comercial CFECHAVENCIMIENTO) and the
+    clients with the most overdue, overall and per zone (the invoice's agent;
+    notas de cargo carry none). With IVA, like CPENDIENTE. Each client's
+    unapplied credits pay off their oldest charges first; whatever is left over
+    is saldo a favor, not counted against anyone else."""
+    charges, credits = defaultdict(list), defaultdict(float)
+    for d in documents:
+        if d['CIDDOCUMENTODE'] in CREDIT_DOC_TYPES:
+            credits[d['CIDCLIENTEPROVEEDOR']] += float(d['CPENDIENTE'])
+        else:
+            charges[d['CIDCLIENTEPROVEEDOR']].append(d)
+
+    buckets = {label: [0.0, 0] for label, _ in AGING_BUCKETS + [(AGING_LAST_BUCKET, None)]}
+    zone_by_id = {v: k for k, v in ZONE_SCOPE.items()}
+    zones = {z: {'zona': z, 'pendiente': 0.0, 'vencido': 0.0, 'por_antiguedad': dict.fromkeys(buckets, 0.0)}
+             for z in [*ZONE_SCOPE, None]}
+    weeks = [[0.0, 0] for _ in range(FORECAST_WEEKS + 1)]
+    clients = []
+    for client_id, docs in charges.items():
+        credit = credits.pop(client_id, 0.0)
+        c = {'client_id': client_id, 'cliente': docs[0]['CRAZONSOCIAL'], 'pendiente': 0.0, 'vencido': 0.0,
+             'dias_vencido': 0, 'documentos_vencidos': 0, 'por_antiguedad': dict.fromkeys(buckets, 0.0)}
+        for d in sorted(docs, key=lambda d: d['CFECHAVENCIMIENTO'] or d['CFECHA']):
+            applied = min(credit, float(d['CPENDIENTE']))
+            credit -= applied
+            pending = float(d['CPENDIENTE']) - applied
+            if pending < 0.005:
+                continue
+            days = (today - (d['CFECHAVENCIMIENTO'] or d['CFECHA']).date()).days
+            label = next((lb for lb, limit in AGING_BUCKETS if days <= limit), AGING_LAST_BUCKET)
+            buckets[label][0] += pending
+            buckets[label][1] += 1
+            if days <= 0:
+                week = weeks[min(-days // 7, FORECAST_WEEKS)]
+                week[0] += pending
+                week[1] += 1
+            z = zones[zone_by_id.get(d.get('CIDAGENTE'))]
+            z['pendiente'] += pending
+            z['por_antiguedad'][label] += pending
+            if days > 0:
+                z['vencido'] += pending
+            c['pendiente'] += pending
+            c['por_antiguedad'][label] += pending
+            if days > 0:
+                c['documentos_vencidos'] += 1
+                c['vencido'] += pending
+                c['dias_vencido'] = max(c['dias_vencido'], days)
+        credits[client_id] = credit  # leftover, if any
+        clients.append(c)
+    overdue = sorted((c for c in clients if c['vencido'] >= 0.005), key=lambda c: -c['vencido'])
+    for c in overdue:
+        c['pendiente'], c['vencido'] = round(c['pendiente'], 2), round(c['vencido'], 2)
+        c['por_antiguedad'] = {k: round(v, 2) for k, v in c['por_antiguedad'].items()}
+    return {
+        'pendiente': round(sum(b[0] for b in buckets.values()), 2),
+        'antiguedad': [{'bucket': k, 'pendiente': round(v[0], 2), 'documentos': v[1]} for k, v in buckets.items()],
+        'saldo_a_favor': round(sum(credits.values()), 2),
+        # The not-yet-due balance by due date: 7-day windows from today (hasta inclusive), then the rest.
+        'por_vencer_semanas': [
+            {'desde': (today + timedelta(days=7 * i)).isoformat(),
+             'hasta': (today + timedelta(days=7 * i + 6)).isoformat() if i < FORECAST_WEEKS else None,
+             'pendiente': round(w[0], 2), 'documentos': w[1]}
+            for i, w in enumerate(weeks)
+        ],
+        'por_zona': [
+            {'zona': z['zona'], 'pendiente': round(z['pendiente'], 2), 'vencido': round(z['vencido'], 2),
+             'por_antiguedad': {k: round(v, 2) for k, v in z['por_antiguedad'].items()}}
+            for z in zones.values() if z['pendiente'] >= 0.005
+        ],
+        'clientes_vencidos': len(overdue),
+        'clientes': overdue,  # every client with something overdue, most overdue first
+    }
+
+
+TREND_MONTHS = 12
+
+
+def fetch_aging_history(first_end, last_end):
+    """Open documents as fetch_open_documents() would have returned them at any
+    month-end in [first_end, last_end]: every non-cancelled client document
+    dated by last_end that is open today or had something applied after
+    first_end, plus those applications (admAsocCargosAbonos, both sides).
+    A document's balance at date D is CPENDIENTE plus everything applied to it
+    after D (checked 2023-2026: applications add up to CTOTAL - CPENDIENTE for
+    every credit and all but 2 invoices; cancelled documents have none)."""
+    doc_types = (FACTURA_DOC_TYPE, NOTA_CARGO_DOC_TYPE, *CREDIT_DOC_TYPES)
+    zone_ids = list(ZONE_SCOPE.values())
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCLIENTEPROVEEDOR, d.CRAZONSOCIAL, d.CIDAGENTE,
+                   d.CFECHA, d.CFECHAVENCIMIENTO, d.CPENDIENTE
+            FROM admDocumentos d
+            WHERE d.CCANCELADO = 0 AND d.CIDDOCUMENTODE IN ({', '.join(['%s'] * len(doc_types))})
+              AND (d.CIDDOCUMENTODE <> %s OR d.CIDAGENTE IN ({', '.join(['%s'] * len(zone_ids))}))
+              AND d.CFECHA < %s
+              AND (d.CPENDIENTE > 0.005 OR EXISTS (
+                   SELECT 1 FROM admAsocCargosAbonos a
+                   WHERE (a.CIDDOCUMENTOCARGO = d.CIDDOCUMENTO OR a.CIDDOCUMENTOABONO = d.CIDDOCUMENTO)
+                     AND a.CFECHAABONOCARGO > %s))
+            """,
+            [*doc_types, FACTURA_DOC_TYPE, *zone_ids, last_end + timedelta(days=1), first_end],
+        )
+        columns = [c[0] for c in cursor.description]
+        documents = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT CIDDOCUMENTOCARGO, CIDDOCUMENTOABONO, CFECHAABONOCARGO, CIMPORTEABONO
+            FROM admAsocCargosAbonos WHERE CFECHAABONOCARGO > %s
+            """,
+            [first_end],
+        )
+        applications = cursor.fetchall()
+    return documents, applications
+
+
+def aging_history(documents, applications, month_ends):
+    """The aging (see aging()) at each date in month_ends."""
+    applied = defaultdict(list)
+    for charge, credit, when, amount in applications:
+        applied[charge].append((when.date(), float(amount)))
+        applied[credit].append((when.date(), float(amount)))
+    out = []
+    for end in month_ends:
+        at_end = []
+        for d in documents:
+            if d['CFECHA'].date() > end:
+                continue
+            pending = float(d['CPENDIENTE']) + sum(a for when, a in applied.get(d['CIDDOCUMENTO'], ()) if when > end)
+            if pending >= 0.005:
+                at_end.append({**d, 'CPENDIENTE': pending})
+        result = aging(at_end, end)
+        out.append({'fecha': end.isoformat(), 'pendiente': result['pendiente'], 'antiguedad': result['antiguedad']})
+    return out
+
+
+def trend_month_ends(today, months=TREND_MONTHS):
+    """The last `months` complete month-ends before today, oldest first."""
+    ends, end = [], today.replace(day=1) - timedelta(days=1)
+    for _ in range(months):
+        ends.append(end)
+        end = end.replace(day=1) - timedelta(days=1)
+    return ends[::-1]
+
+
+def aging_trend():
+    ends = trend_month_ends(date.today())
+    # ponytail: rebuilds every month-end from scratch (~12 x a few thousand docs, well under a second);
+    # snapshot past months in SQLite if it ever gets slow.
+    return aging_history(*fetch_aging_history(ends[0], ends[-1]), ends)
+
+
 def receivables_today():
-    """Outstanding balance today and DSO over the last 365 days, both with IVA.
-    ponytail: only invoices from the last year count - older unpaid ones are
-    collection problems, not the normal cycle; widen the floor if asked."""
+    """Open balance today by age (net of unapplied credits), plus DSO over the last 365 days, with IVA.
+    ponytail: DSO only counts last year's invoices - older unpaid ones are
+    collection problems (they show in the aging), not the normal cycle."""
     today = date.today()
     facturas = CommissionRepository.fetch_scoped_facturas(today - timedelta(days=365), today)
     pending = sum(f['CPENDIENTE'] or 0 for f in facturas)
     sold = sum(f['CTOTAL'] or 0 for f in facturas)
-    return {'pendiente': round(pending, 2), 'dias_cobro': round(pending / sold * 365, 1) if sold else None}
+    result = aging(fetch_open_documents(), today)
+    # The page shows the top ones; the full list is overdue_clients().
+    result['clientes'] = result['clientes'][:TOP_OVERDUE_CLIENTS]
+    return {**result, 'dias_cobro': round(pending / sold * 365, 1) if sold else None}
+
+
+def overdue_clients():
+    """Every client with an overdue balance, live (no cache): the page's
+    "Ver todos" list. Same netting as the aging."""
+    result = aging(fetch_open_documents(), date.today())
+    return {k: result[k] for k in ('clientes', 'pendiente', 'saldo_a_favor')}
 
 
 def _in_thread(fn, *args):
@@ -344,7 +536,7 @@ def _in_thread(fn, *args):
 def calculate_sales(year, month, refresh=False):
     # 10 min cache like the catalog; refresh=True (the page's "Actualizar"
     # button) recomputes straight from the ERP and re-caches it.
-    key = f'analytics_sales_v6_{year}-{month:02d}'  # bump v when the response shape changes
+    key = f'analytics_sales_v13_{year}-{month:02d}'  # bump v when the response shape changes
     result = None if refresh else cache.get(key)
     if result is None:
         result = _calculate_sales(year, month)
@@ -358,13 +550,14 @@ def _calculate_sales(year, month):
     chart_end = date(year + end_month // 12, end_month % 12 + 1, 1)
     # The ERP queries are independent, so run them side by side: the request
     # takes as long as the slowest one (Corte de Caja) instead of their sum.
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=7) as pool:
         lines = pool.submit(_in_thread, fetch_month_lines, date(year - 1, 1, 1), chart_end)
         brand_names = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
         corte = pool.submit(_in_thread, calculate_corte_de_caja, date(year, month, 1), next_month - timedelta(days=1))
         ledger_results = pool.submit(_in_thread, fetch_ledger_results, date(year - 1, 1, 1), date(year, end_month, 1))
         ledger_balances = pool.submit(_in_thread, fetch_ledger_balances, date(year, end_month, 1))
         receivables = pool.submit(_in_thread, receivables_today)
+        trend = pool.submit(_in_thread, aging_trend)
 
     result = summarize(lines.result(), year, month, brand_names.result(), end_month)
     keys = [m['month'] for m in result['months']]
@@ -375,5 +568,5 @@ def _calculate_sales(year, month):
     result['financieros_cuentas'] = financial_accounts(ledger_results.result(), result['month'], prev_key)
     result['indicadores'] = indicators(result['resultados'], month_end_balances(ledger_balances.result(), keys))
     result['cobrado'] = {z: round(float(v), 2) for z, v in corte.result()['zone_totals'].items()}
-    result['cuentas_por_cobrar'] = receivables.result()
+    result['cuentas_por_cobrar'] = {**receivables.result(), 'historial': trend.result()}
     return result

@@ -26,9 +26,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import { HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM } from "@/components/sortable-table";
+import ClientLink from "@/components/facturas/ClientLink";
+import { useInvoiceDialog } from "@/components/facturas/invoice-dialog-context";
+import type { OverdueClient } from "@/components/analytics/OverdueClients";
 import { MonthControl } from "@/components/date-controls";
-import { formatMonth, isoToDate, monthToISO } from "@/lib/dates";
+import { formatDayShort, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { ZONE_LABELS, ZONE_ORDER } from "@/lib/zones";
 import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -76,7 +79,23 @@ interface SalesSummary {
   months: MonthRow[];
   brands: Brand[];
   cobrado: Partial<Record<Zone, number>>;
-  cuentas_por_cobrar: { pendiente: number; dias_cobro: number | null };
+  // Open invoices and notas de cargo today, however old, net of each client's
+  // unapplied credits (leftover credit is saldo_a_favor); dias_cobro uses the
+  // last 12 months only.
+  cuentas_por_cobrar: {
+    pendiente: number;
+    dias_cobro: number | null;
+    antiguedad: { bucket: string; pendiente: number; documentos: number }[];
+    saldo_a_favor: number;
+    // The not-yet-due balance in 7-day windows from today; the last has hasta null (everything later).
+    por_vencer_semanas: { desde: string; hasta: string | null; pendiente: number; documentos: number }[];
+    // zona null = notas de cargo, which carry no agent.
+    por_zona: { zona: Zone | null; pendiente: number; vencido: number; por_antiguedad: Record<string, number> }[];
+    // The aging at each of the last 12 month-ends, oldest first.
+    historial: { fecha: string; pendiente: number; antiguedad: { bucket: string; pendiente: number }[] }[];
+    clientes_vencidos: number;
+    clientes: OverdueClient[]; // the top ones; the full list opens in the dialog
+  };
   resultados: ResultsRow[]; // same months as `months`
   indicadores: IndicatorRow[]; // same months as `months`
   // The picked month's operating expenses per account, by category.
@@ -163,6 +182,10 @@ const TABLE_CLASS =
 // account names wrap in the first column instead of resizing the table.
 const COL_MONEY = "w-32 sm:w-40";
 const COL_PERCENT = "w-[4.5rem] sm:w-24";
+// The side-by-side cards (brands, aging, overdue clients) are under 480px wide
+// between lg and ~1150px: fixed number columns, the name column truncates.
+const COL_SIDE_MONEY = "w-[7.5rem]";
+const COL_SHARE = "w-[8.5rem]"; // ShareBar is 7.5rem plus padding
 
 function SectionHeading({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -211,6 +234,55 @@ function topBrands(brands: Brand[], period: "ytd" | "mes") {
 
 // Card header with tabs: title and tabs share a row, the description gets
 // its own line so it isn't squeezed next to the tabs on a phone.
+// Aging colors: neutral for not yet due, then one orange ramp, light to dark,
+// by how late (validated as an ordinal ramp; the gray clears the lightest step).
+const AGING_COLORS = ["#94a3b8", "#fb923c", "#ea580c", "#c2410c", "#9a3412"];
+
+interface AgingRow {
+  key: string;
+  label: string;
+  pendiente: number;
+  vencido: number;
+  por_antiguedad: Record<string, number>;
+}
+
+// Balance by age, one row per zone or month: the age split from lg; below
+// that a single Vencido column. The last row is styled as the total.
+function AgingTable({ first, buckets, rows }: { first: string; buckets: string[]; rows: AgingRow[] }) {
+  return (
+    <Table className={cn(TABLE_CLASS, "table-fixed")}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{first}</TableHead>
+          {buckets.map((b) => (
+            <TableHead key={b} className={cn("text-right", HIDE_BELOW_LG, COL_SIDE_MONEY)}>
+              {b.replace(" días", "")}
+            </TableHead>
+          ))}
+          <TableHead className={cn("text-right lg:hidden", COL_SIDE_MONEY)}>Vencido</TableHead>
+          <TableHead className="text-right w-[5.5rem]">% vencido</TableHead>
+          <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <TableRow key={r.key} className={cn(r.key === "total" && "!bg-slate-100 font-semibold")}>
+            <TableCell>{r.label}</TableCell>
+            {buckets.map((b) => (
+              <TableCell key={b} className={cn("text-right num", HIDE_BELOW_LG)}>
+                {r.por_antiguedad[b] ? formatMoney(r.por_antiguedad[b]) : "-"}
+              </TableCell>
+            ))}
+            <TableCell className="text-right num lg:hidden">{formatMoney(r.vencido)}</TableCell>
+            <TableCell className="text-right num">{r.pendiente ? percent(r.vencido / r.pendiente, 0) : "-"}</TableCell>
+            <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(r.pendiente)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
 function TabbedHeader({
   title,
   description,
@@ -331,7 +403,14 @@ function IncomeWaterfall({
     <div className="px-4 pb-4">
       <div className={cn(ROW, "hidden sm:grid pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500")}>
         <span />
-        <span />
+        {/* With a loss the axis starts below zero: mark where zero is. */}
+        <span className="relative h-full">
+          {lo < 0 && (
+            <span className="absolute bottom-0 -translate-x-1/2 normal-case" style={{ left: at(0) }}>
+              0
+            </span>
+          )}
+        </span>
         <span className="text-right">Monto</span>
         <span className="text-right whitespace-nowrap">% ingresos</span>
         <span className="text-right whitespace-nowrap">vs {prevLabel}</span>
@@ -383,6 +462,10 @@ function IncomeWaterfall({
                     background: negative ? "#e34948" : line.total ? COLOR_CURRENT : i === 0 ? "#334155" : "#94a3b8",
                   }}
                 />
+                {lo < 0 && (
+                  // Through the row's padding too, so the rows draw one continuous zero line.
+                  <div className="absolute -inset-y-1 sm:-inset-y-2 w-px bg-slate-500" style={{ left: at(0) }} aria-hidden />
+                )}
               </div>
               <div className="hidden sm:block text-right num text-sm text-gray-600">{share(line.value)}</div>
               <div className="hidden sm:block text-right text-sm">
@@ -570,6 +653,7 @@ function Tile({ label, value, children }: { label: string; value: string; childr
 
 export default function SalesBIView() {
   const { loading: authLoading, isManagement } = useAuth();
+  const { openOverdueClients } = useInvoiceDialog();
   const [month, setMonth] = useState(lastCompleteMonth);
   const [data, setData] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -581,6 +665,7 @@ export default function SalesBIView() {
   const [brandPeriod, setBrandPeriod] = useState<"ytd" | "mes">("mes");
   const [zonePeriod, setZonePeriod] = useState<"ytd" | "mes">("mes");
   const [expensePeriod, setExpensePeriod] = useState<"anual" | "mes">("anual");
+  const [agingView, setAgingView] = useState<"grafica" | "tabla">("grafica");
   // Expense category whose accounts are listed; kept across months to compare.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const toggleCategory = (c: string) => setOpenCategory((open) => (open === c ? null : c));
@@ -774,9 +859,9 @@ export default function SalesBIView() {
             </Tile>
             <Tile label="Por cobrar hoy" value={formatMoney(data!.cuentas_por_cobrar.pendiente)}>
               <p className="text-xs text-gray-500">
-                {data!.cuentas_por_cobrar.dias_cobro ?? "-"} días promedio de cobro
+                {data!.cuentas_por_cobrar.dias_cobro ?? "-"} días promedio de cobro (últimos 12 meses)
               </p>
-              <p className="text-xs text-gray-400">con IVA, facturas de los últimos 12 meses</p>
+              <p className="text-xs text-gray-400">con IVA, todas las facturas abiertas, menos saldos a favor</p>
             </Tile>
             <Tile label="Devoluciones y notas de crédito" value={formatMoney(view.cur.devoluciones)}>
               <Delta
@@ -931,19 +1016,19 @@ export default function SalesBIView() {
                 value={brandPeriod}
                 onChange={(v) => setBrandPeriod(v as "ytd" | "mes")}
               />
-              <Table className={TABLE_CLASS}>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Marca</TableHead>
-                    <TableHead className="text-right">Ventas</TableHead>
-                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>% del total</TableHead>
-                    <TableHead className="text-right">Cambio</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Ventas</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% del total</TableHead>
+                    <TableHead className="text-right w-24">Cambio</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {view.brands.rows.map((b) => (
                     <TableRow key={b.brand}>
-                      <TableCell className="max-w-[7rem] sm:max-w-[12rem] truncate" title={b.brand}>
+                      <TableCell className="truncate" title={b.brand}>
                         {b.brand}
                       </TableCell>
                       <TableCell className="text-right num">{formatMoney(b.value)}</TableCell>
@@ -969,6 +1054,245 @@ export default function SalesBIView() {
               </Table>
             </Card>
           </div>
+
+          <SectionHeading title="Cuentas por cobrar">
+            Facturas abiertas hoy según Comercial, con IVA, por días de vencidas, menos los pagos, notas de crédito y
+            devoluciones de cada cliente que no se han aplicado a una factura. No depende del mes elegido.
+          </SectionHeading>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Antigüedad</CardTitle>
+                <CardDescription>
+                  Saldo por días desde el vencimiento.
+                  {data!.cuentas_por_cobrar.saldo_a_favor > 0 &&
+                    ` Saldos a favor de clientes sin facturas que cubrir: ${formatMoney(
+                      data!.cuentas_por_cobrar.saldo_a_favor,
+                    )}, no restados.`}
+                </CardDescription>
+              </CardHeader>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vencimiento</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Por cobrar</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% del total</TableHead>
+                    <TableHead className="text-right w-28">Documentos</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    const { antiguedad, pendiente } = data!.cuentas_por_cobrar;
+                    const rows = [
+                      ...antiguedad,
+                      { bucket: "Total", pendiente, documentos: sum(antiguedad.map((b) => b.documentos)) },
+                    ];
+                    return rows.map((b) => (
+                      <TableRow key={b.bucket} className={cn(b.bucket === "Total" && "!bg-slate-100 font-semibold")}>
+                        <TableCell>{b.bucket}</TableCell>
+                        <TableCell className="text-right num">{formatMoney(b.pendiente)}</TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                          <ShareBar value={b.pendiente} total={pendiente} />
+                        </TableCell>
+                        <TableCell className="text-right num">{b.documentos}</TableCell>
+                      </TableRow>
+                    ));
+                  })()}
+                </TableBody>
+              </Table>
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-base">Por vencer por semana</CardTitle>
+                <CardDescription>Lo que vence en cada una de las próximas semanas, según la fecha de vencimiento</CardDescription>
+              </CardHeader>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vence</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Por cobrar</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SHARE)}>% por vencer</TableHead>
+                    <TableHead className="text-right w-28">Documentos</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    const weeks = data!.cuentas_por_cobrar.por_vencer_semanas;
+                    const total = sum(weeks.map((w) => w.pendiente));
+                    return weeks.map((w) => (
+                      <TableRow key={w.desde}>
+                        <TableCell>
+                          {w.hasta
+                            ? `${formatDayShort(w.desde)} – ${formatDayShort(w.hasta)}`
+                            : `Desde ${formatDayShort(w.desde)}`}
+                        </TableCell>
+                        <TableCell className="text-right num">{formatMoney(w.pendiente)}</TableCell>
+                        <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>
+                          <ShareBar value={w.pendiente} total={total} />
+                        </TableCell>
+                        <TableCell className="text-right num">{w.documentos}</TableCell>
+                      </TableRow>
+                    ));
+                  })()}
+                </TableBody>
+              </Table>
+            </Card>
+
+            <Card>
+              <CardHeader className="p-4 pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base">Clientes con más saldo vencido</CardTitle>
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openOverdueClients}>
+                    Ver los {data!.cuentas_por_cobrar.clientes_vencidos}
+                  </Button>
+                </div>
+                <CardDescription>
+                  {data!.cuentas_por_cobrar.clientes.length} de {data!.cuentas_por_cobrar.clientes_vencidos} clientes
+                  con facturas vencidas. Haga clic en un cliente para ver sus facturas.
+                </CardDescription>
+              </CardHeader>
+              <Table className={cn(TABLE_CLASS, "table-fixed")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead className={cn("text-right", COL_SIDE_MONEY)}>Vencido</TableHead>
+                    <TableHead className="text-right w-20 xl:w-32">
+                      <span className="xl:hidden">Días</span>
+                      <span className="hidden xl:inline">Días de atraso</span>
+                    </TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM, COL_SIDE_MONEY)}>Saldo total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data!.cuentas_por_cobrar.clientes.map((c) => (
+                    <TableRow key={c.client_id}>
+                      <TableCell className="truncate" title={c.cliente}>
+                        <ClientLink clientId={c.client_id} label={c.cliente} />
+                      </TableCell>
+                      <TableCell className="text-right num">{formatMoney(c.vencido)}</TableCell>
+                      <TableCell className={cn("text-right num", c.dias_vencido > 90 && "text-red-700")}>
+                        {c.dias_vencido}
+                      </TableCell>
+                      <TableCell className={cn("text-right num", HIDE_BELOW_SM)}>{formatMoney(c.pendiente)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-base">Por zona</CardTitle>
+              <CardDescription>Saldo de cada zona por días de vencido, según la zona de la factura</CardDescription>
+            </CardHeader>
+            {(() => {
+              const { por_zona: zones, antiguedad, pendiente } = data!.cuentas_por_cobrar;
+              const buckets = antiguedad.map((b) => b.bucket);
+              const vencido = sum(zones.map((z) => z.vencido));
+              const rows = [
+                ...zones.map((z) => ({ ...z, key: z.zona ?? "none", label: z.zona ? ZONE_LABELS[z.zona] : "Sin zona" })),
+                {
+                  key: "total",
+                  label: "Total",
+                  pendiente,
+                  vencido,
+                  por_antiguedad: Object.fromEntries(antiguedad.map((b) => [b.bucket, b.pendiente])),
+                },
+              ];
+              return <AgingTable first="Zona" buckets={buckets} rows={rows} />;
+            })()}
+          </Card>
+
+          {(() => {
+            const history = data!.cuentas_por_cobrar.historial;
+            const buckets = data!.cuentas_por_cobrar.antiguedad.map((b) => b.bucket);
+            const months = history.map((h) => {
+              const [y, m] = h.fecha.split("-").map(Number);
+              const por_antiguedad = Object.fromEntries(h.antiguedad.map((b) => [b.bucket, b.pendiente]));
+              return {
+                key: h.fecha,
+                label: `${MONTH_ABBR[m - 1]} ${String(y).slice(2)}`,
+                pendiente: h.pendiente,
+                vencido: h.pendiente - (por_antiguedad[buckets[0]] ?? 0),
+                por_antiguedad,
+              };
+            });
+            return (
+              <Card>
+                <TabbedHeader
+                  title="Antigüedad al cierre de cada mes"
+                  description={`Últimos ${months.length} meses, con IVA y menos saldos a favor, según la fecha en que se aplicó cada pago en Comercial`}
+                  tabs={[
+                    ["grafica", "Gráfica"],
+                    ["tabla", "Tabla"],
+                  ]}
+                  value={agingView}
+                  onChange={(v) => setAgingView(v as "grafica" | "tabla")}
+                />
+                {agingView === "grafica" ? (
+                  <div className="h-72 px-2 pb-10">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={months.map((m) => ({ label: m.label, ...m.por_antiguedad, row: m }))}
+                        margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+                        className="[&_:focus:not(:focus-visible)]:outline-none"
+                      >
+                        <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          axisLine={false}
+                          minTickGap={8}
+                          tick={{ fontSize: 12, fill: "#6b7280" }}
+                        />
+                        <YAxis
+                          tickFormatter={compactMoney}
+                          tickLine={false}
+                          axisLine={false}
+                          width={52}
+                          tick={{ fontSize: 12, fill: "#6b7280" }}
+                        />
+                        <Tooltip
+                          formatter={(value, name) => [formatMoney(Number(value)), name]}
+                          labelFormatter={(label, payload) => {
+                            const row = payload?.[0]?.payload?.row as AgingRow | undefined;
+                            return row
+                              ? `${label}: ${formatMoney(row.pendiente)}, ${percent(row.vencido / row.pendiente, 0)} vencido`
+                              : label;
+                          }}
+                          contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                          cursor={{ fill: "#f3f4f6" }}
+                          // Most severe on top, like the stack.
+                          itemSorter={(item) => -buckets.indexOf(String(item.dataKey))}
+                        />
+                        {buckets.map((b, i) => (
+                          <Bar
+                            key={b}
+                            dataKey={b}
+                            stackId="aging"
+                            fill={AGING_COLORS[i]}
+                            stroke="#fff"
+                            strokeWidth={1}
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-1 text-xs text-gray-600">
+                      {buckets.map((b, i) => (
+                        <span key={b} className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: AGING_COLORS[i] }} />
+                          {b}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <AgingTable first="Cierre" buckets={buckets} rows={[...months].reverse()} />
+                )}
+              </Card>
+            );
+          })()}
 
           <SectionHeading title="Resultados">
               Según Contabilidad: cada mes cuenta lo que el contador registró en ese mes, por eso los ingresos

@@ -36,6 +36,11 @@ export function formatDay(iso: string | null | undefined) {
   return format(isoToDate(iso.slice(0, 10)), "d MMM yyyy", { locale: es });
 }
 
+// "6 oct" - for date ranges within the next weeks.
+export function formatDayShort(iso: string) {
+  return format(isoToDate(iso.slice(0, 10)), "d MMM", { locale: es });
+}
+
 // "septiembre 2026"
 export function formatMonth(month: string) {
   return format(isoToDate(month), "MMMM yyyy", { locale: es });
