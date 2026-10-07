@@ -27,20 +27,24 @@ Ideal for fleet management, automated mileage calculation, and maintaining clean
 ## Installation
 
 1. Clone this repository:
-   
+
+  ```bash 
    git clone [https://github.com/Filuuus/stock-asm.git](https://github.com/Filuuus/stock-asm.git)
    cd stock-asm
+  ```
 
 
 2. Install the necessary dependencies:
 
-pip install requests
-
+  ```bash
+  pip install requests
+  ```
 
 3. Create a file named `.env` in the root of the project based on the example file:
 
-cp .env.example .env
-
+  ```bash
+  cp .env.example .env
+  ```
 
 ## Configuration
 
