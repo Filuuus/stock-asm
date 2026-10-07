@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'corte_de_caja',
     'facturas',
     'analytics',
+    'fleet',
 ]
 
 MIDDLEWARE = [
@@ -204,3 +205,17 @@ CORTE_DE_CAJA_ZONE_LABELS = dict(
 )
 
 
+
+# Fleet GPS log (fleet/services.py): Zeek GPS trips -> Notion. All secrets, so .env only.
+# ZEEK_FLEET maps each GPS unit's IMEI to its vehicle card in Notion:
+# "IMEI=notion_page_id;IMEI=notion_page_id". The vehicle name is the card's title.
+ZEEK_TOKEN = os.getenv('ZEEK_TOKEN', '')
+ZEEK_CLIENT = os.getenv('ZEEK_CLIENT', '')
+ZEEK_LICENSE = os.getenv('ZEEK_LICENSE', '')
+ZEEK_FLEET = dict(
+    (imei.strip(), page.strip())
+    for imei, _, page in (pair.partition('=') for pair in os.getenv('ZEEK_FLEET', '').split(';'))
+    if imei.strip() and page.strip()
+)
+NOTION_TOKEN = os.getenv('NOTION_TOKEN', '')
+NOTION_FLEET_LOG_DB = os.getenv('NOTION_FLEET_LOG_DB', '')
