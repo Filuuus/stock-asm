@@ -9,7 +9,7 @@ from fleet.services import close_month
 class Command(BaseCommand):
     help = (
         'Adds a "Reporte Mensual" entry per vehicle to the Notion fleet log, summing its daily '
-        'entries. Defaults to the previous month, so it can run on the 1st.'
+        'entries, then archives those daily entries. Defaults to the previous month, so it can run on the 1st.'
     )
 
     def add_arguments(self, parser):

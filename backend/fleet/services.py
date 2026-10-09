@@ -182,16 +182,18 @@ def sync_day(day, log):
 # --- Monthly close ------------------------------------------------------------------------
 
 def summarize_month(pages):
-    """Groups daily log pages by vehicle: {name: {'km', 'odometer', 'days': [(date, km, route)]}}."""
+    """Groups daily log pages by vehicle:
+    {name: {'km', 'odometer', 'days': [(date, km, route)], 'page_ids': [...]}}."""
     summary = {}
     for page in pages:
         props = page['properties']
         name = page_title(page)
         km = props['Recorrido Diario']['number'] or 0
-        vehicle = summary.setdefault(name, {'km': 0, 'odometer': 0, 'days': []})
+        vehicle = summary.setdefault(name, {'km': 0, 'odometer': 0, 'days': [], 'page_ids': []})
         vehicle['km'] += km
         vehicle['odometer'] = max(vehicle['odometer'], props['Odómetro Total']['number'] or 0)
         vehicle['days'].append(((props['Fecha']['date'] or {}).get('start', ''), km, props['Ruta']['url']))
+        vehicle['page_ids'].append(page['id'])
     for vehicle in summary.values():
         vehicle['km'] = round(vehicle['km'], 2)
         vehicle['days'].sort()
@@ -199,14 +201,16 @@ def summarize_month(pages):
 
 
 def close_month(first_day, last_day, log):
-    """One 'Reporte Mensual' entry per vehicle in the log database, spanning the month.
-    Daily entries are left in place. Does nothing if that month was already closed."""
-    if notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
+    """One 'Reporte Mensual' entry per vehicle in the log database, spanning the month, then
+    archives that vehicle's daily entries (the team's choice, to stay within Notion's limits;
+    archived pages go to Notion's trash, which empties after 30 days). A vehicle whose monthly
+    entry already exists is not summarized again, only its leftover daily entries archived, so
+    re-running after a failure is safe."""
+    monthly = notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
         {'property': 'Fecha', 'date': {'equals': first_day.isoformat()}},
         {'property': 'Vehículo', 'title': {'starts_with': MONTHLY_TITLE_PREFIX}},
-    ]}):
-        log(f'{first_day:%Y-%m} ya tiene reporte mensual.')
-        return
+    ]})
+    closed = {page_title(p).removeprefix(MONTHLY_TITLE_PREFIX) for p in monthly}
 
     pages = notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
         {'property': 'Fecha', 'date': {'on_or_after': first_day.isoformat()}},
@@ -218,28 +222,39 @@ def close_month(first_day, last_day, log):
         return
 
     for name, vehicle in summarize_month(pages).items():
-        days = [{
-            'object': 'block',
-            'type': 'bulleted_list_item',
-            'bulleted_list_item': {'rich_text': [
-                {'type': 'text', 'text': {'content': f'📅 {day} | Recorrido: {km} km | '}},
-                {'type': 'text', 'text': {'content': 'Ver mapa de ruta', 'link': {'url': route}}}
-                if route else {'type': 'text', 'text': {'content': 'Sin mapa'}},
-            ]},
-        } for day, km, route in vehicle['days']]
-        notion('POST', 'pages', {
-            'parent': {'database_id': settings.NOTION_FLEET_LOG_DB},
-            'properties': {
-                'Vehículo': {'title': [{'text': {'content': MONTHLY_TITLE_PREFIX + name}}]},
-                'Recorrido Diario': {'number': vehicle['km']},
-                'Odómetro Total': {'number': vehicle['odometer']},
-                'Fecha': {'date': {'start': first_day.isoformat(), 'end': last_day.isoformat()}},
-            },
-            'children': [
-                {'object': 'block', 'type': 'heading_3', 'heading_3': {'rich_text': [
-                    {'type': 'text', 'text': {'content': f'Desglose de viajes {first_day:%Y-%m}'}},
-                ]}},
-                {'object': 'block', 'type': 'divider', 'divider': {}},
-            ] + days[:NOTION_MAX_CHILDREN - 2],
-        })
-        log(f"[{name}] {vehicle['km']} km en el mes.")
+        if name in closed:
+            log(f'[{name}] ya tiene reporte mensual.')
+        else:
+            create_monthly_entry(name, vehicle, first_day, last_day)
+            log(f"[{name}] {vehicle['km']} km en el mes.")
+        # Only after the monthly entry exists, so a failed create never loses the daily detail.
+        for page_id in vehicle['page_ids']:
+            notion('PATCH', f'pages/{page_id}', {'archived': True})
+        log(f"[{name}] {len(vehicle['page_ids'])} registros diarios archivados.")
+
+
+def create_monthly_entry(name, vehicle, first_day, last_day):
+    days = [{
+        'object': 'block',
+        'type': 'bulleted_list_item',
+        'bulleted_list_item': {'rich_text': [
+            {'type': 'text', 'text': {'content': f'📅 {day} | Recorrido: {km} km | '}},
+            {'type': 'text', 'text': {'content': 'Ver mapa de ruta', 'link': {'url': route}}}
+            if route else {'type': 'text', 'text': {'content': 'Sin mapa'}},
+        ]},
+    } for day, km, route in vehicle['days']]
+    notion('POST', 'pages', {
+        'parent': {'database_id': settings.NOTION_FLEET_LOG_DB},
+        'properties': {
+            'Vehículo': {'title': [{'text': {'content': MONTHLY_TITLE_PREFIX + name}}]},
+            'Recorrido Diario': {'number': vehicle['km']},
+            'Odómetro Total': {'number': vehicle['odometer']},
+            'Fecha': {'date': {'start': first_day.isoformat(), 'end': last_day.isoformat()}},
+        },
+        'children': [
+            {'object': 'block', 'type': 'heading_3', 'heading_3': {'rich_text': [
+                {'type': 'text', 'text': {'content': f'Desglose de viajes {first_day:%Y-%m}'}},
+            ]}},
+            {'object': 'block', 'type': 'divider', 'divider': {}},
+        ] + days[:NOTION_MAX_CHILDREN - 2],
+    })
