@@ -100,7 +100,7 @@ NOTION_TOKEN=
 NOTION_FLEET_LOG_DB=
 ```
 
-The Notion integration needs access to the log database and to every vehicle card.
+The Notion integration needs access to the log database and to every vehicle card. Details (Notion property names, scheduling) are in [`backend/fleet/README.md`](backend/fleet/README.md).
 
 ### Corte de Caja monthly export
 
