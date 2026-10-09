@@ -78,6 +78,30 @@ The app runs at `http://localhost:3000`, with the API at `http://localhost:8000/
 
 A `.claude/launch.json` is included with dev-server configs for both.
 
+### Fleet GPS log (Zeek → Notion)
+
+Two commands copy the company vehicles' GPS trips from Zeek into a Notion database (the `fleet` app; no ERP or local DB involved):
+
+```
+python manage.py sync_fleet_log                     # yesterday; or --date 2026-10-06
+python manage.py close_fleet_month                  # previous month; or --year 2026 --month 9
+```
+
+`sync_fleet_log` writes one log entry per vehicle that moved (km, Google Maps route, one block per trip) and adds the km to the vehicle card's `Kilometraje`. `close_fleet_month` adds a `Reporte Mensual - <vehículo>` entry per vehicle (date, km and route link for each day) and then archives that month's daily entries to stay within Notion's limits; archived pages sit in Notion's trash for 30 days, after which the per-trip detail is gone. Both skip work already done, so re-running is safe. Schedule the first nightly and the second on the 1st.
+
+Configuration goes in `backend/.env` (never in code, the repo is public):
+
+```
+ZEEK_TOKEN=
+ZEEK_CLIENT=
+ZEEK_LICENSE=
+ZEEK_FLEET="IMEI=notion_vehicle_card_id;IMEI=notion_vehicle_card_id"
+NOTION_TOKEN=
+NOTION_FLEET_LOG_DB=
+```
+
+The Notion integration needs access to the log database and to every vehicle card.
+
 ### Corte de Caja monthly export
 
 `python manage.py export_corte_de_caja` regenerates that month's `.xlsx` workbook (one sheet per business day, matching the layout the accountant used to build by hand) at `CORTE_DE_CAJA_EXPORT_DIR` — every run fully overwrites the file with current data, so it's always safe to re-run. Refuses to generate anything before September 2026 (`corte_de_caja/exports.py::EARLIEST_EXPORT_MONTH`) — this replaces the manual process going forward, it doesn't backfill history.
