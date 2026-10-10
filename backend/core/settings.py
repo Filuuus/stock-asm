@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'facturas',
     'analytics',
     'fleet',
+    'profitability',
 ]
 
 MIDDLEWARE = [

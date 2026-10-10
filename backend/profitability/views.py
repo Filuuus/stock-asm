@@ -1,0 +1,48 @@
+from datetime import date
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+
+from accounts.permissions import IsManagement
+
+from .models import ProductWeight
+from .services import calculate_profitability
+
+
+def _month_start(value):
+    year, month = map(int, value.split('-'))
+    return date(year, month, 1)
+
+
+@api_view(['GET'])
+@permission_classes([IsManagement])
+def profitability(request):
+    """?from=YYYY-MM&to=YYYY-MM, both months included."""
+    try:
+        first = _month_start(request.query_params['from'])
+        last = _month_start(request.query_params['to'])
+    except (KeyError, ValueError):
+        return Response({'error': 'from y to deben tener formato YYYY-MM.'}, status=400)
+    if last < first:
+        return Response({'error': 'El periodo termina antes de empezar.'}, status=400)
+    end = date(last.year + last.month // 12, last.month % 12 + 1, 1)
+    return Response(calculate_profitability(first, end, refresh=request.query_params.get('refresh') == '1'))
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def set_weight(request):
+    """{"product_id": 123, "kg": 2.5}; kg null removes the manual weight."""
+    try:
+        product_id = int(request.data['product_id'])
+        kg = request.data.get('kg')
+        kg = None if kg in (None, '') else float(kg)
+    except (KeyError, TypeError, ValueError):
+        return Response({'error': 'product_id y kg deben ser números.'}, status=400)
+    if kg is None:
+        ProductWeight.objects.filter(producto_id=product_id).delete()
+    elif not 0 <= kg <= 5000:
+        return Response({'error': 'El peso debe estar entre 0 y 5,000 kg.'}, status=400)
+    else:
+        ProductWeight.objects.update_or_create(producto_id=product_id, defaults={'kg': kg, 'updated_by': request.user})
+    return Response({'ok': True})
