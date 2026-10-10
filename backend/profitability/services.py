@@ -455,7 +455,10 @@ def allocate_route_costs(facts, costs, is_service, by='kg'):
     return dict(unallocated)
 
 
-def calculate_profitability(date_from, date_to, refresh=False):
+def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset()):
+    """`drop`: product ids to imagine not selling (the page's what-if checkboxes). Their sales, cost,
+    commissions and supplier discounts go; the route costs stay - salaries, trucks and rent don't
+    leave with a product - and are spread over what's left."""
     data = fetch_erp(date_from, date_to, refresh)
 
     units, amounts = defaultdict(float), defaultdict(float)
@@ -499,7 +502,7 @@ def calculate_profitability(date_from, date_to, refresh=False):
     excluded = set(ExcludedProduct.objects.values_list('producto_id', flat=True))
     facts = build_facts(data['sales'], allocate_credit_notes(data['notes'], data['invoice_lines']),
                         commission_rows, zone_of, kg_of, rate_of)
-    facts = [f for f in facts if f[3] not in excluded]
+    facts = [f for f in facts if f[3] not in excluded and f[3] not in drop]
     allocate_supplier_discounts(facts, data['supplier_discounts'],
                                 lambda pid: pid in products and products[pid]['brand'] == BIONAT_SUPPLIER_NAME)
 
@@ -528,10 +531,11 @@ def calculate_profitability(date_from, date_to, refresh=False):
     unallocated = allocate_route_costs(facts, costs, is_service)
     allocate_route_costs(facts, costs, is_service, by='pieces')
     first_gps = VehicleDayKm.objects.order_by('day').values_list('day', flat=True).first()
-    used_products, used_clients = {f[3] for f in facts} | excluded, {f[2] for f in facts}
+    used_products, used_clients = {f[3] for f in facts} | excluded | set(drop), {f[2] for f in facts}
     return {
         'facts': facts,
         'excluded': sorted(excluded),
+        'dropped': sorted(drop),
         'route_costs': costs,
         'unallocated': unallocated,
         'gps_since': first_gps.isoformat() if first_gps else None,

@@ -131,6 +131,7 @@ interface Sums {
 interface Group extends Sums {
   key: string;
   label: string;
+  dropped?: boolean; // a what-if row: shown with its real figures, left out of the totals
 }
 
 const gross = (s: Sums) => s.net - s.cost;
@@ -140,7 +141,13 @@ function emptySums(): Sums {
   return { net: 0, cost: 0, commission: 0, route: 0, kg: 0 };
 }
 
-function Tile({ label, value, sub, change }: { label: string; value: string; sub?: string; change?: number | null }) {
+function Tile({ label, value, sub, change, changeLabel = "vs año anterior" }: {
+  label: string;
+  value: string;
+  sub?: string;
+  change?: number | null;
+  changeLabel?: string;
+}) {
   return (
     <Card>
       <CardHeader className="p-3 sm:p-4 space-y-1">
@@ -150,7 +157,7 @@ function Tile({ label, value, sub, change }: { label: string; value: string; sub
         {change !== undefined && change !== null && (
           <p className={cn("text-xs", change >= 0 ? "text-emerald-700" : "text-red-700")}>
             {change >= 0 ? "+" : ""}
-            {percent(change)} vs año anterior
+            {percent(change)} {changeLabel}
           </p>
         )}
       </CardHeader>
@@ -187,6 +194,9 @@ export default function ProfitabilityView() {
   const [invoicesOf, setInvoicesOf] = useState<string | null>(null); // product id whose invoices are listed
   const [setupOpen, setSetupOpen] = useState(false);
   const [excludeError, setExcludeError] = useState<string | null>(null);
+  // What-if: products imagined not sold (per viewer, not saved), and the server's recomputation without them.
+  const [dropped, setDropped] = useState<string[]>([]);
+  const [scenario, setScenario] = useState<Profitability | null>(null);
 
   const setExcluded = async (productId: string, excluded: boolean) => {
     setExcludeError(null);
@@ -228,6 +238,25 @@ export default function ProfitabilityView() {
       cancelled = true;
     };
   }, [from, to, isManagement, reload]);
+
+  useEffect(() => {
+    if (!isManagement || dropped.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setScenario(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`/api/profitability/?from=${from}&to=${to}&drop=${dropped.join(",")}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("No se pudo calcular el escenario.");
+        const json = await res.json();
+        if (!cancelled) setScenario(json);
+      })
+      .catch((err) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [from, to, isManagement, reload, dropped]);
 
   // A fact's value for a dimension: what it's filtered and grouped by. Takes the product list
   // of its own response, so last year's facts resolve too.
@@ -283,8 +312,13 @@ export default function ProfitabilityView() {
     const active = Object.entries(filters) as [Dim, string][];
     return d.facts.filter((f) => active.every(([dim, v]) => valueOf(f, dim, d.products) === v));
   };
+  // What the page shows: the what-if when there is one, else the real figures.
+  const scenarioOn = dropped.length > 0 && scenario !== null;
+  const shown = scenarioOn ? scenario : data;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const filtered = useMemo(() => applyFilters(data), [data, filters]);
+  const filtered = useMemo(() => applyFilters(shown), [shown, filters]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const filteredReal = useMemo(() => applyFilters(data), [data, filters]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const filteredPrevious = useMemo(() => applyFilters(previous), [previous, filters]);
 
@@ -321,6 +355,8 @@ export default function ProfitabilityView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  const totalsReal = useMemo(() => sumOf(filteredReal), [filteredReal, commissionMode, supplierDiscounts, routeKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts, routeKey]);
   const estimatedKg = useMemo(
     () => filtered.reduce((t, f) => t + (f[3] !== null && data?.products[f[3]]?.source === "estimado" ? f[7] : 0), 0),
@@ -336,10 +372,42 @@ export default function ProfitabilityView() {
       add(g, f);
       map.set(key, g);
     }
+    // Groups the what-if took out entirely still list, greyed, with their real figures.
+    if (scenarioOn) {
+      const gone = new Set(dropped);
+      for (const f of filteredReal) {
+        if (f[3] === null || !gone.has(String(f[3]))) continue;
+        const key = valueOf(f, groupBy, data.products);
+        if (map.has(key) && !map.get(key)!.dropped) continue;
+        const g = map.get(key) ?? { key, label: labelOf(groupBy, key), dropped: true, ...emptySums() };
+        add(g, f);
+        map.set(key, g);
+      }
+    }
     // A product sold and fully returned nets to nothing; it only clutters the list.
     return [...map.values()].filter((g) => [g.net, g.cost, g.kg, g.commission, g.route].some((v) => Math.abs(v) >= 0.5));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, groupBy, data, commissionMode, supplierDiscounts, routeKey]);
+  }, [filtered, filteredReal, groupBy, data, commissionMode, supplierDiscounts, routeKey, scenarioOn, dropped]);
+
+  // What-if checkboxes, on line, brand and product rows: the products behind each row.
+  const checkable = groupBy === "category" || groupBy === "brand" || groupBy === "product";
+  const groupProducts = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    if (!data || !checkable) return map;
+    for (const f of data.facts) {
+      if (f[3] === null) continue;
+      const key = valueOf(f, groupBy, data.products);
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key)!.add(String(f[3]));
+    }
+    return map;
+  }, [data, groupBy, checkable]);
+  const droppedCount = (key: string) => [...(groupProducts.get(key) ?? [])].filter((id) => dropped.includes(id)).length;
+  const toggleDrop = (key: string) => {
+    const ids = [...(groupProducts.get(key) ?? [])];
+    // A fully kept row drops all its products; a partly or fully dropped one brings them all back.
+    setDropped((d) => (droppedCount(key) === 0 ? [...new Set([...d, ...ids])] : d.filter((id) => !ids.includes(id))));
+  };
 
   // Months of the period, for the chart: gross and net result per month.
   const chart = useMemo(() => {
@@ -599,13 +667,34 @@ export default function ProfitabilityView() {
             )}
           </div>
 
+          {dropped.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="flex-1 min-w-64">
+                <strong>Escenario:</strong> sin vender{" "}
+                {dropped.length === 1 ? labelOf("product", dropped[0]) : `${dropped.length} productos`}. Sus ventas,
+                costo y comisiones salen; los gastos de ruta (sueldos, vehículos, renta) se quedan y se reparten entre lo
+                que sí se vende. Las cifras comparan contra lo real. No se guarda.
+                {!scenarioOn && " Calculando…"}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => setDropped([])}>
+                Volver a lo real
+              </Button>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Tile label="Ventas" value={formatMoney(totals.net)} change={change(totals.net, totalsPrevious.net)} />
+            <Tile
+              label="Ventas"
+              value={formatMoney(totals.net)}
+              change={scenarioOn ? change(totals.net, totalsReal.net) : change(totals.net, totalsPrevious.net)}
+              changeLabel={scenarioOn ? "vs real" : undefined}
+            />
             <Tile
               label="Utilidad bruta"
               value={formatMoney(gross(totals))}
               sub={totals.net ? `Margen ${percent(gross(totals) / totals.net)}` : undefined}
-              change={change(gross(totals), gross(totalsPrevious))}
+              change={scenarioOn ? change(gross(totals), gross(totalsReal)) : change(gross(totals), gross(totalsPrevious))}
+              changeLabel={scenarioOn ? "vs real" : undefined}
             />
             <Tile
               label="Comisiones y gastos de ruta"
@@ -620,7 +709,8 @@ export default function ProfitabilityView() {
                   ? `Margen ${percent(result(totals) / totals.net)}${totals.kg >= 1 ? ` · ${formatMoney(result(totals) / totals.kg)} por kg` : ""}`
                   : undefined
               }
-              change={change(result(totals), result(totalsPrevious))}
+              change={scenarioOn ? change(result(totals), result(totalsReal)) : change(result(totals), result(totalsPrevious))}
+              changeLabel={scenarioOn ? "vs real" : undefined}
             />
           </div>
 
@@ -658,6 +748,7 @@ export default function ProfitabilityView() {
               {groupBy !== "month" && (
                 <CardDescription>
                   Toque una fila para ver solo {DIMS.find((d) => d.key === groupBy)!.one}.
+                  {checkable && " La casilla la quita del escenario para ver cómo quedarían las cifras sin venderla."}
                   {groupBy === "client" && " El nombre abre sus facturas."}
                 </CardDescription>
               )}
@@ -680,8 +771,29 @@ export default function ProfitabilityView() {
               <TableBody>
                 {sorted.length === 0 && <EmptyRow colSpan={colCount}>Sin ventas con estos filtros.</EmptyRow>}
                 {sorted.map((g) => (
-                  <TableRow key={g.key} className={cn(groupBy !== "month" && "cursor-pointer")} onClick={() => drill(g)}>
+                  <TableRow
+                    key={g.key}
+                    className={cn(groupBy !== "month" && !g.dropped && "cursor-pointer", g.dropped && "text-gray-400")}
+                    onClick={() => !g.dropped && drill(g)}
+                  >
                     <TableCell className="max-w-64 truncate" title={g.label}>
+                      {checkable && g.key !== NO_PRODUCT && (
+                        <input
+                          type="checkbox"
+                          className="mr-2 h-4 w-4 align-middle accent-slate-900"
+                          aria-label={`Incluir ${g.label} en el escenario`}
+                          title="Quitar o devolver al escenario (no se guarda)"
+                          checked={droppedCount(g.key) === 0}
+                          ref={(el) => {
+                            if (el) {
+                              const n = droppedCount(g.key);
+                              el.indeterminate = n > 0 && n < (groupProducts.get(g.key)?.size ?? 0);
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => toggleDrop(g.key)}
+                        />
+                      )}
                       {groupBy === "client" ? <ClientLink clientId={Number(g.key)} label={g.label} /> : g.label}
                     </TableCell>
                     {sumRow(g)}

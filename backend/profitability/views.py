@@ -18,7 +18,7 @@ def _month_start(value):
 @api_view(['GET'])
 @permission_classes([IsManagement])
 def profitability(request):
-    """?from=YYYY-MM&to=YYYY-MM, both months included."""
+    """?from=YYYY-MM&to=YYYY-MM, both months included; &drop=1,2,3 imagines not selling those products."""
     try:
         first = _month_start(request.query_params['from'])
         last = _month_start(request.query_params['to'])
@@ -26,8 +26,12 @@ def profitability(request):
         return Response({'error': 'from y to deben tener formato YYYY-MM.'}, status=400)
     if last < first:
         return Response({'error': 'El periodo termina antes de empezar.'}, status=400)
+    try:
+        drop = frozenset(int(x) for x in request.query_params.get('drop', '').split(',') if x)
+    except ValueError:
+        return Response({'error': 'drop debe ser una lista de ids.'}, status=400)
     end = date(last.year + last.month // 12, last.month % 12 + 1, 1)
-    return Response(calculate_profitability(first, end, refresh=request.query_params.get('refresh') == '1'))
+    return Response(calculate_profitability(first, end, refresh=request.query_params.get('refresh') == '1', drop=drop))
 
 
 @api_view(['GET'])
