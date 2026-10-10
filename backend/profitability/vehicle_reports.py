@@ -8,7 +8,8 @@ Layout quirks handled (checked on the 2024-2026 files): every month is a block w
 the forklift as "ALMACEN"); the month total is the row labelled exactly "TOTAL" (weekly ones say
 "TOTAL SEMANAL"). Unused blocks at the end of a file are copies of last year's with last year's
 titles, and the current month is half filled, so only blocks titled with the file's year and before
-`before` are read. Maintenance rows carry their own date, which is used instead of the block title
+`before` are read. Two vehicles can share a header name (both Isuzus are "ISUZU", told apart only by
+the plates row below); their amounts are added up under that name - both serve the warehouse. Maintenance rows carry their own date, which is used instead of the block title
 (a "FEBRERO 2024" block sits in the 2025 file)."""
 import re
 from collections import defaultdict
@@ -45,7 +46,8 @@ def parse_fuel(rows, year, before):
         elif month and header and first == 'TOTAL':
             for i, vehicle in header.items():
                 value = row[i] if i < len(row) else None
-                out[(month, vehicle)] = round(float(value), 2) if isinstance(value, (int, float)) else 0.0
+                amount = float(value) if isinstance(value, (int, float)) else 0.0
+                out[(month, vehicle)] = round(out.get((month, vehicle), 0.0) + amount, 2)
             month = None
     return out
 

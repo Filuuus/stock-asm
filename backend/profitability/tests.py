@@ -136,13 +136,13 @@ class VehicleReportTests(SimpleTestCase):
         rows = [
             ('ENERO 2026',), (None, 'JUAN JOSE', 'RAUL'), (None, 'HILUX 1', 'ALMACEN'),
             ('SEMANA 01', 10, 5), ('TOTAL SEMANAL', 10, 5), ('TOTAL ', 100.5, 7),
-            ('FEBRERO 2026',), (None, 'F350', 'HILUX 1'), ('TOTAL', 3, None),
+            ('FEBRERO 2026',), (None, 'F350', 'HILUX 1', 'ISUZU', 'ISUZU'), ('TOTAL', 3, None, 1311.49, 2970.48),
             ('NOVIEMBRE 2025',), (None, 'HILUX 1'), ('TOTAL', 999),  # last year's copied template
             ('MARZO 2026',), (None, 'HILUX 1'), ('TOTAL', 50),  # current month: half filled
         ]
         self.assertEqual(parse_fuel(rows, 2026, '2026-03'), {
             ('2026-01', 'HILUX1'): 100.5, ('2026-01', 'MONTACARGAS'): 7.0,
-            ('2026-02', 'F350'): 3.0, ('2026-02', 'HILUX1'): 0.0,
+            ('2026-02', 'F350'): 3.0, ('2026-02', 'HILUX1'): 0.0, ('2026-02', 'ISUZU'): 4281.97,  # two Isuzus, added up
         })
 
     def test_maintenance_by_row_date(self):
