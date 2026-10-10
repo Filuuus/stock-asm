@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Scale, Settings2, Trash2, X } from "lucide-react";
+import { EyeOff, FileText, RefreshCw, Scale, Settings2, Trash2, X } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,6 +109,11 @@ function tonnes(kg: number) {
   return `${(kg / 1000).toLocaleString("es-MX", { maximumFractionDigits: 1 })} t`;
 }
 
+// "$13,530,618": the breakdown table drops the cents so ten columns fit the owner's tablet.
+function pesos(value: number) {
+  return value.toLocaleString("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
+}
+
 // "$4.2 M" - axis ticks only.
 function compactMoney(value: number) {
   return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
@@ -135,6 +140,8 @@ interface Group extends Sums {
 }
 
 const gross = (s: Sums) => s.net - s.cost;
+// What a row adds before the shared route costs: what would be lost by not selling it.
+const contribution = (s: Sums) => s.net - s.cost - s.commission;
 const result = (s: Sums) => s.net - s.cost - s.commission - s.route;
 
 function emptySums(): Sums {
@@ -444,6 +451,7 @@ export default function ProfitabilityView() {
       net: { value: (g: Group) => g.net, first: "desc" as const },
       gross: { value: gross, first: "desc" as const },
       commission: { value: (g: Group) => g.commission, first: "desc" as const },
+      contribution: { value: contribution, first: "desc" as const },
       route: { value: (g: Group) => g.route, first: "desc" as const },
       result: { value: result, first: "desc" as const },
       margin: { value: (g: Group) => (g.net ? result(g) / g.net : null), first: "desc" as const },
@@ -477,7 +485,7 @@ export default function ProfitabilityView() {
   }
 
   const activeFilters = Object.entries(filters) as [Exclude<Dim, "month">, string][];
-  const sortHead = (label: string, column: keyof typeof columns, className?: string) => (
+  const sortHead = (label: React.ReactNode, column: keyof typeof columns, className?: string) => (
     <SortableHead
       label={label}
       column={column}
@@ -489,14 +497,15 @@ export default function ProfitabilityView() {
     />
   );
   const money = (value: number, className?: string) => (
-    <TableCell className={cn("text-right tabular-nums", value < 0 && "text-red-700", className)}>{formatMoney(value)}</TableCell>
+    <TableCell className={cn("text-right tabular-nums", value < 0 && "text-red-700", className)}>{pesos(value)}</TableCell>
   );
-  const colCount = groupBy === "product" ? 10 : 9;
+  const colCount = groupBy === "product" ? 11 : 10;
   const sumRow = (s: Sums) => (
     <>
       {money(s.net)}
       {money(gross(s), HIDE_BELOW_SM)}
       {money(s.commission, HIDE_BELOW_LG)}
+      {money(contribution(s), HIDE_BELOW_MD)}
       {money(s.route, HIDE_BELOW_LG)}
       {money(result(s))}
       <TableCell className={cn("text-right tabular-nums", result(s) < 0 && "text-red-700")}>
@@ -753,15 +762,16 @@ export default function ProfitabilityView() {
                 </CardDescription>
               )}
             </CardHeader>
-            <Table>
+            <Table className="[&_td]:px-2 [&_td]:whitespace-nowrap [&_th]:px-2">
               <TableHeader>
                 <TableRow>
                   {sortHead(DIMS.find((d) => d.key === groupBy)!.label, "label")}
                   {sortHead("Ventas", "net")}
-                  {sortHead("Utilidad bruta", "gross", HIDE_BELOW_SM)}
+                  {sortHead(<>Utilidad<br />bruta</>, "gross", HIDE_BELOW_SM)}
                   {sortHead("Comisiones", "commission", HIDE_BELOW_LG)}
-                  {sortHead("Gastos de ruta", "route", HIDE_BELOW_LG)}
-                  {sortHead("Utilidad neta", "result")}
+                  {sortHead("Contribución", "contribution", HIDE_BELOW_MD)}
+                  {sortHead(<>Gastos<br />de ruta</>, "route", HIDE_BELOW_LG)}
+                  {sortHead(<>Utilidad<br />neta</>, "result")}
                   {sortHead("Margen", "margin")}
                   {sortHead("Peso", "kg", HIDE_BELOW_MD)}
                   {sortHead("Neta / kg", "perKg", HIDE_BELOW_MD)}
@@ -776,7 +786,7 @@ export default function ProfitabilityView() {
                     className={cn(groupBy !== "month" && !g.dropped && "cursor-pointer", g.dropped && "text-gray-400")}
                     onClick={() => !g.dropped && drill(g)}
                   >
-                    <TableCell className="max-w-64 truncate" title={g.label}>
+                    <TableCell className={cn("truncate", groupBy === "product" ? "max-w-48" : "max-w-56")} title={g.label}>
                       {checkable && g.key !== NO_PRODUCT && (
                         <input
                           type="checkbox"
@@ -798,26 +808,29 @@ export default function ProfitabilityView() {
                     </TableCell>
                     {sumRow(g)}
                     {groupBy === "product" && (
-                      <TableCell className="py-0 text-right">
+                      <TableCell className="whitespace-nowrap py-0 text-right">
                         {g.key !== NO_PRODUCT && (
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 text-gray-500"
+                            className="h-7 w-7 p-0 text-gray-500"
+                            aria-label={`Facturas de ${g.label}`}
+                            title="Facturas"
                             onClick={(e) => {
                               e.stopPropagation();
                               setInvoicesOf(g.key);
                             }}
                           >
-                            Facturas
+                            <FileText className="h-4 w-4" />
                           </Button>
                         )}
                         {g.key !== NO_PRODUCT && (
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 text-gray-500"
-                            title="Dejar este producto fuera de la rentabilidad (ventas únicas que distorsionan los números)"
+                            className="h-7 w-7 p-0 text-gray-500"
+                            aria-label={`Excluir ${g.label}`}
+                            title="Excluir de la rentabilidad (ventas únicas que distorsionan los números)"
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`¿Dejar fuera "${g.label}"? Se puede volver a incluir después.`)) {
@@ -825,7 +838,7 @@ export default function ProfitabilityView() {
                               }
                             }}
                           >
-                            Excluir
+                            <EyeOff className="h-4 w-4" />
                           </Button>
                         )}
                       </TableCell>
@@ -897,6 +910,11 @@ export default function ProfitabilityView() {
                 </button>
               </li>
             )}
+            <li>
+              Contribución: utilidad bruta menos comisiones, antes de los gastos de ruta. Es lo que se dejaría de ganar
+              si no se vendiera; una utilidad neta negativa con contribución positiva solo indica que carga mucho gasto
+              compartido.
+            </li>
             <li>
               Comisiones completas: la tasa base de cada línea sobre cada factura del periodo, sin descuento por atraso.
               Pagadas: lo que calculó Comisiones, en el mes en que se pagó.
