@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsManagement
 
-from .models import ProductWeight
+from .models import ExcludedProduct, ProductWeight
 from .services import calculate_profitability
 
 
@@ -45,4 +45,19 @@ def set_weight(request):
         return Response({'error': 'El peso debe estar entre 0 y 5,000 kg.'}, status=400)
     else:
         ProductWeight.objects.update_or_create(producto_id=product_id, defaults={'kg': kg, 'updated_by': request.user})
+    return Response({'ok': True})
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def set_exclusion(request):
+    """{"product_id": 123, "excluded": true}"""
+    try:
+        product_id = int(request.data['product_id'])
+    except (KeyError, TypeError, ValueError):
+        return Response({'error': 'product_id debe ser un número.'}, status=400)
+    if request.data.get('excluded'):
+        ExcludedProduct.objects.get_or_create(producto_id=product_id, defaults={'created_by': request.user})
+    else:
+        ExcludedProduct.objects.filter(producto_id=product_id).delete()
     return Response({'ok': True})

@@ -2,7 +2,7 @@
 
 from django.test import SimpleTestCase
 
-from .services import allocate_credit_notes, build_facts, product_info
+from .services import allocate_credit_notes, build_facts, is_advance_application, product_info
 from .weights import DEFAULT_KG, estimate_kg
 
 
@@ -60,3 +60,13 @@ class ProductInfoTests(SimpleTestCase):
         info = product_info(products, brands, {1: 1700}, {1: 24.5}, {})
         self.assertEqual((info[1]['kg'], info[1]['source'], info[1]['category']), (24.5, 'manual', 'B'))
         self.assertEqual((info[2]['kg'], info[2]['source'], info[2]['brand']), (0.0, 'servicio', 'Sin marca'))
+
+
+class AdvanceApplicationTests(SimpleTestCase):
+    def test_by_word_or_by_an_advance_invoice_folio(self):
+        advances = {17367, 19411}
+        self.assertTrue(is_advance_application('F 19456 APLICACION DE ANTICIPO DE LA F-19411 A LA F-19456', advances))
+        self.assertTrue(is_advance_application('F 18153 DE LA F-17367  APLICA F-18153', advances))
+        self.assertFalse(is_advance_application('B 18272 CLIENTE TUVO PROBLEMAS DE CALIDAD\r\nAPLICA F-B18272', advances))
+        self.assertFalse(is_advance_application('F 20000 DE LA F-17368 APLICA F-20000', advances))  # not an advance
+        self.assertFalse(is_advance_application(None, advances))

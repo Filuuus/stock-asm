@@ -33,6 +33,7 @@ interface Product {
 
 interface Profitability {
   facts: Fact[];
+  excluded: number[]; // product ids left out altogether, with their returns and credit notes
   products: Record<string, Product>;
   clients: Record<string, string>;
 }
@@ -40,13 +41,13 @@ interface Profitability {
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
 type Filters = Partial<Record<Exclude<Dim, "month">, string>>;
 
-const DIMS: { key: Dim; label: string }[] = [
-  { key: "zone", label: "Zona" },
-  { key: "category", label: "Línea" },
-  { key: "brand", label: "Marca" },
-  { key: "product", label: "Producto" },
-  { key: "client", label: "Cliente" },
-  { key: "month", label: "Mes" },
+const DIMS: { key: Dim; label: string; one: string }[] = [
+  { key: "zone", label: "Zona", one: "esa zona" },
+  { key: "category", label: "Línea", one: "esa línea" },
+  { key: "brand", label: "Marca", one: "esa marca" },
+  { key: "product", label: "Producto", one: "ese producto" },
+  { key: "client", label: "Cliente", one: "ese cliente" },
+  { key: "month", label: "Mes", one: "ese mes" },
 ];
 const NO_PRODUCT = "Sin producto";
 const SOURCE_LABELS: Record<WeightSource, string> = {
@@ -113,6 +114,22 @@ export default function ProfitabilityView() {
   const [filters, setFilters] = useState<Filters>({});
   const [groupBy, setGroupBy] = useState<Dim>("zone");
   const [weightsOpen, setWeightsOpen] = useState(false);
+  const [excludedOpen, setExcludedOpen] = useState(false);
+  const [excludeError, setExcludeError] = useState<string | null>(null);
+
+  const setExcluded = async (productId: string, excluded: boolean) => {
+    setExcludeError(null);
+    const res = await apiFetch("/api/profitability/exclusions/", {
+      method: "POST",
+      body: JSON.stringify({ product_id: Number(productId), excluded }),
+    });
+    if (!res.ok) {
+      setExcludeError("No se pudo guardar el cambio.");
+      return;
+    }
+    if (excluded) setFilters((f) => (f.product === productId ? without(f, "product") : f));
+    setReload((n) => n + 1);
+  };
 
   useEffect(() => {
     if (!isManagement) return;
@@ -219,7 +236,8 @@ export default function ProfitabilityView() {
       g.kg += f[7];
       map.set(key, g);
     }
-    return [...map.values()];
+    // A product sold and fully returned nets to nothing; it only clutters the list.
+    return [...map.values()].filter((g) => Math.abs(g.net) >= 0.5 || Math.abs(g.cost) >= 0.5 || Math.abs(g.kg) >= 0.5);
     // labelOf only reads `data`, already a dependency through valueOf.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, groupBy, valueOf]);
@@ -268,7 +286,7 @@ export default function ProfitabilityView() {
         <h1 className="text-2xl font-bold text-gray-900">Rentabilidad</h1>
         <p className="text-sm text-gray-500">
           Utilidad bruta (venta sin IVA menos costo del ERP) por zona, línea, marca, producto y cliente. Mismas
-          facturas que Ventas y Comisiones; las devoluciones y notas de crédito se descuentan en su mes.
+          facturas que Ventas y Comisiones, sin anticipos; las devoluciones y notas de crédito se descuentan en su mes.
         </p>
       </div>
 
@@ -371,7 +389,7 @@ export default function ProfitabilityView() {
                 </TabsList>
               </Tabs>
               {groupBy !== "month" && (
-                <CardDescription>Toque una fila para ver solo esa {DIMS.find((d) => d.key === groupBy)!.label.toLowerCase()}.</CardDescription>
+                <CardDescription>Toque una fila para ver solo {DIMS.find((d) => d.key === groupBy)!.one}.</CardDescription>
               )}
             </CardHeader>
             <Table>
@@ -383,10 +401,11 @@ export default function ProfitabilityView() {
                   <SortableHead label="Margen" column="margin" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} />
                   <SortableHead label="Peso" column="kg" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} className={HIDE_BELOW_MD} />
                   <SortableHead label="Utilidad / kg" column="perKg" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} className={HIDE_BELOW_MD} />
+                  {groupBy === "product" && <TableHead className="w-px" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.length === 0 && <EmptyRow colSpan={6}>Sin ventas con estos filtros.</EmptyRow>}
+                {sorted.length === 0 && <EmptyRow colSpan={groupBy === "product" ? 7 : 6}>Sin ventas con estos filtros.</EmptyRow>}
                 {sorted.map((g) => (
                   <TableRow key={g.key} className={cn(groupBy !== "month" && "cursor-pointer")} onClick={() => drill(g)}>
                     <TableCell className="max-w-72 truncate" title={g.label}>
@@ -401,6 +420,26 @@ export default function ProfitabilityView() {
                     <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>
                       {g.kg >= 1 ? formatMoney((g.net - g.cost) / g.kg) : "-"}
                     </TableCell>
+                    {groupBy === "product" && (
+                      <TableCell className="py-0 text-right">
+                        {g.key !== NO_PRODUCT && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-gray-500"
+                            title="Dejar este producto fuera de la rentabilidad (ventas únicas que distorsionan los números)"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`¿Dejar fuera "${g.label}"? Se puede volver a incluir después.`)) {
+                                setExcluded(g.key, true);
+                              }
+                            }}
+                          >
+                            Excluir
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
                 {sorted.length > 1 && (
@@ -413,16 +452,31 @@ export default function ProfitabilityView() {
                     <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>
                       {totals.kg >= 1 ? formatMoney(profit / totals.kg) : "-"}
                     </TableCell>
+                    {groupBy === "product" && <TableCell />}
                   </TableRow>
                 )}
               </TableBody>
             </Table>
           </Card>
 
+          {excludeError && <p className="text-sm text-red-700">{excludeError}</p>}
           <ul className="list-disc pl-5 text-xs text-gray-500 space-y-1">
+            {data.excluded.length > 0 && (
+              <li>
+                {data.excluded.length === 1 ? "1 producto excluido" : `${data.excluded.length} productos excluidos`} de
+                todas las cifras.{" "}
+                <button type="button" className="underline hover:text-gray-900" onClick={() => setExcludedOpen(true)}>
+                  Ver
+                </button>
+              </li>
+            )}
             <li>
-              Las notas de crédito no traen producto en el ERP: cada una se reparte entre las partidas de la factura a la
-              que se aplicó, en proporción a su importe.
+              Los anticipos no cuentan como venta: la factura del anticipo y la nota de crédito que lo aplica se dejan
+              fuera, y la factura final cuenta completa en su mes. Por eso algunos meses difieren de Ventas.
+            </li>
+            <li>
+              Las demás notas de crédito no traen producto en el ERP: cada una se reparte entre las partidas de la factura
+              a la que se aplicó, en proporción a su importe.
             </li>
             <li>Los servicios no tienen costo en el ERP, por eso su margen sale al 100%.</li>
             <li>
@@ -431,6 +485,27 @@ export default function ProfitabilityView() {
             </li>
           </ul>
         </>
+      )}
+
+      {data && (
+        <Dialog open={excludedOpen} onOpenChange={setExcludedOpen}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Productos excluidos</DialogTitle>
+            </DialogHeader>
+            <ul className="divide-y">
+              {data.excluded.length === 0 && <li className="py-3 text-sm text-gray-500">Ninguno.</li>}
+              {data.excluded.map((id) => (
+                <li key={id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className="truncate">{labelOf("product", String(id))}</span>
+                  <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
+                    Volver a incluir
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </DialogContent>
+        </Dialog>
       )}
 
       {data && (

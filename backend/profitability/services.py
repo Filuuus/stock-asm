@@ -6,12 +6,22 @@ zones, by invoice date, before IVA, cost = the ERP's CCOSTOESPECIFICO; returns (
 the month issued. Credit notes (7) carry no product in this ERP (one "(Ninguno)" line), so
 each one is spread over the lines of the invoices it was applied to (admAsocCargosAbonos),
 pro rata by line amount, and dated in its own month; any unapplied part stays without a
-product. Punto de Venta invoices go to the route that owns the client (PuntoVentaClientZone),
+product.
+
+Advances are not sales here: the advance invoice (product ADVANCE_PRODUCT_CODE, no cost)
+and the credit note that later applies it to the real invoice are both left out, so the real
+invoice counts in full in its own month. Counting them spread the note over the real
+invoice's products as a loss (checked 2026-10-10: most 2025 credit notes were advance
+applications, e.g. F-19411 -> F-19456). Foreign-currency documents are converted to pesos at
+their own exchange rate (the ERP keeps their amounts in dollars, costs in pesos).
+Products management excludes (ExcludedProduct, one-off deals) are dropped with their returns
+and credit notes. Punto de Venta invoices go to the route that owns the client (PuntoVentaClientZone),
 as in the Bionat report. Read-only, like every ERP access in this project.
 
 The ERP rows are cached per period; zones, categories and kg are worked out on each request,
 so a weight typed in by management shows up at once.
 """
+import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -28,14 +38,20 @@ from commissions.services import (
     _classify_line,
 )
 
-from .models import ProductWeight
+from .models import ExcludedProduct, ProductWeight
 from .weights import estimate_kg, load_gea
 
-CACHE_KEY = 'profitability_v1_{}_{}'  # bump the version when the cached shape changes
+CACHE_KEY = 'profitability_v2_{}_{}'  # bump the version when the cached shape changes
 CACHE_SECONDS = 600
 NO_BRAND = 'Sin marca'
 SERVICE_PRODUCT_TYPE = 3
-NET = 'm.CNETO - m.CDESCUENTO1 - m.CDESCUENTO2 - m.CDESCUENTO3 - m.CDESCUENTO4 - m.CDESCUENTO5'
+# Net in pesos: dollar documents keep their amounts in dollars.
+NET = ('(m.CNETO - m.CDESCUENTO1 - m.CDESCUENTO2 - m.CDESCUENTO3 - m.CDESCUENTO4 - m.CDESCUENTO5)'
+       ' * CASE WHEN d.CIDMONEDA = 1 THEN 1 ELSE d.CTIPOCAMBIO END')
+NOTE_RATE = 'CASE WHEN n.CIDMONEDA = 1 THEN 1 ELSE n.CTIPOCAMBIO END'
+ADVANCE_PRODUCT_CODE = '84111506'  # SAT key "anticipo"; ERP name "ANTICIPO APLICABLE A FACTURA"
+# "APLICACION DE ANTICIPO DE LA F-19411 A LA F-19456", or without the word: "DE LA F-17367 APLICA F-18153".
+ADVANCE_FOLIO_RE = re.compile(r'DE LA F-?\s*(\d+)')
 ZONE_IDS = list(ZONE_SCOPE.values())
 ZONE_FILTER = f"IN ({', '.join(['%s'] * len(ZONE_IDS))})"
 
@@ -57,20 +73,22 @@ def fetch_sales(date_from, date_to):
                    m.CIDPRODUCTO, SUM(m.CUNIDADES), SUM({NET}), SUM(m.CCOSTOESPECIFICO)
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
             WHERE d.CIDDOCUMENTODE IN (%s, %s) AND d.CCANCELADO = 0 AND d.CIDAGENTE {ZONE_FILTER}
-              AND d.CFECHA >= %s AND d.CFECHA < %s
+              AND d.CFECHA >= %s AND d.CFECHA < %s AND p.CCODIGOPRODUCTO <> %s
             GROUP BY d.CIDDOCUMENTODE, YEAR(d.CFECHA), MONTH(d.CFECHA), d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR,
                      m.CIDPRODUCTO
             """,
-            [FACTURA_DOC_TYPE, DEVOLUCION_DOC_TYPE, *ZONE_IDS, date_from, date_to],
+            [FACTURA_DOC_TYPE, DEVOLUCION_DOC_TYPE, *ZONE_IDS, date_from, date_to, ADVANCE_PRODUCT_CODE],
         )
         return [list(r) for r in cursor.fetchall()]
 
 
 def fetch_credit_notes(date_from, date_to):
     """Credit notes in the period with each application to a Factura: (note id, year, month,
-    agent, client, net before IVA, total with IVA, invoice id or None, applied with IVA); plus
-    the lines of those invoices: (invoice id, agent, client, product, net)."""
+    agent, client, net before IVA, total with IVA, invoice id or None, applied with IVA); the
+    lines of those invoices: (invoice id, agent, client, product, net); and the ids of the notes
+    that apply an advance (see is_advance_application)."""
     notes_sql = f"""
         FROM admDocumentos n
         LEFT JOIN admAsocCargosAbonos a ON a.CIDDOCUMENTOABONO = n.CIDDOCUMENTO
@@ -83,7 +101,8 @@ def fetch_credit_notes(date_from, date_to):
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""SELECT n.CIDDOCUMENTO, YEAR(n.CFECHA), MONTH(n.CFECHA), n.CIDAGENTE, n.CIDCLIENTEPROVEEDOR,
-                       n.CTOTAL - n.CIMPUESTO1, n.CTOTAL, a.CIDDOCUMENTOCARGO, a.CIMPORTEABONO {notes_sql}""",
+                       (n.CTOTAL - n.CIMPUESTO1) * {NOTE_RATE}, n.CTOTAL * {NOTE_RATE},
+                       a.CIDDOCUMENTOCARGO, a.CIMPORTEABONO * {NOTE_RATE} {notes_sql}""",
             params,
         )
         notes = [list(r) for r in cursor.fetchall()]
@@ -96,7 +115,33 @@ def fetch_credit_notes(date_from, date_to):
             """,
             params,
         )
-        return notes, [list(r) for r in cursor.fetchall()]
+        invoice_lines = [list(r) for r in cursor.fetchall()]
+        cursor.execute(
+            f"""SELECT DISTINCT n.CIDDOCUMENTO,
+                       CONCAT(n.CREFERENCIA, ' ', CAST(n.COBSERVACIONES AS varchar(1000))) {notes_sql}""",
+            params,
+        )
+        texts = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT DISTINCT d.CFOLIO FROM admMovimientos m
+            JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
+            WHERE d.CIDDOCUMENTODE = %s AND p.CCODIGOPRODUCTO = %s
+            """,
+            [FACTURA_DOC_TYPE, ADVANCE_PRODUCT_CODE],
+        )
+        advance_folios = {int(f) for (f,) in cursor.fetchall()}
+        advances = [note_id for note_id, text in texts if is_advance_application(text, advance_folios)]
+        return notes, invoice_lines, advances
+
+
+def is_advance_application(text, advance_folios):
+    """A credit note applies an advance when its text says ANTICIPO or names an advance invoice's
+    folio ("DE LA F-17367 APLICA F-18153"). Every 2024-2025 advance had one; none without text
+    since 2024-12."""
+    text = (text or '').upper()
+    return 'ANTICIPO' in text or any(int(f) in advance_folios for f in ADVANCE_FOLIO_RE.findall(text))
 
 
 def fetch_products():
@@ -130,9 +175,11 @@ def fetch_erp(date_from, date_to, refresh=False):
             products = pool.submit(_in_thread, fetch_products)
             clients = pool.submit(_in_thread, fetch_client_names)
             brands = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
-            notes, invoice_lines = credits.result()
+            notes, invoice_lines, advances = credits.result()
+            advances = set(advances)
             data = {
-                'sales': sales.result(), 'notes': notes, 'invoice_lines': invoice_lines,
+                'sales': sales.result(), 'notes': [n for n in notes if n[0] not in advances],
+                'invoice_lines': invoice_lines,
                 'products': products.result(), 'clients': clients.result(), 'brands': brands.result(),
             }
         cache.set(key, data, timeout=CACHE_SECONDS)
@@ -237,10 +284,13 @@ def calculate_profitability(date_from, date_to, refresh=False):
     def kg_of(product):
         return products[product]['kg'] if product in products else 0.0
 
+    excluded = set(ExcludedProduct.objects.values_list('producto_id', flat=True))
     facts = build_facts(data['sales'], allocate_credit_notes(data['notes'], data['invoice_lines']), zone_of, kg_of)
-    used_products, used_clients = {f[3] for f in facts}, {f[2] for f in facts}
+    facts = [f for f in facts if f[3] not in excluded]
+    used_products, used_clients = {f[3] for f in facts} | excluded, {f[2] for f in facts}
     return {
         'facts': facts,
+        'excluded': sorted(excluded),
         'products': {pid: p for pid, p in products.items() if pid in used_products},
         'clients': {cid: name for cid, name in data['clients'].items() if cid in used_clients},
     }
