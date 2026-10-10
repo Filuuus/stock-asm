@@ -6,8 +6,8 @@ from django.test import SimpleTestCase, TestCase
 
 from .vehicle_reports import parse_fuel, parse_maintenance
 from .services import (
-    allocate_credit_notes, allocate_route_costs, allocate_supplier_discounts, build_facts, is_advance_application,
-    product_info, route_costs,
+    allocate_credit_notes, allocate_route_costs, allocate_supplier_discounts, build_facts, imported_products,
+    is_advance_application, product_info, route_costs,
 )
 from .weights import DEFAULT_KG, estimate_kg
 
@@ -56,8 +56,8 @@ class BuildFactsTests(SimpleTestCase):
         facts = build_facts(sales, credits, paid, lambda agent, client: f'Z{agent}', lambda product: 25.0,
                             lambda zone, client, product: 0.02)
         self.assertEqual(facts, [
-            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0, 0.0],
-            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0],
+            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0, 0.0, 0.0],
+            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0],
         ])
 
 
@@ -183,3 +183,21 @@ class SaveRouteSetupTests(TestCase):
                                                                                     'monthly_amount': -1}]})
         self.assertEqual(list(PoolEmployee.objects.values_list('employee_id', flat=True)), [7])
         self.assertEqual(PoolVehicle.objects.count(), 1)
+
+
+class ImportedTests(SimpleTestCase):
+    def test_own_purchases_first_then_line_then_brand(self):
+        purchases = [
+            (1, 100, 10, 900.0, 900.0),  # bought abroad
+            (2, 100, 10, 0.0, 200.0),  # same line and brand, but bought here: not imported
+            (3, 200, 10, 0.0, 800.0),  # line 200 is local
+            (4, 0, 30, 50.0, 50.0),
+        ]
+        catalog = [
+            (1, 100, 10), (2, 100, 10), (3, 200, 10),
+            (5, 100, 10),  # not bought lately: line 100 is mostly foreign
+            (6, 200, 10),  # line 200 is local
+            (7, 0, 10),  # no line: brand 10 is 900 / 1900 foreign - not a majority
+            (8, 0, 30),  # brand 30 all foreign
+        ]
+        self.assertEqual(imported_products(purchases, catalog), {1, 5, 8})

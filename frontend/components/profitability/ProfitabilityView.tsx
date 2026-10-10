@@ -25,9 +25,11 @@ import { useAuth } from "@/hooks/use-auth";
 import type { Zone } from "@/types/commissions";
 
 // [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg,
-//  full commission, paid commission, supplier discount, route cost split by kg, route cost split by piece]
+//  full commission, paid commission, supplier discount, route cost split by kg, route cost split by piece,
+//  import cost]
 type Fact = [
   string, string, number, number | null, number, number, number, number, number, number, number, number, number,
+  number,
 ];
 type WeightSource = "manual" | "nombre" | "GEA" | "unidad" | "estimado" | "servicio";
 
@@ -51,6 +53,7 @@ interface Profitability {
   unallocated: Record<string, Record<string, number>>; // month -> pool -> amount with nothing to land on
   gps_since: string | null;
   workbook_through: string | null; // last month of the accountant's vehicle workbook imported
+  imports: { cost: number; purchases: number; rate: number }; // the period's import costs over foreign purchases
 }
 
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
@@ -195,6 +198,8 @@ export default function ProfitabilityView() {
   const [commissionMode, setCommissionMode] = useState<CommissionMode>("posibles");
   const [supplierDiscounts, setSupplierDiscounts] = useState(false);
   const [routeKey, setRouteKey] = useState<RouteKey>("kg");
+  // Freight abroad, duties and brokers are real costs of imported goods, so they count unless switched off.
+  const [importCosts, setImportCosts] = useState(true);
   const [search, setSearch] = useState("");
   const [weightsOpen, setWeightsOpen] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
@@ -308,7 +313,7 @@ export default function ProfitabilityView() {
   // The toggles decide which cost columns count.
   const add = (s: Sums, f: Fact) => {
     s.net += f[5];
-    s.cost += f[6] - (supplierDiscounts ? f[10] : 0);
+    s.cost += f[6] - (supplierDiscounts ? f[10] : 0) + (importCosts ? f[13] : 0);
     s.commission += commissionMode === "pagadas" ? f[9] : f[8];
     s.route += routeKey === "kg" ? f[11] : f[12];
     s.kg += f[7];
@@ -360,11 +365,11 @@ export default function ProfitabilityView() {
     return s;
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey]);
+  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey, importCosts]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalsReal = useMemo(() => sumOf(filteredReal), [filteredReal, commissionMode, supplierDiscounts, routeKey]);
+  const totalsReal = useMemo(() => sumOf(filteredReal), [filteredReal, commissionMode, supplierDiscounts, routeKey, importCosts]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts, routeKey]);
+  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts, routeKey, importCosts]);
   const estimatedKg = useMemo(
     () => filtered.reduce((t, f) => t + (f[3] !== null && data?.products[f[3]]?.source === "estimado" ? f[7] : 0), 0),
     [filtered, data],
@@ -394,7 +399,7 @@ export default function ProfitabilityView() {
     // A product sold and fully returned nets to nothing; it only clutters the list.
     return [...map.values()].filter((g) => [g.net, g.cost, g.kg, g.commission, g.route].some((v) => Math.abs(v) >= 0.5));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, filteredReal, groupBy, data, commissionMode, supplierDiscounts, routeKey, scenarioOn, dropped]);
+  }, [filtered, filteredReal, groupBy, data, commissionMode, supplierDiscounts, routeKey, importCosts, scenarioOn, dropped]);
 
   // What-if checkboxes, on line, brand and product rows: the products behind each row.
   const checkable = groupBy === "category" || groupBy === "brand" || groupBy === "product";
@@ -426,7 +431,7 @@ export default function ProfitabilityView() {
     }
     return [...byMonth.entries()].map(([m, s]) => ({ label: monthShort(m), bruta: gross(s), neta: result(s) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey]);
+  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey, importCosts]);
 
   // The period's route costs by pool and component (not affected by the filters).
   const pools = useMemo(() => {
@@ -585,6 +590,10 @@ export default function ProfitabilityView() {
             </TabsList>
           </Tabs>
         </div>
+        <label className="flex items-center gap-2">
+          <Switch checked={importCosts} onCheckedChange={setImportCosts} />
+          <span>Sumar costos de importación al costo</span>
+        </label>
         <label className="flex items-center gap-2">
           <Switch checked={supplierDiscounts} onCheckedChange={setSupplierDiscounts} />
           <span>Restar notas de crédito de proveedor (Bionat) al costo</span>
@@ -918,6 +927,12 @@ export default function ProfitabilityView() {
             <li>
               Comisiones completas: la tasa base de cada línea sobre cada factura del periodo, sin descuento por atraso.
               Pagadas: lo que calculó Comisiones, en el mes en que se pagó.
+            </li>
+            <li>
+              Costos de importación: fletes del extranjero, impuestos y derechos de importación, agentes aduanales y
+              costo indirecto del periodo ({formatMoney(data.imports.cost)}) entre las compras en moneda extranjera (
+              {formatMoney(data.imports.purchases)}): {percent(data.imports.rate)} sobre el costo de los productos
+              importados. Importado es lo que se compró en moneda extranjera; lo comprado solo en pesos no lo lleva.
             </li>
             <li>
               Notas de crédito de proveedor: los descuentos sobre compras de Bionat (3% por pronto pago y otros) del mes

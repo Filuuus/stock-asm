@@ -26,6 +26,17 @@ Two costs come both ways so management can switch between them on the page:
   products sold in the same posting month, pro rata by cost. Management's own view leaves them
   out (they help Bionat's cash flow more than ours).
 
+Import costs (optional on the page): freight abroad, duties, customs brokers and port charges are
+operating expenses in the ledger (IMPORT_COST_ACCOUNTS) - Comercial's purchase-expense fields are 0
+on every purchase, so the ERP cost is the supplier's price alone. They're added to the cost of
+imported products as one rate: the period's import costs / its foreign-currency purchases (~21% for
+Oct 2025-Sep 2026). What's imported comes from our own purchases (so no supplier names here): bought
+in foreign currency = imported, bought only in pesos = not (a GEA part bought from GEA's Mexican arm
+already carries their import costs in its price, and "DETERGENTES NACIONALES" are made here); a
+product not bought since IMPORT_HISTORY_START follows its line's (classification 2) majority, or
+its brand's. Agreed with the user
+2026-10-10; a per-shipment match would be more exact but the ledger references aren't reliable.
+
 Route costs (the net result) come from app config (PoolEmployee / PoolVehicle / PoolMonthlyCost)
 and land in pools, each spread over what it served (see POOL_CHOICES): payroll from Contpaqi
 Nóminas (earnings + employer contributions, no PTU - same rule as the Bionat report, reproduces
@@ -68,7 +79,7 @@ from fleet.models import VehicleDayKm
 from .models import ExcludedProduct, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
 from .weights import estimate_kg, load_gea
 
-CACHE_KEY = 'profitability_v4_{}_{}'  # bump the version when the cached shape changes
+CACHE_KEY = 'profitability_v5_{}_{}'  # bump the version when the cached shape changes
 CACHE_SECONDS = 600
 NO_BRAND = 'Sin marca'
 SERVICE_PRODUCT_TYPE = 3
@@ -79,6 +90,10 @@ NOTE_RATE = 'CASE WHEN n.CIDMONEDA = 1 THEN 1 ELSE n.CTIPOCAMBIO END'
 ADVANCE_PRODUCT_CODE = '84111506'  # SAT key "anticipo"; ERP name "ANTICIPO APLICABLE A FACTURA"
 # "APLICACION DE ANTICIPO DE LA F-19411 A LA F-19456", or without the word: "DE LA F-17367 APLICA F-18153".
 SUPPLIER_DISCOUNT_ACCOUNT = '500200001'  # DESCUENTOS SOBRE COMPRAS TASA 0%
+# Freight abroad, IGI, DTA, PRV, "costo indirecto" (ports, brokers), tariff, customs brokers' fees.
+IMPORT_COST_ACCOUNTS = ('500503017', '500508001', '500508002', '500508003', '500508005', '500506010', '500502005')
+PURCHASE_DOC_TYPE = 19
+IMPORT_HISTORY_START = date(2024, 1, 1)  # how far back purchases are read to tell what's imported
 LP_FUEL_ACCOUNT = '500503021'  # GAS LP (selling expenses); only the Zona 1 truck burns LP since the F-350 retired
 MAINTENANCE_ACCOUNTS = '5_0511%'  # one account per vehicle
 PAYROLL_DATABASE = 'ctNOMAGROPECUARIA'  # Contpaqi Nóminas
@@ -266,11 +281,86 @@ def fetch_vehicle_ledger(date_from, date_to):
         return {(f'{y}-{m:02d}', code): float(amount) for y, m, code, amount in cursor.fetchall()}
 
 
+def fetch_imports(date_from, date_to):
+    """{'cost': import costs posted in the period, 'purchases': foreign-currency purchases in the
+    period (pesos, before IVA), plus what our purchases say about where products come from (see
+    imported_products)}."""
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT SUM(CASE WHEN m.TipoMovto = 0 THEN m.Importe ELSE -m.Importe END)
+            FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza m
+            JOIN {LEDGER_DATABASE}.dbo.Cuentas cu ON cu.Id = m.IdCuenta
+            WHERE cu.Codigo IN ({', '.join(['%s'] * len(IMPORT_COST_ACCOUNTS))}) AND m.Periodo BETWEEN 1 AND 12
+              AND m.Ejercicio * 100 + m.Periodo >= %s AND m.Ejercicio * 100 + m.Periodo < %s
+            """,
+            [*IMPORT_COST_ACCOUNTS, *_month_key(date_from, date_to)],
+        )
+        cost = float(cursor.fetchone()[0] or 0)
+        cursor.execute(
+            """
+            SELECT SUM((d.CTOTAL - d.CIMPUESTO1) * d.CTIPOCAMBIO) FROM admDocumentos d
+            WHERE d.CIDDOCUMENTODE = %s AND d.CCANCELADO = 0 AND d.CIDMONEDA <> 1 AND d.CFECHA >= %s AND d.CFECHA < %s
+            """,
+            [PURCHASE_DOC_TYPE, date_from, date_to],
+        )
+        purchases = float(cursor.fetchone()[0] or 0)
+        # Purchases per product since IMPORT_HISTORY_START: (product, line, brand, foreign, total) in pesos.
+        cursor.execute(
+            """
+            SELECT p.CIDPRODUCTO, p.CIDVALORCLASIFICACION2, p.CIDVALORCLASIFICACION1,
+                   SUM(CASE WHEN d.CIDMONEDA <> 1 THEN m.CNETO * d.CTIPOCAMBIO ELSE 0 END),
+                   SUM(m.CNETO * CASE WHEN d.CIDMONEDA = 1 THEN 1 ELSE d.CTIPOCAMBIO END)
+            FROM admMovimientos m
+            JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
+            WHERE d.CIDDOCUMENTODE = %s AND d.CCANCELADO = 0 AND d.CFECHA >= %s
+            GROUP BY p.CIDPRODUCTO, p.CIDVALORCLASIFICACION2, p.CIDVALORCLASIFICACION1
+            """,
+            [PURCHASE_DOC_TYPE, IMPORT_HISTORY_START],
+        )
+        rows = [list(r) for r in cursor.fetchall()]
+    return {'cost': cost, 'purchases': purchases, 'purchase_rows': rows}
+
+
+def imported_products(purchase_rows, catalog):
+    """Ids of the imported products in `catalog` ((product, line, brand) for every product).
+    `purchase_rows`: (product, line, brand, foreign amount, total amount) - our purchases. A product
+    we bought is imported if any of it came in foreign currency; one we didn't buy follows the
+    majority (by value) of its line, or of its brand when its line has no purchases."""
+    bought, foreign_line, total_line, foreign_brand, total_brand = {}, *(defaultdict(float) for _ in range(4))
+    for product, line, brand, foreign_amount, total_amount in purchase_rows:
+        foreign_amount, total_amount = float(foreign_amount or 0), float(total_amount or 0)
+        bought[product] = bought.get(product, False) or foreign_amount > 0
+        if line:
+            foreign_line[line] += foreign_amount
+            total_line[line] += total_amount
+        if brand:
+            foreign_brand[brand] += foreign_amount
+            total_brand[brand] += total_amount
+
+    def mostly_foreign(key, foreign, total):
+        return bool(key) and total.get(key, 0) > 0 and foreign[key] / total[key] > 0.5
+
+    out = set()
+    for product, line, brand in catalog:
+        if product in bought:
+            is_imported = bought[product]
+        elif line and total_line.get(line, 0) > 0:
+            is_imported = mostly_foreign(line, foreign_line, total_line)
+        else:
+            is_imported = mostly_foreign(brand, foreign_brand, total_brand)
+        if is_imported:
+            out.add(product)
+    return out
+
+
 def fetch_erp(date_from, date_to, refresh=False):
     key = CACHE_KEY.format(date_from, date_to)
     data = None if refresh else cache.get(key)
     if data is None:
-        with ThreadPoolExecutor(max_workers=9) as pool:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            imports = pool.submit(_in_thread, fetch_imports, date_from, date_to)
             payroll = pool.submit(_in_thread, fetch_payroll, date_from, date_to)
             vehicle_ledger = pool.submit(_in_thread, fetch_vehicle_ledger, date_from, date_to)
             commissions = pool.submit(_in_thread, fetch_paid_commissions, date_from, date_to)
@@ -287,7 +377,7 @@ def fetch_erp(date_from, date_to, refresh=False):
                 'invoice_lines': invoice_lines,
                 'products': products.result(), 'clients': clients.result(), 'brands': brands.result(),
                 'commissions': commissions.result(), 'supplier_discounts': discounts.result(),
-                'payroll': payroll.result(), 'vehicle_ledger': vehicle_ledger.result(),
+                'payroll': payroll.result(), 'vehicle_ledger': vehicle_ledger.result(), 'imports': imports.result(),
             }
         cache.set(key, data, timeout=CACHE_SECONDS)
     return data
@@ -352,8 +442,8 @@ def product_info(products, brand_names, prices, overrides, gea):
 def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
     """Sums sales, returns, allocated credit notes and paid commissions per (month, zone, client,
     product). Rows: [month 'YYYY-MM', zone, client, product, units, net, cost, kg, full commission,
-    paid commission, supplier discount, route cost by kg, route cost by piece (the last three 0 here,
-    see allocate_supplier_discounts and allocate_route_costs)]."""
+    paid commission, supplier discount, route cost by kg, route cost by piece, import cost (the last
+    four 0 here, see allocate_supplier_discounts, allocate_route_costs and calculate_profitability)]."""
     facts = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
     for doc_type, year, month, agent, client, product, units, net, cost in sales:
         sign = -1 if doc_type == DEVOLUCION_DOC_TYPE else 1
@@ -369,7 +459,7 @@ def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
         facts[(month, zone, client, product)][4] += amount
     return [
         [*key, round(units, 3), round(net, 2), round(cost, 2), round(units * kg_of(key[3]), 2),
-         round(full, 2), round(paid, 2), 0.0, 0.0, 0.0]
+         round(full, 2), round(paid, 2), 0.0, 0.0, 0.0, 0.0]
         for key, (units, net, cost, full, paid) in facts.items()
     ]
 
@@ -503,6 +593,13 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     facts = build_facts(data['sales'], allocate_credit_notes(data['notes'], data['invoice_lines']),
                         commission_rows, zone_of, kg_of, rate_of)
     facts = [f for f in facts if f[3] not in excluded and f[3] not in drop]
+    imports = data['imports']
+    import_rate = imports['cost'] / imports['purchases'] if imports['purchases'] else 0.0
+    imported_ids = imported_products(imports['purchase_rows'],
+                                     [(pid, line, brand) for pid, _, _, _, brand, line, _ in data['products']])
+    for f in facts:
+        if f[3] in imported_ids:
+            f[13] = round(f[6] * import_rate, 2)
     allocate_supplier_discounts(facts, data['supplier_discounts'],
                                 lambda pid: pid in products and products[pid]['brand'] == BIONAT_SUPPLIER_NAME)
 
@@ -536,6 +633,8 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
         'facts': facts,
         'excluded': sorted(excluded),
         'dropped': sorted(drop),
+        'imports': {'cost': round(imports['cost'], 2), 'purchases': round(imports['purchases'], 2),
+                    'rate': round(import_rate, 4)},
         'route_costs': costs,
         'unallocated': unallocated,
         'gps_since': first_gps.isoformat() if first_gps else None,
