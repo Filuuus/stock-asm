@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Scale, X } from "lucide-react";
+import { RefreshCw, Scale, Settings2, Trash2, X } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,7 @@ import {
 import { MonthControl } from "@/components/date-controls";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import ClientLink from "@/components/facturas/ClientLink";
+import InvoiceLink from "@/components/facturas/InvoiceLink";
 import { formatDay, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { zoneLabel, ZONE_ORDER } from "@/lib/zones";
 import { cn, formatMoney } from "@/lib/utils";
@@ -24,8 +25,10 @@ import { useAuth } from "@/hooks/use-auth";
 import type { Zone } from "@/types/commissions";
 
 // [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg,
-//  full commission, paid commission, supplier discount, route cost]
-type Fact = [string, string, number, number | null, number, number, number, number, number, number, number, number];
+//  full commission, paid commission, supplier discount, route cost split by kg, route cost split by piece]
+type Fact = [
+  string, string, number, number | null, number, number, number, number, number, number, number, number, number,
+];
 type WeightSource = "manual" | "nombre" | "GEA" | "unidad" | "estimado" | "servicio";
 
 interface Product {
@@ -53,6 +56,7 @@ interface Profitability {
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
 type Filters = Partial<Record<Exclude<Dim, "month">, string>>;
 type CommissionMode = "posibles" | "pagadas";
+type RouteKey = "kg" | "pieza";
 
 const DIMS: { key: Dim; label: string; one: string }[] = [
   { key: "zone", label: "Zona", one: "esa zona" },
@@ -176,9 +180,12 @@ export default function ProfitabilityView() {
   // supplier credit notes left out.
   const [commissionMode, setCommissionMode] = useState<CommissionMode>("posibles");
   const [supplierDiscounts, setSupplierDiscounts] = useState(false);
+  const [routeKey, setRouteKey] = useState<RouteKey>("kg");
   const [search, setSearch] = useState("");
   const [weightsOpen, setWeightsOpen] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
+  const [invoicesOf, setInvoicesOf] = useState<string | null>(null); // product id whose invoices are listed
+  const [setupOpen, setSetupOpen] = useState(false);
   const [excludeError, setExcludeError] = useState<string | null>(null);
 
   const setExcluded = async (productId: string, excluded: boolean) => {
@@ -267,7 +274,7 @@ export default function ProfitabilityView() {
     s.net += f[5];
     s.cost += f[6] - (supplierDiscounts ? f[10] : 0);
     s.commission += commissionMode === "pagadas" ? f[9] : f[8];
-    s.route += f[11];
+    s.route += routeKey === "kg" ? f[11] : f[12];
     s.kg += f[7];
   };
 
@@ -312,9 +319,9 @@ export default function ProfitabilityView() {
     return s;
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts]);
+  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts]);
+  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts, routeKey]);
   const estimatedKg = useMemo(
     () => filtered.reduce((t, f) => t + (f[3] !== null && data?.products[f[3]]?.source === "estimado" ? f[7] : 0), 0),
     [filtered, data],
@@ -332,7 +339,7 @@ export default function ProfitabilityView() {
     // A product sold and fully returned nets to nothing; it only clutters the list.
     return [...map.values()].filter((g) => [g.net, g.cost, g.kg, g.commission, g.route].some((v) => Math.abs(v) >= 0.5));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, groupBy, data, commissionMode, supplierDiscounts]);
+  }, [filtered, groupBy, data, commissionMode, supplierDiscounts, routeKey]);
 
   // Months of the period, for the chart: gross and net result per month.
   const chart = useMemo(() => {
@@ -344,7 +351,7 @@ export default function ProfitabilityView() {
     }
     return [...byMonth.entries()].map(([m, s]) => ({ label: monthShort(m), bruta: gross(s), neta: result(s) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, from, to, commissionMode, supplierDiscounts]);
+  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey]);
 
   // The period's route costs by pool and component (not affected by the filters).
   const pools = useMemo(() => {
@@ -468,6 +475,10 @@ export default function ProfitabilityView() {
           <Scale className="w-4 h-4" aria-hidden />
           Pesos
         </Button>
+        <Button size="sm" variant="outline" className="h-9 sm:h-8" onClick={() => setSetupOpen(true)}>
+          <Settings2 className="w-4 h-4" aria-hidden />
+          Gastos de ruta
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
@@ -480,6 +491,19 @@ export default function ProfitabilityView() {
               </TabsTrigger>
               <TabsTrigger value="pagadas" className="text-xs">
                 Pagadas
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500">Gastos de ruta por</span>
+          <Tabs value={routeKey} onValueChange={(v) => setRouteKey(v as RouteKey)}>
+            <TabsList className="h-8">
+              <TabsTrigger value="kg" className="text-xs">
+                Kg
+              </TabsTrigger>
+              <TabsTrigger value="pieza" className="text-xs">
+                Pieza
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -549,6 +573,15 @@ export default function ProfitabilityView() {
                   className="inline-flex max-w-full items-center gap-1 rounded-full border bg-gray-50 py-1 pl-3 pr-1 text-sm"
                 >
                   <span className="truncate">{labelOf(dim, value)}</span>
+                  {dim === "product" && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs underline hover:text-gray-900"
+                      onClick={() => setInvoicesOf(value)}
+                    >
+                      Facturas
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label="Quitar filtro"
@@ -659,6 +692,19 @@ export default function ProfitabilityView() {
                             size="sm"
                             variant="ghost"
                             className="h-7 text-gray-500"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setInvoicesOf(g.key);
+                            }}
+                          >
+                            Facturas
+                          </Button>
+                        )}
+                        {g.key !== NO_PRODUCT && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-gray-500"
                             title="Dejar este producto fuera de la rentabilidad (ventas únicas que distorsionan los números)"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -689,8 +735,9 @@ export default function ProfitabilityView() {
             <CardHeader className="p-3 sm:p-4">
               <CardTitle className="text-base">Gastos de ruta del periodo</CardTitle>
               <CardDescription>
-                Todo el periodo, sin filtros. Cada ruta se reparte entre los kg de su zona, el almacén entre todos los
-                kg vendidos y los servicios entre las ventas de servicio.
+                Todo el periodo, sin filtros. Cada ruta se reparte entre los {routeKey === "kg" ? "kg" : "piezas"} de su
+                zona, el almacén entre {routeKey === "kg" ? "todos los kg vendidos" : "todas las piezas vendidas"} y los
+                servicios entre las ventas de servicio.
               </CardDescription>
             </CardHeader>
             <Table>
@@ -797,6 +844,22 @@ export default function ProfitabilityView() {
         </Dialog>
       )}
 
+      {setupOpen && <SetupDialog onClose={() => setSetupOpen(false)} onSaved={() => setReload((n) => n + 1)} />}
+
+      {data && invoicesOf && (
+        <ProductInvoicesDialog
+          title={labelOf("product", invoicesOf)}
+          query={new URLSearchParams({
+            from,
+            to,
+            product: invoicesOf,
+            ...(filters.client ? { client: filters.client } : {}),
+            ...(filters.zone ? { zone: filters.zone } : {}),
+          }).toString()}
+          onClose={() => setInvoicesOf(null)}
+        />
+      )}
+
       {data && (
         <WeightsDialog
           open={weightsOpen}
@@ -807,6 +870,405 @@ export default function ProfitabilityView() {
         />
       )}
     </main>
+  );
+}
+
+interface SetupVehicle {
+  id?: number;
+  name: string;
+  pool: string;
+  sheet_name: string;
+  maintenance_account: string;
+  uses_lp: boolean;
+  has_gps?: boolean;
+  km_per_liter: number | string | null;
+  price_per_liter: number | string | null;
+  annual_insurance: number | string;
+}
+
+interface Setup {
+  pools: { code: string; label: string }[];
+  employees: { employee_id: number; pool: string; name: string; position: string; active: boolean }[];
+  employee_options: { employee_id: number; name: string; position: string }[];
+  vehicles: SetupVehicle[];
+  monthly_costs: { id?: number; label: string; pool: string; monthly_amount: number | string }[];
+}
+
+// Who and what each route-cost group carries. Edited as a copy and saved whole.
+function SetupDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/profitability/setup/")
+      .then(async (res) => {
+        if (!res.ok) throw new Error("No se pudo cargar la configuración.");
+        const json = await res.json();
+        if (!cancelled) setSetup(json);
+      })
+      .catch((err) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async () => {
+    if (!setup) return;
+    setSaving(true);
+    setError(null);
+    const res = await apiFetch("/api/profitability/setup/", { method: "PUT", body: JSON.stringify(setup) });
+    setSaving(false);
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setError(json.error ?? "No se pudo guardar.");
+      return;
+    }
+    onSaved();
+    onClose();
+  };
+
+  const update = (change: (s: Setup) => Setup) => setSetup((s) => (s ? change(s) : s));
+  const setVehicle = (i: number, patch: Partial<SetupVehicle>) =>
+    update((s) => ({ ...s, vehicles: s.vehicles.map((v, j) => (j === i ? { ...v, ...patch } : v)) }));
+  const poolSelect = (value: string, onChange: (pool: string) => void, label: string) => (
+    <select
+      value={value}
+      aria-label={label}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+    >
+      {setup!.pools.map((p) => (
+        <option key={p.code} value={p.code}>
+          {POOL_LABELS[p.code] ?? p.label}
+        </option>
+      ))}
+    </select>
+  );
+  const remove = (label: string, onClick: () => void) => (
+    <Button size="sm" variant="ghost" className="h-8 px-2 text-gray-500" aria-label={`Quitar ${label}`} onClick={onClick}>
+      <Trash2 className="h-4 w-4" />
+    </Button>
+  );
+  const numberInput = (value: number | string | null, onChange: (v: string) => void, label: string, width = "w-24") => (
+    <Input
+      type="number"
+      inputMode="decimal"
+      min={0}
+      step="any"
+      aria-label={label}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn("h-8 text-right", width)}
+    />
+  );
+  const available = setup?.employee_options.filter((o) => !setup.employees.some((e) => e.employee_id === o.employee_id));
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Gastos de ruta: configuración</DialogTitle>
+        </DialogHeader>
+        {!setup && !error && <p className="text-sm text-gray-500">Cargando…</p>}
+        {setup && (
+          <div className="flex flex-col gap-6 overflow-y-auto pr-1">
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold">Personal</h3>
+              <p className="text-xs text-gray-500">Su nómina (percepciones y cuotas patronales, sin PTU) va al grupo elegido.</p>
+              <Table>
+                <TableBody>
+                  {setup.employees.map((e, i) => (
+                    <TableRow key={e.employee_id}>
+                      <TableCell>
+                        {e.name || `Empleado ${e.employee_id}`}
+                        <span className="ml-2 text-xs text-gray-500">
+                          {e.position}
+                          {!e.active && " · baja"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="w-48">
+                        {poolSelect(
+                          e.pool,
+                          (pool) => update((s) => ({ ...s, employees: s.employees.map((x, j) => (j === i ? { ...x, pool } : x)) })),
+                          `Grupo de ${e.name}`,
+                        )}
+                      </TableCell>
+                      <TableCell className="w-px">
+                        {remove(e.name, () => update((s) => ({ ...s, employees: s.employees.filter((_, j) => j !== i) })))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {available && available.length > 0 && (
+                <select
+                  value=""
+                  aria-label="Agregar empleado"
+                  onChange={(e) => {
+                    const o = available.find((x) => String(x.employee_id) === e.target.value);
+                    if (o) update((s) => ({ ...s, employees: [...s.employees, { ...o, pool: "ZONA1", active: true }] }));
+                  }}
+                  className="h-8 w-72 rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">Agregar empleado…</option>
+                  {available.map((o) => (
+                    <option key={o.employee_id} value={o.employee_id}>
+                      {o.name} ({o.position})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </section>
+
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold">Vehículos</h3>
+              <p className="text-xs text-gray-500">
+                Combustible y mantenimiento salen del reporte mensual de Contabilidad (nombre en el reporte). Para los
+                meses que aún no están ahí: mantenimiento de su cuenta contable, y combustible de la cuenta de gas LP o
+                de los km del GPS entre el rendimiento, por el precio por litro. El seguro se reparte en 12 meses.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vehículo</TableHead>
+                    <TableHead>Grupo</TableHead>
+                    <TableHead>Nombre en el reporte</TableHead>
+                    <TableHead>Cuenta de mantenimiento</TableHead>
+                    <TableHead>Gas LP</TableHead>
+                    <TableHead className="text-right">Km/litro</TableHead>
+                    <TableHead className="text-right">$/litro</TableHead>
+                    <TableHead className="text-right">Seguro anual</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {setup.vehicles.map((v, i) => (
+                    <TableRow key={v.id ?? `new-${i}`}>
+                      <TableCell>
+                        <Input
+                          value={v.name}
+                          aria-label="Nombre del vehículo"
+                          onChange={(e) => setVehicle(i, { name: e.target.value })}
+                          className="h-8 w-36"
+                        />
+                        <span className="text-xs text-gray-500">{v.has_gps ? "Con GPS" : "Sin GPS"}</span>
+                      </TableCell>
+                      <TableCell>{poolSelect(v.pool, (pool) => setVehicle(i, { pool }), `Grupo de ${v.name}`)}</TableCell>
+                      <TableCell>
+                        <Input
+                          value={v.sheet_name}
+                          aria-label={`Nombre en el reporte de ${v.name}`}
+                          onChange={(e) => setVehicle(i, { sheet_name: e.target.value })}
+                          className="h-8 w-28"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={v.maintenance_account}
+                          aria-label={`Cuenta de mantenimiento de ${v.name}`}
+                          onChange={(e) => setVehicle(i, { maintenance_account: e.target.value })}
+                          className="h-8 w-28"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={v.uses_lp}
+                          aria-label={`${v.name} usa gas LP`}
+                          onCheckedChange={(uses_lp) => setVehicle(i, { uses_lp })}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {numberInput(v.km_per_liter, (x) => setVehicle(i, { km_per_liter: x }), `Km por litro de ${v.name}`, "w-20")}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {numberInput(v.price_per_liter, (x) => setVehicle(i, { price_per_liter: x }), `Precio por litro de ${v.name}`, "w-20")}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {numberInput(v.annual_insurance, (x) => setVehicle(i, { annual_insurance: x }), `Seguro anual de ${v.name}`, "w-28")}
+                      </TableCell>
+                      <TableCell className="w-px">
+                        {remove(v.name, () => update((s) => ({ ...s, vehicles: s.vehicles.filter((_, j) => j !== i) })))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <Button
+                size="sm"
+                variant="outline"
+                className="self-start"
+                onClick={() =>
+                  update((s) => ({
+                    ...s,
+                    vehicles: [
+                      ...s.vehicles,
+                      {
+                        name: "", pool: "ZONA1", sheet_name: "", maintenance_account: "", uses_lp: false,
+                        km_per_liter: null, price_per_liter: null, annual_insurance: 0,
+                      },
+                    ],
+                  }))
+                }
+              >
+                Agregar vehículo
+              </Button>
+            </section>
+
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold">Gastos fijos mensuales</h3>
+              <p className="text-xs text-gray-500">Montos que no están en el libro contable, como la renta de la bodega.</p>
+              <Table>
+                <TableBody>
+                  {setup.monthly_costs.map((c, i) => (
+                    <TableRow key={c.id ?? `new-${i}`}>
+                      <TableCell>
+                        <Input
+                          value={c.label}
+                          aria-label="Concepto"
+                          onChange={(e) =>
+                            update((s) => ({
+                              ...s,
+                              monthly_costs: s.monthly_costs.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
+                            }))
+                          }
+                          className="h-8 w-56"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {poolSelect(
+                          c.pool,
+                          (pool) => update((s) => ({ ...s, monthly_costs: s.monthly_costs.map((x, j) => (j === i ? { ...x, pool } : x)) })),
+                          `Grupo de ${c.label}`,
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {numberInput(
+                          c.monthly_amount,
+                          (monthly_amount) =>
+                            update((s) => ({ ...s, monthly_costs: s.monthly_costs.map((x, j) => (j === i ? { ...x, monthly_amount } : x)) })),
+                          `Monto mensual de ${c.label}`,
+                          "w-28",
+                        )}
+                      </TableCell>
+                      <TableCell className="w-px">
+                        {remove(c.label, () => update((s) => ({ ...s, monthly_costs: s.monthly_costs.filter((_, j) => j !== i) })))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <Button
+                size="sm"
+                variant="outline"
+                className="self-start"
+                onClick={() =>
+                  update((s) => ({ ...s, monthly_costs: [...s.monthly_costs, { label: "", pool: "ALMACEN", monthly_amount: 0 }] }))
+                }
+              >
+                Agregar gasto fijo
+              </Button>
+            </section>
+          </div>
+        )}
+        {error && <p className="text-sm text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={!setup || saving}>
+            Guardar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface InvoiceLine {
+  invoice_id: number;
+  folio: string;
+  return: boolean;
+  date: string;
+  zone: string;
+  client_id: number;
+  client: string;
+  units: number;
+  net: number;
+  cost: number;
+}
+
+// The invoice and return lines behind a product's numbers, for the period and the zone/client filters.
+function ProductInvoicesDialog({ title, query, onClose }: { title: string; query: string; onClose: () => void }) {
+  const [lines, setLines] = useState<InvoiceLine[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(`/api/profitability/invoices/?${query}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("No se pudieron cargar las facturas.");
+        const json = await res.json();
+        if (!cancelled) setLines(json);
+      })
+      .catch((err) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="pr-6">{title}</DialogTitle>
+        </DialogHeader>
+        {error && <p className="text-sm text-red-700">{error}</p>}
+        {!lines && !error && <p className="text-sm text-gray-500">Cargando…</p>}
+        {lines && (
+          <div className="overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Folio</TableHead>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead className={HIDE_BELOW_MD}>Zona</TableHead>
+                  <TableHead className="text-right">Unidades</TableHead>
+                  <TableHead className="text-right">Venta</TableHead>
+                  <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Utilidad bruta</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lines.length === 0 && <EmptyRow colSpan={7}>Sin facturas en el periodo.</EmptyRow>}
+                {lines.map((l) => (
+                  <TableRow key={l.invoice_id}>
+                    <TableCell className="whitespace-nowrap">
+                      <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
+                      {l.return && <span className="ml-1 text-xs text-gray-500">(devolución)</span>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDay(l.date)}</TableCell>
+                    <TableCell className="max-w-56 truncate">
+                      <ClientLink clientId={l.client_id} label={l.client} />
+                    </TableCell>
+                    <TableCell className={HIDE_BELOW_MD}>{zoneLabel(l.zone)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.units.toLocaleString("es-MX")}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatMoney(l.net)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
+                      {formatMoney(l.net - l.cost)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="mt-2 text-xs text-gray-500">
+              Las notas de crédito que se repartieron sobre este producto no aparecen aquí; se ven al abrir cada factura.
+            </p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

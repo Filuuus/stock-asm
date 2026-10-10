@@ -352,8 +352,8 @@ def product_info(products, brand_names, prices, overrides, gea):
 def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
     """Sums sales, returns, allocated credit notes and paid commissions per (month, zone, client,
     product). Rows: [month 'YYYY-MM', zone, client, product, units, net, cost, kg, full commission,
-    paid commission, supplier discount, route cost (both 0 here, see allocate_supplier_discounts and
-    allocate_route_costs)]."""
+    paid commission, supplier discount, route cost by kg, route cost by piece (the last three 0 here,
+    see allocate_supplier_discounts and allocate_route_costs)]."""
     facts = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
     for doc_type, year, month, agent, client, product, units, net, cost in sales:
         sign = -1 if doc_type == DEVOLUCION_DOC_TYPE else 1
@@ -369,7 +369,7 @@ def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
         facts[(month, zone, client, product)][4] += amount
     return [
         [*key, round(units, 3), round(net, 2), round(cost, 2), round(units * kg_of(key[3]), 2),
-         round(full, 2), round(paid, 2), 0.0, 0.0]
+         round(full, 2), round(paid, 2), 0.0, 0.0, 0.0]
         for key, (units, net, cost, full, paid) in facts.items()
     ]
 
@@ -419,16 +419,22 @@ def route_costs(months, employees, vehicles, monthly_costs, payroll, ledger, km,
             for m, pools in out.items()}
 
 
-def allocate_route_costs(facts, costs, is_service):
-    """Writes each fact's share of the month's pools into column 11: a route's pool over its own
-    zone's kg, the warehouse over every kg, the service crew over service sales. Returns
-    {month: {pool: amount}} that found nothing to land on."""
-    def weight(f, pool):
-        if pool == 'ALMACEN':
+def allocate_route_costs(facts, costs, is_service, by='kg'):
+    """Writes each fact's share of the month's pools into column 11 (by='kg') or 12 (by='pieces'):
+    a route's pool over its own zone's kg or pieces, the warehouse over every kg or piece, the
+    service crew over service sales. Pieces are units sold of anything but services (Bionat report
+    v1). Returns {month: {pool: amount}} that found nothing to land on."""
+    column = 11 if by == 'kg' else 12
+
+    def goods(f):
+        if by == 'kg':
             return f[7]
+        return f[4] if f[3] is not None and not is_service(f[3]) else 0.0
+
+    def weight(f, pool):
         if pool == 'SERVICIOS':
             return f[5] if is_service(f[3]) else 0.0
-        return f[7] if f[1] == pool else 0.0
+        return goods(f) if pool == 'ALMACEN' or f[1] == pool else 0.0
 
     by_month = defaultdict(list)
     for f in facts:
@@ -445,7 +451,7 @@ def allocate_route_costs(facts, costs, is_service):
             for f in rows:
                 w = weight(f, pool)
                 if w:
-                    f[11] = round(f[11] + amount * w / total, 2)
+                    f[column] = round(f[column] + amount * w / total, 2)
     return dict(unallocated)
 
 
@@ -518,7 +524,9 @@ def calculate_profitability(date_from, date_to, refresh=False):
         {(c.month, c.vehicle, c.kind): float(c.amount)
          for c in VehicleMonthlyCost.objects.filter(month__gte=months[0], month__lte=months[-1])},
     )
-    unallocated = allocate_route_costs(facts, costs, lambda pid: pid in products and products[pid]['category'] == 'S')
+    is_service = lambda pid: pid in products and products[pid]['category'] == 'S'  # noqa: E731
+    unallocated = allocate_route_costs(facts, costs, is_service)
+    allocate_route_costs(facts, costs, is_service, by='pieces')
     first_gps = VehicleDayKm.objects.order_by('day').values_list('day', flat=True).first()
     used_products, used_clients = {f[3] for f in facts} | excluded, {f[2] for f in facts}
     return {
@@ -531,3 +539,55 @@ def calculate_profitability(date_from, date_to, refresh=False):
         'products': {pid: p for pid, p in products.items() if pid in used_products},
         'clients': {cid: name for cid, name in data['clients'].items() if cid in used_clients},
     }
+
+
+def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
+    """The invoice and return lines behind a product's figures in the period (same rules as the
+    facts: scoped zones, not cancelled, pesos), optionally for one client and/or zone. Credit notes
+    spread over the product aren't listed - they're shown on the invoice itself."""
+    params = [FACTURA_DOC_TYPE, DEVOLUCION_DOC_TYPE, *ZONE_IDS, date_from, date_to, product_id]
+    client_sql = ''
+    if client_id is not None:
+        client_sql = 'AND d.CIDCLIENTEPROVEEDOR = %s'
+        params.append(client_id)
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCONCEPTODOCUMENTO, d.CFOLIO, d.CFECHA, d.CIDAGENTE,
+                   d.CIDCLIENTEPROVEEDOR, SUM(m.CUNIDADES), SUM({NET}), SUM(m.CCOSTOESPECIFICO)
+            FROM admMovimientos m
+            JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            WHERE d.CIDDOCUMENTODE IN (%s, %s) AND d.CCANCELADO = 0 AND d.CIDAGENTE {ZONE_FILTER}
+              AND d.CFECHA >= %s AND d.CFECHA < %s AND m.CIDPRODUCTO = %s {client_sql}
+            GROUP BY d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCONCEPTODOCUMENTO, d.CFOLIO, d.CFECHA, d.CIDAGENTE,
+                     d.CIDCLIENTEPROVEEDOR
+            ORDER BY d.CFECHA DESC, d.CFOLIO DESC
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+    series = CommissionRepository.fetch_concepto_series()
+    clients = fetch_client_names()
+    agent_zone = {agent_id: code for code, agent_id in ZONE_SCOPE.items()}
+    pv = CommissionRepository.fetch_puntoventa_clients()
+    out = []
+    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost in rows:
+        line_zone = agent_zone.get(agent, PUNTOVENTA_ZONE_NAME)
+        if line_zone == PUNTOVENTA_ZONE_NAME and client in pv:
+            line_zone = pv[client].zone
+        if zone and line_zone != zone:
+            continue
+        sign = -1 if doc_type == DEVOLUCION_DOC_TYPE else 1
+        out.append({
+            'invoice_id': doc_id,
+            'folio': f"{series.get(concept, 'F')} {int(folio)}",
+            'return': doc_type == DEVOLUCION_DOC_TYPE,
+            'date': day.date().isoformat(),
+            'zone': line_zone,
+            'client_id': client,
+            'client': clients.get(client, ''),
+            'units': sign * float(units),
+            'net': round(sign * float(net), 2),
+            'cost': round(sign * float(cost), 2),
+        })
+    return out

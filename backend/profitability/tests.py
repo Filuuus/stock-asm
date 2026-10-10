@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
 from .vehicle_reports import parse_fuel, parse_maintenance
 from .services import (
@@ -56,14 +56,14 @@ class BuildFactsTests(SimpleTestCase):
         facts = build_facts(sales, credits, paid, lambda agent, client: f'Z{agent}', lambda product: 25.0,
                             lambda zone, client, product: 0.02)
         self.assertEqual(facts, [
-            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0],
-            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0],
+            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0, 0.0],
+            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0],
         ])
 
 
 class SupplierDiscountTests(SimpleTestCase):
     def test_spreads_each_month_over_its_products_cost(self):
-        row = lambda month, product, cost: [month, 'Z1', 7, product, 0, 0, cost, 0, 0, 0, 0.0, 0.0]
+        row = lambda month, product, cost: [month, 'Z1', 7, product, 0, 0, cost, 0, 0, 0, 0.0, 0.0, 0.0]
         facts = [row('2026-03', 1, 300.0), row('2026-03', 1, 100.0), row('2026-03', 2, 500.0), row('2026-04', 1, 50.0)]
         allocate_supplier_discounts(facts, {'2026-03': 40.0}, lambda product: product == 1)
         self.assertEqual([f[10] for f in facts], [30.0, 10.0, 0.0, 0.0])
@@ -120,13 +120,15 @@ class RouteCostTests(SimpleTestCase):
         })
 
     def test_route_by_own_kg_warehouse_by_all_kg_services_by_sales(self):
-        row = lambda zone, product, net, kg: ['2026-10', zone, 7, product, 0, net, 0, kg, 0, 0, 0.0, 0.0]
-        facts = [row('ZONA1', 1, 1000.0, 75.0), row('ZONA2', 1, 1000.0, 25.0), row('SERVICIOS', 9, 400.0, 0.0)]
+        row = lambda zone, product, units, net, kg: ['2026-10', zone, 7, product, units, net, 0, kg, 0, 0, 0.0, 0.0, 0.0]
+        facts = [row('ZONA1', 1, 1, 1000.0, 75.0), row('ZONA2', 1, 1, 1000.0, 25.0), row('SERVICIOS', 9, 2, 400.0, 0.0)]
         costs = {'2026-10': {'ZONA1': {'x': 300.0}, 'ALMACEN': {'x': 100.0}, 'SERVICIOS': {'x': 40.0},
                              'ZONA2': {'x': 10.0}}, '2026-11': {'ZONA1': {'x': 5.0}}}
         unallocated = allocate_route_costs(facts, costs, lambda product: product == 9)
         self.assertEqual([f[11] for f in facts], [375.0, 35.0, 40.0])
         self.assertEqual(unallocated, {'2026-11': {'ZONA1': 5.0}})
+        allocate_route_costs(facts, costs, lambda product: product == 9, by='pieces')  # services aren't pieces
+        self.assertEqual([f[12] for f in facts], [350.0, 60.0, 40.0])
 
 
 class VehicleReportTests(SimpleTestCase):
@@ -153,3 +155,27 @@ class VehicleReportTests(SimpleTestCase):
             (None, None, None, None, 'TOTAL', '12234.48', None),
         ]
         self.assertEqual(parse_maintenance(rows, 2026, '2026-10'), {('2026-02', 'F350'): 2050.0, ('2026-02', 'HILUX1'): 10184.48})
+
+
+class SaveRouteSetupTests(TestCase):
+    def test_replaces_rows_keeps_gps_units_and_rejects_bad_input_whole(self):
+        from .models import PoolEmployee, PoolMonthlyCost, PoolVehicle
+        from .setup import save_route_setup
+        PoolEmployee.objects.all().delete()
+        PoolMonthlyCost.objects.all().delete()
+        PoolVehicle.objects.all().delete()
+        truck = PoolVehicle.objects.create(name='Hilux', pool='ZONA1', gps_imei='123')
+        PoolVehicle.objects.create(name='Vieja', pool='ZONA2')
+        save_route_setup({
+            'employees': [{'employee_id': 7, 'pool': 'ZONA1'}],
+            'vehicles': [{'id': truck.id, 'name': 'Hilux 1', 'pool': 'ZONA2', 'sheet_name': 'hilux 1', 'annual_insurance': '1200'}],
+            'monthly_costs': [{'label': 'Renta', 'pool': 'ALMACEN', 'monthly_amount': 25000}],
+        })
+        truck.refresh_from_db()
+        self.assertEqual((truck.name, truck.pool, truck.sheet_name, truck.gps_imei), ('Hilux 1', 'ZONA2', 'HILUX1', '123'))
+        self.assertEqual(PoolVehicle.objects.count(), 1)
+        with self.assertRaises(ValueError):
+            save_route_setup({'employees': [], 'vehicles': [], 'monthly_costs': [{'label': 'X', 'pool': 'ALMACEN',
+                                                                                    'monthly_amount': -1}]})
+        self.assertEqual(list(PoolEmployee.objects.values_list('employee_id', flat=True)), [7])
+        self.assertEqual(PoolVehicle.objects.count(), 1)

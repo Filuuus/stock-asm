@@ -6,7 +6,8 @@ from rest_framework.response import Response
 from accounts.permissions import IsManagement
 
 from .models import ExcludedProduct, ProductWeight
-from .services import calculate_profitability
+from .services import calculate_profitability, product_invoices
+from .setup import route_setup, save_route_setup
 
 
 def _month_start(value):
@@ -27,6 +28,21 @@ def profitability(request):
         return Response({'error': 'El periodo termina antes de empezar.'}, status=400)
     end = date(last.year + last.month // 12, last.month % 12 + 1, 1)
     return Response(calculate_profitability(first, end, refresh=request.query_params.get('refresh') == '1'))
+
+
+@api_view(['GET'])
+@permission_classes([IsManagement])
+def invoices(request):
+    """?from=YYYY-MM&to=YYYY-MM&product=ID[&client=ID][&zone=ZONA1]"""
+    try:
+        first = _month_start(request.query_params['from'])
+        last = _month_start(request.query_params['to'])
+        product = int(request.query_params['product'])
+        client = int(request.query_params['client']) if request.query_params.get('client') else None
+    except (KeyError, ValueError):
+        return Response({'error': 'Parámetros inválidos.'}, status=400)
+    end = date(last.year + last.month // 12, last.month % 12 + 1, 1)
+    return Response(product_invoices(first, end, product, client, request.query_params.get('zone') or None))
 
 
 @api_view(['POST'])
@@ -61,3 +77,15 @@ def set_exclusion(request):
     else:
         ExcludedProduct.objects.filter(producto_id=product_id).delete()
     return Response({'ok': True})
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsManagement])
+def setup(request):
+    """The route-cost setup: GET it, PUT it back whole."""
+    if request.method == 'PUT':
+        try:
+            save_route_setup(request.data)
+        except (ValueError, KeyError, TypeError) as e:
+            return Response({'error': str(e) or 'Datos inválidos.'}, status=400)
+    return Response(route_setup())
