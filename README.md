@@ -80,14 +80,15 @@ A `.claude/launch.json` is included with dev-server configs for both.
 
 ### Fleet GPS log (Zeek → Notion)
 
-Two commands copy the company vehicles' GPS trips from Zeek into a Notion database (the `fleet` app; no ERP or local DB involved):
+Two commands copy the company vehicles' GPS trips from Zeek into a Notion database (the `fleet` app; no ERP involved), and a third keeps each unit's daily km in the local database:
 
 ```
 python manage.py sync_fleet_log                     # yesterday; or --date 2026-10-06
 python manage.py close_fleet_month                  # previous month; or --year 2026 --month 9
+python manage.py store_fleet_km                     # yesterday; or --from 2026-10-02 --to 2026-10-09
 ```
 
-`sync_fleet_log` writes one log entry per vehicle that moved (km, Google Maps route, one block per trip) and adds the km to the vehicle card's `Kilometraje`. `close_fleet_month` adds a `Reporte Mensual - <vehículo>` entry per vehicle (date, km and route link for each day) and then archives that month's daily entries to stay within Notion's limits; archived pages sit in Notion's trash for 30 days, after which the per-trip detail is gone. Both skip work already done, so re-running is safe. Schedule the first nightly and the second on the 1st.
+`sync_fleet_log` writes one log entry per vehicle that moved (km, Google Maps route, one block per trip) and adds the km to the vehicle card's `Kilometraje`. `close_fleet_month` adds a `Reporte Mensual - <vehículo>` entry per vehicle (date, km and route link for each day) and then archives that month's daily entries to stay within Notion's limits; archived pages sit in Notion's trash for 30 days, after which the per-trip detail is gone. Both skip work already done, so re-running is safe. `store_fleet_km` saves each unit's km per day (0 if it didn't move) to `fleet.VehicleDayKm`, independent of Notion: it's the long-term record for fuel cost per route, since Zeek has no history before 2026-10-02. Schedule the first and third nightly and the second on the 1st.
 
 Configuration goes in `backend/.env` (never in code, the repo is public):
 
