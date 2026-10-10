@@ -2,24 +2,30 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Scale, X } from "lucide-react";
+import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyRow, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, useSort } from "@/components/sortable-table";
+import {
+  EmptyRow, HIDE_BELOW_LG, HIDE_BELOW_MD, HIDE_BELOW_SM, SortableHead, useSort,
+} from "@/components/sortable-table";
 import { MonthControl } from "@/components/date-controls";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
-import { formatMonth, isoToDate, monthToISO } from "@/lib/dates";
+import ClientLink from "@/components/facturas/ClientLink";
+import { formatDay, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
 import { zoneLabel, ZONE_ORDER } from "@/lib/zones";
 import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import type { Zone } from "@/types/commissions";
 
-// [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg]
-type Fact = [string, string, number, number | null, number, number, number, number];
+// [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg,
+//  full commission, paid commission, supplier discount, route cost]
+type Fact = [string, string, number, number | null, number, number, number, number, number, number, number, number];
 type WeightSource = "manual" | "nombre" | "GEA" | "unidad" | "estimado" | "servicio";
 
 interface Product {
@@ -31,15 +37,21 @@ interface Product {
   source: WeightSource;
 }
 
+type Pools = Record<string, Record<string, number>>; // pool -> component -> amount
+
 interface Profitability {
   facts: Fact[];
   excluded: number[]; // product ids left out altogether, with their returns and credit notes
   products: Record<string, Product>;
   clients: Record<string, string>;
+  route_costs: Record<string, Pools>; // month -> pools
+  unallocated: Record<string, Record<string, number>>; // month -> pool -> amount with nothing to land on
+  gps_since: string | null;
 }
 
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
 type Filters = Partial<Record<Exclude<Dim, "month">, string>>;
+type CommissionMode = "posibles" | "pagadas";
 
 const DIMS: { key: Dim; label: string; one: string }[] = [
   { key: "zone", label: "Zona", one: "esa zona" },
@@ -49,6 +61,12 @@ const DIMS: { key: Dim; label: string; one: string }[] = [
   { key: "client", label: "Cliente", one: "ese cliente" },
   { key: "month", label: "Mes", one: "ese mes" },
 ];
+const POOL_LABELS: Record<string, string> = {
+  ZONA1: "Zona 1",
+  ZONA2: "Zona 2",
+  ALMACEN: "Almacén",
+  SERVICIOS: "Servicios",
+};
 const NO_PRODUCT = "Sin producto";
 const SOURCE_LABELS: Record<WeightSource, string> = {
   manual: "Capturado",
@@ -58,6 +76,9 @@ const SOURCE_LABELS: Record<WeightSource, string> = {
   estimado: "Estimado",
   servicio: "Servicio",
 };
+// Categorical slots 1 and 2 of the dataviz palette, as on Ventas (validated as a pair).
+const COLOR_GROSS = "#2a78d6";
+const COLOR_NET = "#eb6834";
 
 function without<T extends object>(obj: T, key: keyof T): T {
   const copy = { ...obj };
@@ -83,23 +104,59 @@ function tonnes(kg: number) {
   return `${(kg / 1000).toLocaleString("es-MX", { maximumFractionDigits: 1 })} t`;
 }
 
-interface Group {
-  key: string;
-  label: string;
+// "$4.2 M" - axis ticks only.
+function compactMoney(value: number) {
+  return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
+}
+
+const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+function monthShort(month: string) {
+  return `${MONTH_ABBR[Number(month.slice(5)) - 1]} ${month.slice(2, 4)}`;
+}
+
+interface Sums {
   net: number;
   cost: number;
+  commission: number;
+  route: number;
   kg: number;
 }
 
-function Tile({ label, value }: { label: string; value: string }) {
+interface Group extends Sums {
+  key: string;
+  label: string;
+}
+
+const gross = (s: Sums) => s.net - s.cost;
+const result = (s: Sums) => s.net - s.cost - s.commission - s.route;
+
+function emptySums(): Sums {
+  return { net: 0, cost: 0, commission: 0, route: 0, kg: 0 };
+}
+
+function Tile({ label, value, sub, change }: { label: string; value: string; sub?: string; change?: number | null }) {
   return (
     <Card>
       <CardHeader className="p-3 sm:p-4 space-y-1">
         <CardDescription className="text-xs sm:text-sm">{label}</CardDescription>
         <CardTitle className="text-base sm:text-xl">{value}</CardTitle>
+        {sub && <p className="text-xs text-gray-500">{sub}</p>}
+        {change !== undefined && change !== null && (
+          <p className={cn("text-xs", change >= 0 ? "text-emerald-700" : "text-red-700")}>
+            {change >= 0 ? "+" : ""}
+            {percent(change)} vs año anterior
+          </p>
+        )}
       </CardHeader>
     </Card>
   );
+}
+
+// Change against last year's same months, or null when last year was zero or of the other sign.
+function change(current: number, previous: number | undefined) {
+  if (previous === undefined || previous <= 0) return null;
+  return (current - previous) / previous;
 }
 
 export default function ProfitabilityView() {
@@ -107,12 +164,18 @@ export default function ProfitabilityView() {
   const [to, setTo] = useState(lastCompleteMonth);
   const [from, setFrom] = useState(() => shiftMonth(lastCompleteMonth(), -11));
   const [data, setData] = useState<Profitability | null>(null);
+  const [previous, setPrevious] = useState<Profitability | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const forceRefresh = useRef(false);
   const [filters, setFilters] = useState<Filters>({});
   const [groupBy, setGroupBy] = useState<Dim>("zone");
+  // Defaults are management's own criteria (Bionat report v2): every commission an invoice could earn,
+  // supplier credit notes left out.
+  const [commissionMode, setCommissionMode] = useState<CommissionMode>("posibles");
+  const [supplierDiscounts, setSupplierDiscounts] = useState(false);
+  const [search, setSearch] = useState("");
   const [weightsOpen, setWeightsOpen] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
   const [excludeError, setExcludeError] = useState<string | null>(null);
@@ -136,15 +199,20 @@ export default function ProfitabilityView() {
     const refresh = forceRefresh.current ? "&refresh=1" : "";
     forceRefresh.current = false;
     let cancelled = false;
+    const load = (a: string, b: string) =>
+      apiFetch(`/api/profitability/?from=${a}&to=${b}${refresh}`).then(async (res) => {
+        if (!res.ok) throw new Error("No se pudo cargar la rentabilidad.");
+        return res.json();
+      });
     // Standard fetch-on-change; `cancelled` drops a stale period's response.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
-    apiFetch(`/api/profitability/?from=${from}&to=${to}${refresh}`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error("No se pudo cargar la rentabilidad.");
-        const json = await res.json();
-        if (!cancelled) setData(json);
+    Promise.all([load(from, to), load(shiftMonth(from, -12), shiftMonth(to, -12))])
+      .then(([current, prior]) => {
+        if (cancelled) return;
+        setData(current);
+        setPrevious(prior);
       })
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
@@ -153,27 +221,25 @@ export default function ProfitabilityView() {
     };
   }, [from, to, isManagement, reload]);
 
-  // Each fact's value for a dimension: what it's filtered and grouped by.
-  const valueOf = useMemo(() => {
-    const products = data?.products ?? {};
-    return (f: Fact, dim: Dim): string => {
-      const product = f[3] === null ? null : products[f[3]];
-      switch (dim) {
-        case "zone":
-          return f[1];
-        case "category":
-          return product?.category ?? NO_PRODUCT;
-        case "brand":
-          return product?.brand ?? NO_PRODUCT;
-        case "product":
-          return f[3] === null ? NO_PRODUCT : String(f[3]);
-        case "client":
-          return String(f[2]);
-        case "month":
-          return f[0];
-      }
-    };
-  }, [data]);
+  // A fact's value for a dimension: what it's filtered and grouped by. Takes the product list
+  // of its own response, so last year's facts resolve too.
+  const valueOf = (f: Fact, dim: Dim, products: Record<string, Product>): string => {
+    const product = f[3] === null ? null : products[f[3]];
+    switch (dim) {
+      case "zone":
+        return f[1];
+      case "category":
+        return product?.category ?? NO_PRODUCT;
+      case "brand":
+        return product?.brand ?? NO_PRODUCT;
+      case "product":
+        return f[3] === null ? NO_PRODUCT : String(f[3]);
+      case "client":
+        return String(f[2]);
+      case "month":
+        return f[0];
+    }
+  };
 
   const labelOf = (dim: Dim, value: string) => {
     if (!data) return value;
@@ -195,11 +261,24 @@ export default function ProfitabilityView() {
     }
   };
 
-  const filtered = useMemo(() => {
-    if (!data) return [];
+  // The toggles decide which cost columns count.
+  const add = (s: Sums, f: Fact) => {
+    s.net += f[5];
+    s.cost += f[6] - (supplierDiscounts ? f[10] : 0);
+    s.commission += commissionMode === "pagadas" ? f[9] : f[8];
+    s.route += f[11];
+    s.kg += f[7];
+  };
+
+  const applyFilters = (d: Profitability | null) => {
+    if (!d) return [];
     const active = Object.entries(filters) as [Dim, string][];
-    return data.facts.filter((f) => active.every(([dim, v]) => valueOf(f, dim) === v));
-  }, [data, filters, valueOf]);
+    return d.facts.filter((f) => active.every(([dim, v]) => valueOf(f, dim, d.products) === v));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const filtered = useMemo(() => applyFilters(data), [data, filters]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const filteredPrevious = useMemo(() => applyFilters(previous), [previous, filters]);
 
   // Options for each filter come from the rows the *other* filters leave, so
   // picking Zona 2 only offers the lines Zona 2 actually sold.
@@ -208,48 +287,92 @@ export default function ProfitabilityView() {
     const others = (Object.entries(filters) as [Dim, string][]).filter(([d]) => d !== dim);
     const values = new Set<string>();
     for (const f of data.facts) {
-      if (others.every(([d, v]) => valueOf(f, d) === v)) values.add(valueOf(f, dim));
+      if (others.every(([d, v]) => valueOf(f, d, data.products) === v)) values.add(valueOf(f, dim, data.products));
     }
     const list = [...values].map((v) => ({ value: v, label: labelOf(dim, v) }));
     if (dim === "zone") return list.sort((a, b) => ZONE_ORDER.indexOf(a.value as Zone) - ZONE_ORDER.indexOf(b.value as Zone));
     return list.sort((a, b) => a.label.localeCompare(b.label, "es"));
   };
 
-  const totals = useMemo(() => {
-    const t = { net: 0, cost: 0, kg: 0, estimatedKg: 0 };
-    for (const f of filtered) {
-      t.net += f[5];
-      t.cost += f[6];
-      t.kg += f[7];
-      if (f[3] !== null && data?.products[f[3]]?.source === "estimado") t.estimatedKg += f[7];
+  // Client and product search: every one in the period, by name or code.
+  const searchOptions = useMemo(() => {
+    if (!data) return new Map<string, [Dim, string]>();
+    const map = new Map<string, [Dim, string]>();
+    for (const [id, name] of Object.entries(data.clients)) map.set(`Cliente: ${name}`, ["client", id]);
+    for (const [id, p] of Object.entries(data.products)) {
+      if (!data.excluded.includes(Number(id))) map.set(`Producto: ${p.code} · ${p.name}`, ["product", id]);
     }
-    return t;
-  }, [filtered, data]);
+    return map;
+  }, [data]);
+
+  const sumOf = (facts: Fact[]) => {
+    const s = emptySums();
+    for (const f of facts) add(s, f);
+    return s;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts]);
+  const estimatedKg = useMemo(
+    () => filtered.reduce((t, f) => t + (f[3] !== null && data?.products[f[3]]?.source === "estimado" ? f[7] : 0), 0),
+    [filtered, data],
+  );
 
   const groups = useMemo(() => {
+    if (!data) return [];
     const map = new Map<string, Group>();
     for (const f of filtered) {
-      const key = valueOf(f, groupBy);
-      const g = map.get(key) ?? { key, label: labelOf(groupBy, key), net: 0, cost: 0, kg: 0 };
-      g.net += f[5];
-      g.cost += f[6];
-      g.kg += f[7];
+      const key = valueOf(f, groupBy, data.products);
+      const g = map.get(key) ?? { key, label: labelOf(groupBy, key), ...emptySums() };
+      add(g, f);
       map.set(key, g);
     }
     // A product sold and fully returned nets to nothing; it only clutters the list.
-    return [...map.values()].filter((g) => Math.abs(g.net) >= 0.5 || Math.abs(g.cost) >= 0.5 || Math.abs(g.kg) >= 0.5);
-    // labelOf only reads `data`, already a dependency through valueOf.
+    return [...map.values()].filter((g) => [g.net, g.cost, g.kg, g.commission, g.route].some((v) => Math.abs(v) >= 0.5));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, groupBy, valueOf]);
+  }, [filtered, groupBy, data, commissionMode, supplierDiscounts]);
+
+  // Months of the period, for the chart: gross and net result per month.
+  const chart = useMemo(() => {
+    const byMonth = new Map<string, Sums>();
+    for (let m = from; m <= to; m = shiftMonth(m, 1)) byMonth.set(m, emptySums());
+    for (const f of filtered) {
+      const s = byMonth.get(f[0]);
+      if (s) add(s, f);
+    }
+    return [...byMonth.entries()].map(([m, s]) => ({ label: monthShort(m), bruta: gross(s), neta: result(s) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, from, to, commissionMode, supplierDiscounts]);
+
+  // The period's route costs by pool and component (not affected by the filters).
+  const pools = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const monthPools of Object.values(data?.route_costs ?? {})) {
+      for (const [pool, components] of Object.entries(monthPools)) {
+        out[pool] ??= {};
+        for (const [k, v] of Object.entries(components)) out[pool][k] = (out[pool][k] ?? 0) + v;
+      }
+    }
+    return out;
+  }, [data]);
+  const poolComponents = [...new Set(Object.values(pools).flatMap((c) => Object.keys(c)))].sort();
+  const unallocated = Object.values(data?.unallocated ?? {}).reduce(
+    (t, p) => t + Object.values(p).reduce((a, b) => a + b, 0),
+    0,
+  );
 
   const columns = useMemo(
     () => ({
       label: { value: (g: Group) => (groupBy === "month" ? g.key : g.label), first: "asc" as const },
       net: { value: (g: Group) => g.net, first: "desc" as const },
-      profit: { value: (g: Group) => g.net - g.cost, first: "desc" as const },
-      margin: { value: (g: Group) => (g.net ? (g.net - g.cost) / g.net : null), first: "desc" as const },
+      gross: { value: gross, first: "desc" as const },
+      commission: { value: (g: Group) => g.commission, first: "desc" as const },
+      route: { value: (g: Group) => g.route, first: "desc" as const },
+      result: { value: result, first: "desc" as const },
+      margin: { value: (g: Group) => (g.net ? result(g) / g.net : null), first: "desc" as const },
       kg: { value: (g: Group) => g.kg, first: "desc" as const },
-      perKg: { value: (g: Group) => (g.kg >= 1 ? (g.net - g.cost) / g.kg : null), first: "desc" as const },
+      perKg: { value: (g: Group) => (g.kg >= 1 ? result(g) / g.kg : null), first: "desc" as const },
     }),
     [groupBy],
   );
@@ -277,16 +400,46 @@ export default function ProfitabilityView() {
     );
   }
 
-  const profit = totals.net - totals.cost;
   const activeFilters = Object.entries(filters) as [Exclude<Dim, "month">, string][];
+  const sortHead = (label: string, column: keyof typeof columns, className?: string) => (
+    <SortableHead
+      label={label}
+      column={column}
+      align={column === "label" ? "left" : "right"}
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={toggle}
+      className={className}
+    />
+  );
+  const money = (value: number, className?: string) => (
+    <TableCell className={cn("text-right tabular-nums", value < 0 && "text-red-700", className)}>{formatMoney(value)}</TableCell>
+  );
+  const colCount = groupBy === "product" ? 10 : 9;
+  const sumRow = (s: Sums) => (
+    <>
+      {money(s.net)}
+      {money(gross(s), HIDE_BELOW_SM)}
+      {money(s.commission, HIDE_BELOW_LG)}
+      {money(s.route, HIDE_BELOW_LG)}
+      {money(result(s))}
+      <TableCell className={cn("text-right tabular-nums", result(s) < 0 && "text-red-700")}>
+        {s.net ? percent(result(s) / s.net) : "-"}
+      </TableCell>
+      <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>{s.kg ? tonnes(s.kg) : "-"}</TableCell>
+      <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD, result(s) < 0 && "text-red-700")}>
+        {s.kg >= 1 ? formatMoney(result(s) / s.kg) : "-"}
+      </TableCell>
+    </>
+  );
 
   return (
     <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-gray-900">Rentabilidad</h1>
         <p className="text-sm text-gray-500">
-          Utilidad bruta (venta sin IVA menos costo del ERP) por zona, línea, marca, producto y cliente. Mismas
-          facturas que Ventas y Comisiones, sin anticipos; las devoluciones y notas de crédito se descuentan en su mes.
+          Utilidad por zona, línea, marca, producto y cliente: venta sin IVA, menos costo del ERP, comisiones y gastos
+          de ruta. Mismas facturas que Ventas y Comisiones, sin anticipos.
         </p>
       </div>
 
@@ -314,6 +467,26 @@ export default function ProfitabilityView() {
           <Scale className="w-4 h-4" aria-hidden />
           Pesos
         </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500">Comisiones</span>
+          <Tabs value={commissionMode} onValueChange={(v) => setCommissionMode(v as CommissionMode)}>
+            <TabsList className="h-8">
+              <TabsTrigger value="posibles" className="text-xs">
+                Completas
+              </TabsTrigger>
+              <TabsTrigger value="pagadas" className="text-xs">
+                Pagadas
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <label className="flex items-center gap-2">
+          <Switch checked={supplierDiscounts} onCheckedChange={setSupplierDiscounts} />
+          <span>Restar notas de crédito de proveedor (Bionat) al costo</span>
+        </label>
       </div>
 
       {error && <p className="text-sm text-red-700">{error}</p>}
@@ -344,6 +517,29 @@ export default function ProfitabilityView() {
                 ))}
               </select>
             ))}
+            <Input
+              list="rentabilidad-search"
+              value={search}
+              placeholder="Buscar cliente o producto"
+              aria-label="Buscar cliente o producto"
+              className="h-9 w-64"
+              onChange={(e) => {
+                const match = searchOptions.get(e.target.value);
+                if (match) {
+                  const [dim, id] = match;
+                  setFilters((f) => ({ ...f, [dim]: id }));
+                  setGroupBy(dim === "client" ? "product" : "client");
+                  setSearch("");
+                } else {
+                  setSearch(e.target.value);
+                }
+              }}
+            />
+            <datalist id="rentabilidad-search">
+              {[...searchOptions.keys()].map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
             {activeFilters
               .filter(([dim]) => dim === "product" || dim === "client")
               .map(([dim, value]) => (
@@ -369,13 +565,50 @@ export default function ProfitabilityView() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <Tile label="Ventas" value={formatMoney(totals.net)} />
-            <Tile label="Utilidad bruta" value={formatMoney(profit)} />
-            <Tile label="Margen bruto" value={totals.net ? percent(profit / totals.net) : "-"} />
-            <Tile label="Peso vendido" value={tonnes(totals.kg)} />
-            <Tile label="Utilidad por kg" value={totals.kg >= 1 ? formatMoney(profit / totals.kg) : "-"} />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Tile label="Ventas" value={formatMoney(totals.net)} change={change(totals.net, totalsPrevious.net)} />
+            <Tile
+              label="Utilidad bruta"
+              value={formatMoney(gross(totals))}
+              sub={totals.net ? `Margen ${percent(gross(totals) / totals.net)}` : undefined}
+              change={change(gross(totals), gross(totalsPrevious))}
+            />
+            <Tile
+              label="Comisiones y gastos de ruta"
+              value={formatMoney(totals.commission + totals.route)}
+              sub={`${formatMoney(totals.commission)} comisiones · ${formatMoney(totals.route)} ruta`}
+            />
+            <Tile
+              label="Utilidad neta"
+              value={formatMoney(result(totals))}
+              sub={
+                totals.net
+                  ? `Margen ${percent(result(totals) / totals.net)}${totals.kg >= 1 ? ` · ${formatMoney(result(totals) / totals.kg)} por kg` : ""}`
+                  : undefined
+              }
+              change={change(result(totals), result(totalsPrevious))}
+            />
           </div>
+
+          <Card>
+            <CardHeader className="p-3 sm:p-4">
+              <CardTitle className="text-base">Utilidad por mes</CardTitle>
+            </CardHeader>
+            <div className="h-56 px-2 pb-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
+                  <YAxis tickFormatter={compactMoney} tickLine={false} axisLine={false} width={56} tick={{ fontSize: 12, fill: "#6b7280" }} />
+                  <Tooltip formatter={(value, name) => [formatMoney(Number(value)), name]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                  <Legend iconType="plainline" wrapperStyle={{ fontSize: 12 }} />
+                  <ReferenceLine y={0} stroke="#94a3b8" />
+                  <Line name="Utilidad bruta" dataKey="bruta" stroke={COLOR_GROSS} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                  <Line name="Utilidad neta" dataKey="neta" stroke={COLOR_NET} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
           <Card>
             <CardHeader className="p-3 sm:p-4 gap-3">
@@ -389,37 +622,35 @@ export default function ProfitabilityView() {
                 </TabsList>
               </Tabs>
               {groupBy !== "month" && (
-                <CardDescription>Toque una fila para ver solo {DIMS.find((d) => d.key === groupBy)!.one}.</CardDescription>
+                <CardDescription>
+                  Toque una fila para ver solo {DIMS.find((d) => d.key === groupBy)!.one}.
+                  {groupBy === "client" && " El nombre abre sus facturas."}
+                </CardDescription>
               )}
             </CardHeader>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <SortableHead label={DIMS.find((d) => d.key === groupBy)!.label} column="label" sortKey={sortKey} sortDir={sortDir} onSort={toggle} />
-                  <SortableHead label="Ventas" column="net" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} />
-                  <SortableHead label="Utilidad bruta" column="profit" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} className={HIDE_BELOW_SM} />
-                  <SortableHead label="Margen" column="margin" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} />
-                  <SortableHead label="Peso" column="kg" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} className={HIDE_BELOW_MD} />
-                  <SortableHead label="Utilidad / kg" column="perKg" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggle} className={HIDE_BELOW_MD} />
+                  {sortHead(DIMS.find((d) => d.key === groupBy)!.label, "label")}
+                  {sortHead("Ventas", "net")}
+                  {sortHead("Utilidad bruta", "gross", HIDE_BELOW_SM)}
+                  {sortHead("Comisiones", "commission", HIDE_BELOW_LG)}
+                  {sortHead("Gastos de ruta", "route", HIDE_BELOW_LG)}
+                  {sortHead("Utilidad neta", "result")}
+                  {sortHead("Margen", "margin")}
+                  {sortHead("Peso", "kg", HIDE_BELOW_MD)}
+                  {sortHead("Neta / kg", "perKg", HIDE_BELOW_MD)}
                   {groupBy === "product" && <TableHead className="w-px" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.length === 0 && <EmptyRow colSpan={groupBy === "product" ? 7 : 6}>Sin ventas con estos filtros.</EmptyRow>}
+                {sorted.length === 0 && <EmptyRow colSpan={colCount}>Sin ventas con estos filtros.</EmptyRow>}
                 {sorted.map((g) => (
                   <TableRow key={g.key} className={cn(groupBy !== "month" && "cursor-pointer")} onClick={() => drill(g)}>
-                    <TableCell className="max-w-72 truncate" title={g.label}>
-                      {g.label}
+                    <TableCell className="max-w-64 truncate" title={g.label}>
+                      {groupBy === "client" ? <ClientLink clientId={Number(g.key)} label={g.label} /> : g.label}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(g.net)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM)}>{formatMoney(g.net - g.cost)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", g.net - g.cost < 0 && "text-red-700")}>
-                      {g.net ? percent((g.net - g.cost) / g.net) : "-"}
-                    </TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>{g.kg ? tonnes(g.kg) : "-"}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>
-                      {g.kg >= 1 ? formatMoney((g.net - g.cost) / g.kg) : "-"}
-                    </TableCell>
+                    {sumRow(g)}
                     {groupBy === "product" && (
                       <TableCell className="py-0 text-right">
                         {g.key !== NO_PRODUCT && (
@@ -445,16 +676,52 @@ export default function ProfitabilityView() {
                 {sorted.length > 1 && (
                   <TableRow className="font-medium hover:bg-transparent">
                     <TableCell>Total</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(totals.net)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM)}>{formatMoney(profit)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{totals.net ? percent(profit / totals.net) : "-"}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>{tonnes(totals.kg)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>
-                      {totals.kg >= 1 ? formatMoney(profit / totals.kg) : "-"}
-                    </TableCell>
+                    {sumRow(totals)}
                     {groupBy === "product" && <TableCell />}
                   </TableRow>
                 )}
+              </TableBody>
+            </Table>
+          </Card>
+
+          <Card>
+            <CardHeader className="p-3 sm:p-4">
+              <CardTitle className="text-base">Gastos de ruta del periodo</CardTitle>
+              <CardDescription>
+                Todo el periodo, sin filtros. Cada ruta se reparte entre los kg de su zona, el almacén entre todos los
+                kg vendidos y los servicios entre las ventas de servicio.
+              </CardDescription>
+            </CardHeader>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Concepto</TableHead>
+                  {Object.keys(POOL_LABELS).map((p) => (
+                    <TableHead key={p} className="text-right">
+                      {POOL_LABELS[p]}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {poolComponents.map((c) => (
+                  <TableRow key={c}>
+                    <TableCell>{c}</TableCell>
+                    {Object.keys(POOL_LABELS).map((p) => (
+                      <TableCell key={p} className="text-right tabular-nums">
+                        {pools[p]?.[c] ? formatMoney(pools[p][c]) : "-"}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+                <TableRow className="font-medium hover:bg-transparent">
+                  <TableCell>Total</TableCell>
+                  {Object.keys(POOL_LABELS).map((p) => (
+                    <TableCell key={p} className="text-right tabular-nums">
+                      {formatMoney(Object.values(pools[p] ?? {}).reduce((a, b) => a + b, 0))}
+                    </TableCell>
+                  ))}
+                </TableRow>
               </TableBody>
             </Table>
           </Card>
@@ -471,6 +738,22 @@ export default function ProfitabilityView() {
               </li>
             )}
             <li>
+              Comisiones completas: la tasa base de cada línea sobre cada factura del periodo, sin descuento por atraso.
+              Pagadas: lo que calculó Comisiones, en el mes en que se pagó.
+            </li>
+            <li>
+              Notas de crédito de proveedor: los descuentos sobre compras de Bionat (3% por pronto pago y otros) del mes
+              contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
+            </li>
+            <li>
+              Combustible de Zona 2, almacén y servicios: kilómetros del GPS
+              {data.gps_since ? ` desde el ${formatDay(data.gps_since)}` : ""}; antes no hay registro y esos meses no lo
+              incluyen. Zona 1 usa la cuenta de gas LP, que hasta agosto de 2026 incluía también la F-350.
+            </li>
+            {unallocated >= 1 && (
+              <li>{formatMoney(unallocated)} de gastos de ruta no se repartieron: su zona no tuvo ventas ese mes.</li>
+            )}
+            <li>
               Los anticipos no cuentan como venta: la factura del anticipo y la nota de crédito que lo aplica se dejan
               fuera, y la factura final cuenta completa en su mes. Por eso algunos meses difieren de Ventas.
             </li>
@@ -478,10 +761,13 @@ export default function ProfitabilityView() {
               Las demás notas de crédito no traen producto en el ERP: cada una se reparte entre las partidas de la factura
               a la que se aplicó, en proporción a su importe.
             </li>
-            <li>Los servicios no tienen costo en el ERP, por eso su margen sale al 100%.</li>
+            <li>
+              Los servicios no tienen costo en el ERP; su costo (técnicos y sus vehículos) entra en los gastos de ruta de
+              Servicios.
+            </li>
             <li>
               El peso se toma del nombre del producto, del catálogo GEA o de lo capturado en Pesos; el{" "}
-              {totals.kg ? percent(totals.estimatedKg / totals.kg) : "0%"} de este peso es estimado.
+              {totals.kg ? percent(estimatedKg / totals.kg) : "0%"} de este peso es estimado.
             </li>
           </ul>
         </>

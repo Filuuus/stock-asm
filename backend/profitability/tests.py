@@ -2,7 +2,10 @@
 
 from django.test import SimpleTestCase
 
-from .services import allocate_credit_notes, build_facts, is_advance_application, product_info
+from .services import (
+    allocate_credit_notes, allocate_route_costs, allocate_supplier_discounts, build_facts, is_advance_application,
+    product_info, route_costs,
+)
 from .weights import DEFAULT_KG, estimate_kg
 
 
@@ -40,14 +43,27 @@ class AllocateCreditNotesTests(SimpleTestCase):
 
 
 class BuildFactsTests(SimpleTestCase):
-    def test_nets_returns_and_credits_into_one_row_with_kg(self):
+    def test_nets_returns_credits_and_commissions_into_one_row(self):
         sales = [
             [4, 2026, 3, 1, 7, 100, 10, 1000.0, 800.0],
-            [5, 2026, 3, 1, 7, 100, 2, 200.0, 160.0],  # return
+            [5, 2026, 3, 1, 7, 100, 2, 200.0, 160.0],  # return: takes its commission back too
         ]
-        credits = [(2026, 3, 1, 7, 100, -50.0)]
-        facts = build_facts(sales, credits, lambda agent, client: f'Z{agent}', lambda product: 25.0)
-        self.assertEqual(facts, [['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0]])
+        credits = [(2026, 3, 1, 7, 100, -50.0)]  # no commission on credit notes
+        paid = [('2026-03', 'Z1', 7, 100, 12.5), ('2026-04', 'Z1', 7, 100, 3.0)]  # paid month, not invoice month
+        facts = build_facts(sales, credits, paid, lambda agent, client: f'Z{agent}', lambda product: 25.0,
+                            lambda zone, client, product: 0.02)
+        self.assertEqual(facts, [
+            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0],
+            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0],
+        ])
+
+
+class SupplierDiscountTests(SimpleTestCase):
+    def test_spreads_each_month_over_its_products_cost(self):
+        row = lambda month, product, cost: [month, 'Z1', 7, product, 0, 0, cost, 0, 0, 0, 0.0, 0.0]
+        facts = [row('2026-03', 1, 300.0), row('2026-03', 1, 100.0), row('2026-03', 2, 500.0), row('2026-04', 1, 50.0)]
+        allocate_supplier_discounts(facts, {'2026-03': 40.0}, lambda product: product == 1)
+        self.assertEqual([f[10] for f in facts], [30.0, 10.0, 0.0, 0.0])
 
 
 class ProductInfoTests(SimpleTestCase):
@@ -70,3 +86,33 @@ class AdvanceApplicationTests(SimpleTestCase):
         self.assertFalse(is_advance_application('B 18272 CLIENTE TUVO PROBLEMAS DE CALIDAD\r\nAPLICA F-B18272', advances))
         self.assertFalse(is_advance_application('F 20000 DE LA F-17368 APLICA F-20000', advances))  # not an advance
         self.assertFalse(is_advance_application(None, advances))
+
+
+class RouteCostTests(SimpleTestCase):
+    def test_pools_by_component(self):
+        vehicles = [
+            {'pool': 'ZONA1', 'maintenance_account': '511', 'uses_lp': True, 'gps_imei': 'a',
+             'km_per_liter': 0, 'price_per_liter': 0, 'annual_insurance': 1200.0},
+            {'pool': 'ZONA2', 'maintenance_account': '', 'uses_lp': False, 'gps_imei': 'b',
+             'km_per_liter': 8.0, 'price_per_liter': 20.0, 'annual_insurance': 0.0},
+        ]
+        costs = route_costs(
+            ['2026-10'], {1: 'ZONA1', 2: 'ZONA2'}, vehicles, [('ALMACEN', 'Renta', 25000.0)],
+            {('2026-10', 1): 9000.0, ('2026-10', 2): 8000.0},
+            {('2026-10', '511'): 500.0, ('2026-10', '500503021'): 3000.0},
+            {('2026-10', 'a'): 999.0, ('2026-10', 'b'): 400.0},  # LP truck ignores its km
+        )
+        self.assertEqual(costs, {'2026-10': {
+            'ZONA1': {'Sueldos': 9000.0, 'Mantenimiento': 500.0, 'Seguros': 100.0, 'Combustible': 3000.0},
+            'ZONA2': {'Sueldos': 8000.0, 'Combustible': 1000.0},
+            'ALMACEN': {'Renta': 25000.0},
+        }})
+
+    def test_route_by_own_kg_warehouse_by_all_kg_services_by_sales(self):
+        row = lambda zone, product, net, kg: ['2026-10', zone, 7, product, 0, net, 0, kg, 0, 0, 0.0, 0.0]
+        facts = [row('ZONA1', 1, 1000.0, 75.0), row('ZONA2', 1, 1000.0, 25.0), row('SERVICIOS', 9, 400.0, 0.0)]
+        costs = {'2026-10': {'ZONA1': {'x': 300.0}, 'ALMACEN': {'x': 100.0}, 'SERVICIOS': {'x': 40.0},
+                             'ZONA2': {'x': 10.0}}, '2026-11': {'ZONA1': {'x': 5.0}}}
+        unallocated = allocate_route_costs(facts, costs, lambda product: product == 9)
+        self.assertEqual([f[11] for f in facts], [375.0, 35.0, 40.0])
+        self.assertEqual(unallocated, {'2026-11': {'ZONA1': 5.0}})
