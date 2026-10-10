@@ -21,6 +21,10 @@ TITLE_RE = re.compile(rf"^({'|'.join(MONTHS)})\s+(\d{{4}})$")
 # Sheet spellings of the same vehicle.
 ALIASES = {'ALMACEN': 'MONTACARGAS', 'FIAT3': 'FIAT', 'SEATTARRACO': 'TARRACO'}
 HEADER_MARKERS = {'HILUX1', 'TARRACO'}
+# Maintenance rows that are really part of buying the vehicle: the Isuzu 4.5 came as a bare chassis and
+# its custom bed was logged as "CARROSERIA" (Jul 2026; the ledger books it as a fixed asset). Exact
+# concept only, so a repair that mentions the body still counts.
+CAPITAL_CONCEPTS = {'CARROCERIA', 'CARROSERIA'}
 
 
 def vehicle_key(name):
@@ -59,6 +63,8 @@ def parse_maintenance(rows, year, before):
         if len(row) < 6:
             continue
         day, vehicle, amount = row[0], row[1], row[5]
+        if len(row) > 6 and str(row[6] or '').strip().upper() in CAPITAL_CONCEPTS:
+            continue
         if not isinstance(day, datetime) or not vehicle:
             continue
         month = f'{day:%Y-%m}'

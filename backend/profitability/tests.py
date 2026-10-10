@@ -151,10 +151,14 @@ class VehicleReportTests(SimpleTestCase):
             (datetime(2026, 2, 3), 'F 350', None, None, None, '2050', None),
             (datetime(2026, 2, 13), 'HILUX 1', None, None, None, '8534.48', None),
             (datetime(2026, 2, 18), 'HILUX 1', None, None, None, '1650', None),
+            (datetime(2026, 2, 22), 'ISUZU', None, None, None, '68534.48', 'CARROSERIA'),  # the new truck's bed
+            (datetime(2026, 2, 23), 'ISUZU', None, None, None, '500', 'REPARACION DE CARROCERIA'),
             (datetime(2025, 12, 18), 'MONTACARGAS', None, None, None, '2311.91', None),  # belongs to last year's file
             (None, None, None, None, 'TOTAL', '12234.48', None),
         ]
-        self.assertEqual(parse_maintenance(rows, 2026, '2026-10'), {('2026-02', 'F350'): 2050.0, ('2026-02', 'HILUX1'): 10184.48})
+        self.assertEqual(parse_maintenance(rows, 2026, '2026-10'), {
+            ('2026-02', 'F350'): 2050.0, ('2026-02', 'HILUX1'): 10184.48, ('2026-02', 'ISUZU'): 500.0,
+        })
 
 
 class SaveRouteSetupTests(TestCase):
