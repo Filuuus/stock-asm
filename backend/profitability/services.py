@@ -30,8 +30,10 @@ Route costs (the net result) come from app config (PoolEmployee / PoolVehicle / 
 and land in pools, each spread over what it served (see POOL_CHOICES): payroll from Contpaqi
 Nóminas (earnings + employer contributions, no PTU - same rule as the Bionat report, reproduces
 it to the cent), maintenance from each vehicle's ledger account, insurance as 1/12 of the yearly
-premium, fuel from the ledger's GAS LP account for the LP truck and from GPS km (fleet app,
-only since 2026-10-02) for the rest, plus fixed monthly amounts like the warehouse rent. Punto de Venta invoices go to the route that owns the client (PuntoVentaClientZone),
+premium, plus fixed monthly amounts like the warehouse rent. Fuel and maintenance come from the
+accountant's workbook (VehicleMonthlyCost, imported) for every month it covers - management's
+ground truth; for later months maintenance falls back to each vehicle's ledger account and fuel to
+the ledger's GAS LP account for the LP truck and GPS km (fleet app, since 2026-10-02) for the rest. Punto de Venta invoices go to the route that owns the client (PuntoVentaClientZone),
 as in the Bionat report. Read-only, like every ERP access in this project.
 
 The ERP rows are cached per period; zones, categories and kg are worked out on each request,
@@ -63,7 +65,7 @@ from commissions.services import (
 
 from fleet.models import VehicleDayKm
 
-from .models import ExcludedProduct, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight
+from .models import ExcludedProduct, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
 from .weights import estimate_kg, load_gea
 
 CACHE_KEY = 'profitability_v4_{}_{}'  # bump the version when the cached shape changes
@@ -387,26 +389,33 @@ def allocate_supplier_discounts(facts, discounts, applies_to):
     return facts
 
 
-def route_costs(months, employees, vehicles, monthly_costs, payroll, ledger, km):
+def route_costs(months, employees, vehicles, monthly_costs, payroll, ledger, km, workbook):
     """{month: {pool: {component: amount}}}. `employees` {id: pool}; `vehicles` dicts with pool,
-    maintenance_account, uses_lp, gps_imei, km_per_liter, price_per_liter, annual_insurance;
-    `monthly_costs` [(pool, label, amount)]; `km` {(month, imei): km}."""
+    sheet_name, maintenance_account, uses_lp, gps_imei, km_per_liter, price_per_liter,
+    annual_insurance; `monthly_costs` [(pool, label, amount)]; `km` {(month, imei): km};
+    `workbook` {(month, sheet name, 'fuel' | 'maintenance'): amount} - a month with any fuel entry
+    there takes both from it, for every vehicle it names."""
+    covered = {m for m, _, kind in workbook if kind == 'fuel'}
     out = {m: defaultdict(lambda: defaultdict(float)) for m in months}
     for m in months:
         for employee, pool in employees.items():
             out[m][pool]['Sueldos'] += payroll.get((m, employee), 0.0)
         for v in vehicles:
             costs = out[m][v['pool']]
+            costs['Seguros'] += v['annual_insurance'] / 12
+            if m in covered and v['sheet_name']:
+                costs['Combustible'] += workbook.get((m, v['sheet_name'], 'fuel'), 0.0)
+                costs['Mantenimiento'] += workbook.get((m, v['sheet_name'], 'maintenance'), 0.0)
+                continue
             if v['maintenance_account']:
                 costs['Mantenimiento'] += ledger.get((m, v['maintenance_account']), 0.0)
-            costs['Seguros'] += v['annual_insurance'] / 12
             if v['uses_lp']:
                 costs['Combustible'] += ledger.get((m, LP_FUEL_ACCOUNT), 0.0)
             elif v['gps_imei'] and v['km_per_liter'] and v['price_per_liter']:
                 costs['Combustible'] += km.get((m, v['gps_imei']), 0.0) / v['km_per_liter'] * v['price_per_liter']
         for pool, label, amount in monthly_costs:
             out[m][pool][label] += amount
-    return {m: {pool: {k: round(v, 2) for k, v in c.items() if v} for pool, c in pools.items()}
+    return {m: {pool: {k: round(v, 2) for k, v in c.items() if v} for pool, c in pools.items() if any(c.values())}
             for m, pools in out.items()}
 
 
@@ -494,7 +503,7 @@ def calculate_profitability(date_from, date_to, refresh=False):
         months.append(f'{d:%Y-%m}')
         d = date(d.year + d.month // 12, d.month % 12 + 1, 1)
     vehicles = [{
-        'pool': v.pool, 'maintenance_account': v.maintenance_account, 'uses_lp': v.uses_lp,
+        'pool': v.pool, 'sheet_name': v.sheet_name, 'maintenance_account': v.maintenance_account, 'uses_lp': v.uses_lp,
         'gps_imei': v.gps_imei, 'km_per_liter': float(v.km_per_liter or 0),
         'price_per_liter': float(v.price_per_liter or 0), 'annual_insurance': float(v.annual_insurance),
     } for v in PoolVehicle.objects.all()]
@@ -506,6 +515,8 @@ def calculate_profitability(date_from, date_to, refresh=False):
         months, dict(PoolEmployee.objects.values_list('employee_id', 'pool')), vehicles,
         [(c.pool, c.label, float(c.monthly_amount)) for c in PoolMonthlyCost.objects.all()],
         data['payroll'], data['vehicle_ledger'], km,
+        {(c.month, c.vehicle, c.kind): float(c.amount)
+         for c in VehicleMonthlyCost.objects.filter(month__gte=months[0], month__lte=months[-1])},
     )
     unallocated = allocate_route_costs(facts, costs, lambda pid: pid in products and products[pid]['category'] == 'S')
     first_gps = VehicleDayKm.objects.order_by('day').values_list('day', flat=True).first()
@@ -516,6 +527,7 @@ def calculate_profitability(date_from, date_to, refresh=False):
         'route_costs': costs,
         'unallocated': unallocated,
         'gps_since': first_gps.isoformat() if first_gps else None,
+        'workbook_through': VehicleMonthlyCost.objects.order_by('-month').values_list('month', flat=True).first(),
         'products': {pid: p for pid, p in products.items() if pid in used_products},
         'clients': {cid: name for cid, name in data['clients'].items() if cid in used_clients},
     }

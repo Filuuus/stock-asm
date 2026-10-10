@@ -45,11 +45,15 @@ class PoolEmployee(models.Model):
 
 
 class PoolVehicle(models.Model):
-    """A vehicle whose costs go to a pool: maintenance from its own ledger account, insurance as
-    1/12 of the yearly premium, and fuel either from the ledger's GAS LP account (the one LP truck)
-    or estimated from GPS km: km / km_per_liter * price_per_liter."""
+    """A vehicle whose costs go to a pool. Fuel and maintenance come from the accountant's workbook
+    for the months it covers; otherwise maintenance from its own ledger account and fuel from the
+    ledger's GAS LP account (the one LP truck) or estimated from GPS km: km / km_per_liter *
+    price_per_liter. Insurance is 1/12 of the yearly premium."""
     name = models.CharField(max_length=40)
     pool = models.CharField(max_length=10, choices=POOL_CHOICES)
+    # Its name in the accountant's workbook, normalized ('HILUX1', 'MONTACARGAS'): months the workbook
+    # covers take its fuel and maintenance from there instead of the ledger and GPS.
+    sheet_name = models.CharField(max_length=40, blank=True)
     maintenance_account = models.CharField(max_length=20, blank=True, help_text='Cuenta contable, p. ej. 500511010')
     uses_lp = models.BooleanField(default=False, help_text='Su combustible es la cuenta GAS LP del libro')
     # Local only: IMEIs are kept out of the repo (see fleet/README.md).
@@ -70,3 +74,16 @@ class PoolMonthlyCost(models.Model):
 
     def __str__(self):
         return f'{self.label} -> {self.pool}'
+
+
+class VehicleMonthlyCost(models.Model):
+    """A vehicle's fuel or maintenance for one month, imported from the accountant's workbook
+    (import_vehicle_reports). `vehicle` is the sheet's name normalized (vehicle_reports.vehicle_key)."""
+    KIND_CHOICES = [('fuel', 'Combustible'), ('maintenance', 'Mantenimiento')]
+    vehicle = models.CharField(max_length=40)
+    month = models.CharField(max_length=7)  # 'YYYY-MM'
+    kind = models.CharField(max_length=12, choices=KIND_CHOICES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['vehicle', 'month', 'kind'], name='unique_vehicle_month_cost')]

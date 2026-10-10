@@ -1,7 +1,10 @@
 """Tests for the profitability pure functions, on made-up data."""
 
+from datetime import datetime
+
 from django.test import SimpleTestCase
 
+from .vehicle_reports import parse_fuel, parse_maintenance
 from .services import (
     allocate_credit_notes, allocate_route_costs, allocate_supplier_discounts, build_facts, is_advance_application,
     product_info, route_costs,
@@ -91,22 +94,30 @@ class AdvanceApplicationTests(SimpleTestCase):
 class RouteCostTests(SimpleTestCase):
     def test_pools_by_component(self):
         vehicles = [
-            {'pool': 'ZONA1', 'maintenance_account': '511', 'uses_lp': True, 'gps_imei': 'a',
+            {'pool': 'ZONA1', 'sheet_name': 'HILUX1', 'maintenance_account': '511', 'uses_lp': True, 'gps_imei': 'a',
              'km_per_liter': 0, 'price_per_liter': 0, 'annual_insurance': 1200.0},
-            {'pool': 'ZONA2', 'maintenance_account': '', 'uses_lp': False, 'gps_imei': 'b',
+            {'pool': 'ZONA2', 'sheet_name': 'HILUX2', 'maintenance_account': '', 'uses_lp': False, 'gps_imei': 'b',
              'km_per_liter': 8.0, 'price_per_liter': 20.0, 'annual_insurance': 0.0},
         ]
         costs = route_costs(
-            ['2026-10'], {1: 'ZONA1', 2: 'ZONA2'}, vehicles, [('ALMACEN', 'Renta', 25000.0)],
+            ['2026-09', '2026-10'], {1: 'ZONA1', 2: 'ZONA2'}, vehicles, [('ALMACEN', 'Renta', 25000.0)],
             {('2026-10', 1): 9000.0, ('2026-10', 2): 8000.0},
-            {('2026-10', '511'): 500.0, ('2026-10', '500503021'): 3000.0},
+            {('2026-09', '511'): 777.0, ('2026-10', '511'): 500.0, ('2026-10', '500503021'): 3000.0},
             {('2026-10', 'a'): 999.0, ('2026-10', 'b'): 400.0},  # LP truck ignores its km
+            # September is in the workbook: its figures replace the ledger and GPS for the vehicles it names.
+            {('2026-09', 'HILUX1', 'fuel'): 4000.0, ('2026-09', 'HILUX1', 'maintenance'): 250.0},
         )
-        self.assertEqual(costs, {'2026-10': {
-            'ZONA1': {'Sueldos': 9000.0, 'Mantenimiento': 500.0, 'Seguros': 100.0, 'Combustible': 3000.0},
-            'ZONA2': {'Sueldos': 8000.0, 'Combustible': 1000.0},
-            'ALMACEN': {'Renta': 25000.0},
-        }})
+        self.assertEqual(costs, {
+            '2026-09': {
+                'ZONA1': {'Seguros': 100.0, 'Combustible': 4000.0, 'Mantenimiento': 250.0},
+                'ALMACEN': {'Renta': 25000.0},
+            },
+            '2026-10': {
+                'ZONA1': {'Sueldos': 9000.0, 'Mantenimiento': 500.0, 'Seguros': 100.0, 'Combustible': 3000.0},
+                'ZONA2': {'Sueldos': 8000.0, 'Combustible': 1000.0},
+                'ALMACEN': {'Renta': 25000.0},
+            },
+        })
 
     def test_route_by_own_kg_warehouse_by_all_kg_services_by_sales(self):
         row = lambda zone, product, net, kg: ['2026-10', zone, 7, product, 0, net, 0, kg, 0, 0, 0.0, 0.0]
@@ -116,3 +127,29 @@ class RouteCostTests(SimpleTestCase):
         unallocated = allocate_route_costs(facts, costs, lambda product: product == 9)
         self.assertEqual([f[11] for f in facts], [375.0, 35.0, 40.0])
         self.assertEqual(unallocated, {'2026-11': {'ZONA1': 5.0}})
+
+
+class VehicleReportTests(SimpleTestCase):
+    def test_fuel_reads_each_month_total_by_its_own_header(self):
+        rows = [
+            ('ENERO 2026',), (None, 'JUAN JOSE', 'RAUL'), (None, 'HILUX 1', 'ALMACEN'),
+            ('SEMANA 01', 10, 5), ('TOTAL SEMANAL', 10, 5), ('TOTAL ', 100.5, 7),
+            ('FEBRERO 2026',), (None, 'F350', 'HILUX 1'), ('TOTAL', 3, None),
+            ('NOVIEMBRE 2025',), (None, 'HILUX 1'), ('TOTAL', 999),  # last year's copied template
+            ('MARZO 2026',), (None, 'HILUX 1'), ('TOTAL', 50),  # current month: half filled
+        ]
+        self.assertEqual(parse_fuel(rows, 2026, '2026-03'), {
+            ('2026-01', 'HILUX1'): 100.5, ('2026-01', 'MONTACARGAS'): 7.0,
+            ('2026-02', 'F350'): 3.0, ('2026-02', 'HILUX1'): 0.0,
+        })
+
+    def test_maintenance_by_row_date(self):
+        rows = [
+            ('FEBRERO 2024',), ('FECHA', 'VEHICULO', 'PLACAS', 'CHOFER', 'PROVEEDOR', 'IMPORTE', 'CONCEPTO'),
+            (datetime(2026, 2, 3), 'F 350', None, None, None, '2050', None),
+            (datetime(2026, 2, 13), 'HILUX 1', None, None, None, '8534.48', None),
+            (datetime(2026, 2, 18), 'HILUX 1', None, None, None, '1650', None),
+            (datetime(2025, 12, 18), 'MONTACARGAS', None, None, None, '2311.91', None),  # belongs to last year's file
+            (None, None, None, None, 'TOTAL', '12234.48', None),
+        ]
+        self.assertEqual(parse_maintenance(rows, 2026, '2026-10'), {('2026-02', 'F350'): 2050.0, ('2026-02', 'HILUX1'): 10184.48})

@@ -58,6 +58,8 @@ next-env.d.ts
 *.xlsx*
 *.jpeg
 *.jpg
+# Owner's reference images in the repo root (plates, policy numbers)
+/*.png
 
 # GEA portal data (third-party, not for the public repo)
 backend/exports/gea/

@@ -47,6 +47,7 @@ interface Profitability {
   route_costs: Record<string, Pools>; // month -> pools
   unallocated: Record<string, Record<string, number>>; // month -> pool -> amount with nothing to land on
   gps_since: string | null;
+  workbook_through: string | null; // last month of the accountant's vehicle workbook imported
 }
 
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
@@ -746,9 +747,11 @@ export default function ProfitabilityView() {
               contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
             </li>
             <li>
-              Combustible de Zona 2, almacén y servicios: kilómetros del GPS
-              {data.gps_since ? ` desde el ${formatDay(data.gps_since)}` : ""}; antes no hay registro y esos meses no lo
-              incluyen. Zona 1 usa la cuenta de gas LP, que hasta agosto de 2026 incluía también la F-350.
+              Combustible y mantenimiento de los vehículos: del reporte mensual de Contabilidad
+              {data.workbook_through ? ` (hasta ${formatMonth(data.workbook_through).toLowerCase()})` : ""}. Los meses
+              que aún no están en el reporte usan el libro contable para mantenimiento y gas LP, y los kilómetros del GPS
+              {data.gps_since ? ` (desde el ${formatDay(data.gps_since)})` : ""} por rendimiento y precio para el resto
+              del combustible.
             </li>
             {unallocated >= 1 && (
               <li>{formatMoney(unallocated)} de gastos de ruta no se repartieron: su zona no tuvo ventas ese mes.</li>
