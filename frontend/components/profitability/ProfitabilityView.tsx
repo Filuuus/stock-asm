@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Calculator, ChevronDown, ChevronRight, EyeOff, FileText, RefreshCw, Scale, Settings2, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Calculator, ChevronDown, EyeOff, FileText, Filter, RefreshCw, Scale, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -93,8 +93,8 @@ function loadPrefs(): Partial<Prefs> {
     return {};
   }
 }
-// Breadcrumb order: how a drill-down usually goes.
-const CRUMB_ORDER = ["zone", "category", "brand", "product", "client"] as const;
+// How a drill-down usually goes.
+const DRILL_ORDER: Dim[] = ["zone", "category", "brand", "product", "client"];
 
 const DIMS: { key: Dim; label: string; one: string }[] = [
   { key: "zone", label: "Zona", one: "esa zona" },
@@ -623,8 +623,7 @@ export default function ProfitabilityView() {
     if (groupBy === "month") return;
     const next = { ...filters, [groupBy]: g.key };
     setFilters(next);
-    const order: Dim[] = ["zone", "category", "brand", "product", "client"];
-    setGroupBy(order.find((d) => d !== groupBy && !(d in next)) ?? "month");
+    setGroupBy(DRILL_ORDER.find((d) => !(d in next)) ?? "month");
   };
 
   if (!authLoading && !isManagement) {
@@ -640,14 +639,11 @@ export default function ProfitabilityView() {
     );
   }
 
-  const crumbs = CRUMB_ORDER.filter((d) => filters[d] !== undefined);
-  // Clicking a crumb keeps it and what's before it; "Todo" clears every filter.
-  const backTo = (dim: (typeof CRUMB_ORDER)[number] | null) => {
-    const keep = dim === null ? [] : CRUMB_ORDER.slice(0, CRUMB_ORDER.indexOf(dim) + 1);
-    const next = Object.fromEntries(Object.entries(filters).filter(([d]) => keep.includes(d as never))) as Filters;
+  // Setting or clearing one filter; a filter on the current breakdown moves the table to the next one.
+  const setFilter = (dim: Dim, value: string | undefined) => {
+    const next = value === undefined ? without(filters, dim as keyof Filters) : { ...filters, [dim]: value };
     setFilters(next);
-    // Back to the breakdown that follows the crumb, as if drilling again from there.
-    setGroupBy(CRUMB_ORDER.find((d) => !(d in next)) ?? "month");
+    if (value !== undefined && dim === groupBy) setGroupBy(DRILL_ORDER.find((d) => !(d in next)) ?? "month");
   };
   const sortHead = (label: React.ReactNode, column: keyof typeof columns, className?: string) => (
     <SortableHead
@@ -754,6 +750,92 @@ export default function ProfitabilityView() {
         </div>
       </div>
 
+      {data && (
+        <section aria-label="Filtros" className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 sm:p-3">
+          <span className="flex items-center gap-1 text-sm font-medium text-gray-700">
+            <Filter className="h-4 w-4" aria-hidden />
+            Filtros
+          </span>
+          {(["zone", "category", "brand"] as const).map((dim) => (
+            <select
+              key={dim}
+              value={filters[dim] ?? ""}
+              aria-label={DIMS.find((d) => d.key === dim)!.label}
+              onChange={(e) => setFilter(dim, e.target.value || undefined)}
+              className={cn(
+                "h-9 max-w-52 rounded-md border border-input bg-background px-2 text-sm",
+                filters[dim] && "border-sky-600 bg-sky-50",
+              )}
+            >
+              <option value="">{dim === "zone" ? "Todas las zonas" : dim === "category" ? "Todas las líneas" : "Todas las marcas"}</option>
+              {options(dim).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ))}
+          <Input
+            list="rentabilidad-search"
+            value={search}
+            placeholder="Buscar cliente o producto"
+            aria-label="Buscar cliente o producto"
+            className="h-9 w-56"
+            onChange={(e) => {
+              const match = searchOptions.get(e.target.value);
+              if (match) {
+                setFilter(match[0], match[1]);
+                setSearch("");
+              } else {
+                setSearch(e.target.value);
+              }
+            }}
+          />
+          <datalist id="rentabilidad-search">
+            {[...searchOptions.keys()].map((k) => (
+              <option key={k} value={k} />
+            ))}
+          </datalist>
+          {(["product", "client"] as const)
+            .filter((dim) => filters[dim] !== undefined)
+            .map((dim) => (
+              <span
+                key={dim}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-sky-600 bg-sky-50 py-1 pl-3 pr-1 text-sm"
+              >
+                <span className="max-w-56 truncate">{labelOf(dim, filters[dim]!)}</span>
+                {dim === "product" && (
+                  <button
+                    type="button"
+                    className="rounded-full p-1 text-gray-500 hover:text-gray-900"
+                    aria-label="Facturas del producto"
+                    title="Facturas"
+                    onClick={() => setInvoicesOf(filters.product!)}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rounded-full p-1 text-gray-500 hover:text-gray-900"
+                  aria-label={`Quitar ${labelOf(dim, filters[dim]!)}`}
+                  onClick={() => setFilter(dim, undefined)}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </span>
+            ))}
+          {Object.keys(filters).length > 0 && (
+            <Button size="sm" variant="ghost" className="h-9 sm:h-8" onClick={() => (setFilters({}), setGroupBy("zone"))}>
+              Quitar filtros
+            </Button>
+          )}
+          {section === "costos" && (
+            <span className="text-xs text-gray-500">Los gastos de ruta del periodo se muestran sin filtros.</span>
+          )}
+        </section>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={section} onValueChange={(v) => setSection(v as Section)}>
           <TabsList>
@@ -813,67 +895,6 @@ export default function ProfitabilityView() {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       {excludeError && <p className="text-sm text-red-700">{excludeError}</p>}
-
-      {data && section !== "costos" && (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <nav aria-label="Filtros" className="flex flex-wrap items-center gap-1">
-            {crumbs.length === 0 ? (
-              <span className="text-gray-900">Todo</span>
-            ) : (
-              <button type="button" className="text-sky-700 hover:underline" onClick={() => backTo(null)}>
-                Todo
-              </button>
-            )}
-            {crumbs.map((dim, i) => (
-              <span key={dim} className="flex items-center gap-1">
-                <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />
-                {i === crumbs.length - 1 ? (
-                  <span className="max-w-64 truncate text-gray-900">{labelOf(dim, filters[dim]!)}</span>
-                ) : (
-                  <button type="button" className="max-w-64 truncate text-sky-700 hover:underline" onClick={() => backTo(dim)}>
-                    {labelOf(dim, filters[dim]!)}
-                  </button>
-                )}
-                {dim === "product" && (
-                  <button
-                    type="button"
-                    className="text-gray-500 hover:text-gray-900"
-                    aria-label="Facturas del producto"
-                    title="Facturas"
-                    onClick={() => setInvoicesOf(filters.product!)}
-                  >
-                    <FileText className="h-4 w-4" />
-                  </button>
-                )}
-              </span>
-            ))}
-          </nav>
-          <span className="flex-1" />
-          <Input
-            list="rentabilidad-search"
-            value={search}
-            placeholder="Buscar cliente o producto"
-            aria-label="Buscar cliente o producto"
-            className="h-9 w-64"
-            onChange={(e) => {
-              const match = searchOptions.get(e.target.value);
-              if (match) {
-                const [dim, id] = match;
-                setFilters((f) => ({ ...f, [dim]: id }));
-                setGroupBy(dim === "client" ? "product" : "client");
-                setSearch("");
-              } else {
-                setSearch(e.target.value);
-              }
-            }}
-          />
-          <datalist id="rentabilidad-search">
-            {[...searchOptions.keys()].map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
-        </div>
-      )}
 
       {data && section !== "costos" && (dropped.length > 0 || simOn) && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
