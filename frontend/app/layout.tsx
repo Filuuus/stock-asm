@@ -38,7 +38,7 @@ export default function RootLayout({
         <AuthProvider>
           <CartProvider>
             <SearchQueryProvider>
-              <header className="bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
+              <header className="print:hidden bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
                 <Link href="/" className="text-lg font-bold whitespace-nowrap">
                   Agropecuaria Santa María
                 </Link>

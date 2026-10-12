@@ -126,3 +126,21 @@
     @apply font-mono text-[13px] tabular-nums whitespace-nowrap;
   }
 }
+
+/* PDF export (Rentabilidad): the page's "Exportar PDF" dialog sets pdf-no-* classes on <main>
+   for the parts left out; controls carry print:hidden. */
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 12mm;
+  }
+  .pdf-no-tiles .pdf-tiles,
+  .pdf-no-table .pdf-table,
+  .pdf-no-chart .pdf-chart,
+  .pdf-no-money .pdf-money {
+    display: none !important;
+  }
+  .pdf-keep {
+    break-inside: avoid;
+  }
+}

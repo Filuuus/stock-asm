@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Calculator, ChevronDown, EyeOff, FileText, Filter, RefreshCw, Scale, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Calculator, ChevronDown, EyeOff, FileDown, FileText, Filter, RefreshCw, Scale, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -22,7 +22,7 @@ import { MonthControl } from "@/components/date-controls";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import ClientLink from "@/components/facturas/ClientLink";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
-import { formatDay, formatMonth, isoToDate, monthToISO } from "@/lib/dates";
+import { formatDay, formatMonth, isoToDate, monthToISO, todayISO } from "@/lib/dates";
 import { zoneLabel, ZONE_ORDER } from "@/lib/zones";
 import { cn, formatMoney } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -158,6 +158,13 @@ function compactMoney(value: number) {
 }
 
 const CHART_MIN_MONTHS = 6;
+// What the PDF export includes; `money` off leaves sales and volume only, for sharing outside.
+const PDF_ALL = { tiles: true, table: true, chart: true, money: true };
+type PdfParts = typeof PDF_ALL;
+function partsChosen(pdf: PdfParts, section: "resumen" | "decisiones") {
+  if (section === "decisiones") return pdf.table || pdf.chart;
+  return pdf.tiles || pdf.table || (pdf.chart && pdf.money);
+}
 const FETCH_DELAY_MS = 600;
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
@@ -188,7 +195,8 @@ function emptySums(): Sums {
   return { net: 0, cost: 0, commission: 0, route: 0, kg: 0 };
 }
 
-function Tile({ label, value, sub, change, changeLabel = "vs año anterior" }: {
+function Tile({ label, value, sub, change, changeLabel = "vs año anterior", money }: {
+  money?: boolean;
   label: string;
   value: string;
   sub?: string;
@@ -196,7 +204,7 @@ function Tile({ label, value, sub, change, changeLabel = "vs año anterior" }: {
   changeLabel?: string;
 }) {
   return (
-    <Card>
+    <Card className={cn(money && "pdf-money")}>
       <CardHeader className="p-3 sm:p-4 space-y-1">
         <CardDescription className="text-xs sm:text-sm">{label}</CardDescription>
         <CardTitle className="text-base sm:text-xl">{value}</CardTitle>
@@ -226,6 +234,8 @@ export default function ProfitabilityView() {
   const [previous, setPrevious] = useState<Profitability | null>(null);
   // The months before a short period, so the monthly chart always spans CHART_MIN_MONTHS.
   const [chartLead, setChartLead] = useState<Profitability | null>(null);
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [pdf, setPdf] = useState(PDF_ALL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -661,6 +671,7 @@ export default function ProfitabilityView() {
     setFilters(next);
     if (value !== undefined && dim === groupBy) setGroupBy(DRILL_ORDER.find((d) => !(d in next)) ?? "month");
   };
+  // Every column but the name, Ventas and Peso is left out of a PDF without costs (pdf-money).
   const sortHead = (label: React.ReactNode, column: keyof typeof columns, className?: string) => (
     <SortableHead
       label={label}
@@ -669,28 +680,30 @@ export default function ProfitabilityView() {
       sortKey={sortKey}
       sortDir={sortDir}
       onSort={toggle}
-      className={className}
+      className={cn(!["label", "net", "kg"].includes(column) && "pdf-money", className)}
     />
   );
   const money = (value: number, className?: string) => (
-    <TableCell className={cn("text-right tabular-nums", value < 0 && "text-red-700", className)}>{pesos(value)}</TableCell>
+    <TableCell className={cn("pdf-money text-right tabular-nums", value < 0 && "text-red-700", className)}>
+      {pesos(value)}
+    </TableCell>
   );
   const colCount = (detail ? 10 : 6) + (groupBy === "product" ? 1 : 0);
   // The default columns read Ventas -> Contribución -> Utilidad neta; "Ver detalle" adds the steps in between.
   const sumRow = (s: Sums) => (
     <>
-      {money(s.net)}
+      <TableCell className="text-right tabular-nums">{pesos(s.net)}</TableCell>
       {detail && money(gross(s), HIDE_BELOW_SM)}
       {detail && money(s.commission, HIDE_BELOW_LG)}
       {money(contribution(s), HIDE_BELOW_SM)}
       {detail && money(s.route, HIDE_BELOW_LG)}
       {money(result(s))}
-      <TableCell className={cn("text-right tabular-nums", result(s) < 0 && "text-red-700")}>
+      <TableCell className={cn("pdf-money text-right tabular-nums", result(s) < 0 && "text-red-700")}>
         {s.net ? percent(result(s) / s.net) : "-"}
       </TableCell>
       <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>{s.kg ? tonnes(s.kg) : "-"}</TableCell>
       {detail && (
-        <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD, result(s) < 0 && "text-red-700")}>
+        <TableCell className={cn("pdf-money text-right tabular-nums", HIDE_BELOW_MD, result(s) < 0 && "text-red-700")}>
           {s.kg >= 1 ? formatMoney(result(s) / s.kg) : "-"}
         </TableCell>
       )}
@@ -708,9 +721,45 @@ export default function ProfitabilityView() {
     </button>
   );
 
+  const filterLabels = (Object.entries(filters) as [Dim, string][]).map(([d, v]) => labelOf(d, v));
+  const periodLabel = from === to ? formatMonth(from) : `${formatMonth(from)} a ${formatMonth(to)}`;
+  const withMoney = pdf.money || section === "costos";
+  // Prints the current section with the chosen parts; the browser's print dialog saves or shares it as PDF.
+  // The page title becomes the suggested file name: period, filters and today's date.
+  const exportPdf = () => {
+    setPdfOpen(false);
+    setSimOpen(false);
+    const title = document.title;
+    document.title = ["Rentabilidad", from === to ? from : `${from} a ${to}`, ...filterLabels, todayISO()]
+      .join(" - ")
+      .replace(/[\\/:*?"<>|]/g, "");
+    window.addEventListener("afterprint", () => (document.title = title), { once: true });
+    // Lets the dialog close before the page is captured.
+    setTimeout(() => window.print(), 300);
+  };
+
   return (
-    <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <main
+      className={cn(
+        "max-w-7xl mx-auto w-full p-4 sm:p-6 print:p-0 flex flex-col gap-4",
+        !pdf.tiles && "pdf-no-tiles",
+        !pdf.table && "pdf-no-table",
+        !pdf.chart && "pdf-no-chart",
+        !withMoney && "pdf-no-money",
+      )}
+    >
+      <div className="hidden print:block">
+        <p className="text-sm text-gray-500">Agropecuaria Santa María</p>
+        <h1 className="text-xl font-bold text-gray-900">
+          Rentabilidad · {section === "resumen" ? "Resumen" : section === "decisiones" ? "Decisiones" : "Gastos de ruta"}
+        </h1>
+        <p className="text-sm text-gray-700">
+          {[periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1), ...filterLabels].join(" · ")}
+        </p>
+        {withMoney && section !== "costos" && <p className="text-xs text-gray-500">{criteriaSummary}</p>}
+        <p className="text-xs text-gray-500">Generado el {formatDay(todayISO())}</p>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <h1 className="text-2xl font-bold text-gray-900">Rentabilidad</h1>
         <div className="flex flex-wrap items-center gap-2">
           <MonthControl month={from} onChange={(m) => (setFrom(m), m > to && setTo(m))} />
@@ -740,6 +789,10 @@ export default function ProfitabilityView() {
             <Calculator className="w-4 h-4" aria-hidden />
             Simular
           </Button>
+          <Button size="sm" variant="outline" className="h-9 sm:h-8" disabled={!data || loading} onClick={() => setPdfOpen(true)}>
+            <FileDown className="w-4 h-4" aria-hidden />
+            PDF
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="outline" className="h-9 sm:h-8">
@@ -767,7 +820,7 @@ export default function ProfitabilityView() {
       </div>
 
       {data && (
-        <section aria-label="Filtros" className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 sm:p-3">
+        <section aria-label="Filtros" className="print:hidden flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 sm:p-3">
           <span className="flex items-center gap-1 text-sm font-medium text-gray-700">
             <Filter className="h-4 w-4" aria-hidden />
             Filtros
@@ -852,7 +905,7 @@ export default function ProfitabilityView() {
         </section>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Tabs value={section} onValueChange={(v) => setSection(v as Section)}>
           <TabsList>
             <TabsTrigger value="resumen">Resumen</TabsTrigger>
@@ -909,8 +962,8 @@ export default function ProfitabilityView() {
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
-      {excludeError && <p className="text-sm text-red-700">{excludeError}</p>}
+      {error && <p className="text-sm text-red-700 print:hidden">{error}</p>}
+      {excludeError && <p className="text-sm text-red-700 print:hidden">{excludeError}</p>}
 
       {data && section !== "costos" && (dropped.length > 0 || simOn) && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -927,15 +980,20 @@ export default function ProfitabilityView() {
                 <strong>Simulación:</strong> {adjustments.length === 1 ? "1 ajuste" : `${adjustments.length} ajustes`}.{" "}
               </>
             )}
-            Las cifras comparan contra lo real. No se guarda.
+            Las cifras comparan contra lo real.<span className="print:hidden"> No se guarda.</span>
             {dropped.length > 0 && !scenarioOn && " Calculando…"}
           </p>
           {simOn && (
-            <Button size="sm" variant="outline" onClick={() => setSimOpen(true)}>
+            <Button size="sm" variant="outline" className="print:hidden" onClick={() => setSimOpen(true)}>
               Ver simulación
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={() => (setDropped([]), setAdjustments([]), setSimOpen(false))}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="print:hidden"
+            onClick={() => (setDropped([]), setAdjustments([]), setSimOpen(false))}
+          >
             Volver a lo real
           </Button>
         </div>
@@ -943,7 +1001,7 @@ export default function ProfitabilityView() {
 
       {data && section === "resumen" && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="pdf-tiles pdf-keep grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-3">
             <Tile
               label="Ventas"
               value={formatMoney(totals.net)}
@@ -951,6 +1009,7 @@ export default function ProfitabilityView() {
               changeLabel={versusReal ? "vs real" : undefined}
             />
             <Tile
+              money
               label="Contribución"
               value={formatMoney(contribution(totals))}
               sub={totals.net ? `${percent(contribution(totals) / totals.net)} de las ventas` : undefined}
@@ -962,11 +1021,13 @@ export default function ProfitabilityView() {
               changeLabel={versusReal ? "vs real" : undefined}
             />
             <Tile
+              money
               label="Gastos de ruta"
               value={formatMoney(totals.route)}
               sub={totals.kg >= 1 ? `${formatMoney(totals.route / totals.kg)} por kg` : undefined}
             />
             <Tile
+              money
               label="Utilidad neta"
               value={formatMoney(result(totals))}
               sub={
@@ -979,9 +1040,10 @@ export default function ProfitabilityView() {
             />
           </div>
 
-          <Card>
+          <Card className="pdf-table">
             <CardHeader className="p-3 sm:p-4 gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="hidden text-base print:block">Por {DIMS.find((d) => d.key === groupBy)!.label.toLowerCase()}</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
                 <Tabs value={groupBy} onValueChange={(v) => setGroupBy(v as Dim)}>
                   <TabsList className="h-auto flex-wrap">
                     {DIMS.map((d) => (
@@ -997,7 +1059,7 @@ export default function ProfitabilityView() {
                 </label>
               </div>
               {groupBy !== "month" && (
-                <CardDescription>
+                <CardDescription className="print:hidden">
                   Toque una fila para ver solo {DIMS.find((d) => d.key === groupBy)!.one}.
                   {checkable && " La casilla la quita para ver cómo quedarían las cifras sin venderla."}
                   {groupBy === "client" && " El nombre abre sus facturas."}
@@ -1017,7 +1079,7 @@ export default function ProfitabilityView() {
                   {sortHead("Margen", "margin")}
                   {sortHead("Peso", "kg", HIDE_BELOW_MD)}
                   {detail && sortHead("Neta / kg", "perKg", HIDE_BELOW_MD)}
-                  {groupBy === "product" && <TableHead className="w-px" />}
+                  {groupBy === "product" && <TableHead className="w-px print:hidden" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1035,7 +1097,7 @@ export default function ProfitabilityView() {
                       {checkable && g.key !== NO_PRODUCT && (
                         <input
                           type="checkbox"
-                          className="mr-2 h-4 w-4 align-middle accent-slate-900"
+                          className="mr-2 h-4 w-4 align-middle accent-slate-900 print:hidden"
                           aria-label={`Incluir ${g.label} en el escenario`}
                           title="Quitar o devolver al escenario (no se guarda)"
                           checked={droppedCount(g.key) === 0}
@@ -1053,7 +1115,7 @@ export default function ProfitabilityView() {
                     </TableCell>
                     {sumRow(g)}
                     {groupBy === "product" && (
-                      <TableCell className="whitespace-nowrap py-0 text-right">
+                      <TableCell className="whitespace-nowrap py-0 text-right print:hidden">
                         {g.key !== NO_PRODUCT && (
                           <Button
                             size="sm"
@@ -1094,12 +1156,12 @@ export default function ProfitabilityView() {
                   <TableRow className="font-medium hover:bg-transparent">
                     <TableCell>Total</TableCell>
                     {sumRow(totals)}
-                    {groupBy === "product" && <TableCell />}
+                    {groupBy === "product" && <TableCell className="print:hidden" />}
                   </TableRow>
                 )}
               </TableBody>
             </Table>
-            <p className="px-3 pb-3 pt-2 text-xs text-gray-500 sm:px-4">
+            <p className="px-3 pb-3 pt-2 text-xs text-gray-500 sm:px-4 print:hidden">
               {data.workbook_through &&
                 `Combustible y mantenimiento del reporte de Contabilidad hasta ${formatMonth(data.workbook_through).toLowerCase()}. `}
               {data.excluded.length > 0 && (
@@ -1116,7 +1178,7 @@ export default function ProfitabilityView() {
             </p>
           </Card>
 
-          <Card>
+          <Card className="pdf-chart pdf-money pdf-keep">
             <CardHeader className="p-3 sm:p-4">
               <CardTitle className="text-base">Utilidad por mes</CardTitle>
               {chartLead && (
@@ -1151,11 +1213,11 @@ export default function ProfitabilityView() {
 
       {data && section === "decisiones" && (
         <>
-          <Card>
+          <Card className="pdf-table">
             <CardHeader className="p-3 sm:p-4 gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-base">Qué haría falta para no perder</CardTitle>
-                <Tabs value={decisionDim} onValueChange={(v) => setDecisionDim(v as DecisionDim)}>
+                <Tabs className="print:hidden" value={decisionDim} onValueChange={(v) => setDecisionDim(v as DecisionDim)}>
                   <TabsList className="h-8">
                     <TabsTrigger value="category" className="text-xs">
                       Líneas
@@ -1178,8 +1240,8 @@ export default function ProfitabilityView() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{DIMS.find((d) => d.key === decisionDim)!.label}</TableHead>
-                  <TableHead className="text-right">Utilidad neta</TableHead>
-                  <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Contribución</TableHead>
+                  <TableHead className="pdf-money text-right">Utilidad neta</TableHead>
+                  <TableHead className={cn("pdf-money text-right", HIDE_BELOW_SM)}>Contribución</TableHead>
                   <TableHead className="text-right">
                     Para no
                     <br />
@@ -1190,7 +1252,7 @@ export default function ProfitabilityView() {
                     <br />
                     gasto de ruta
                   </TableHead>
-                  <TableHead />
+                  <TableHead className="print:hidden" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1204,7 +1266,7 @@ export default function ProfitabilityView() {
                     {money(contribution(g), HIDE_BELOW_SM)}
                     <TableCell className="text-right tabular-nums">{g.forContribution ? percent(g.forContribution) : "-"}</TableCell>
                     <TableCell className="text-right tabular-nums">{percent(g.forNet)}</TableCell>
-                    <TableCell className="w-px">
+                    <TableCell className="w-px print:hidden">
                       <Button
                         size="sm"
                         variant="outline"
@@ -1223,11 +1285,11 @@ export default function ProfitabilityView() {
           </Card>
 
           {pareto && (
-            <Card>
+            <Card className="pdf-chart pdf-keep">
               <CardHeader className="p-3 sm:p-4 gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="text-base">Concentración de la contribución</CardTitle>
-                  <Tabs value={paretoDim} onValueChange={(v) => setParetoDim(v as "product" | "client")}>
+                  <Tabs className="print:hidden" value={paretoDim} onValueChange={(v) => setParetoDim(v as "product" | "client")}>
                     <TabsList className="h-8">
                       <TabsTrigger value="product" className="text-xs">
                         Productos
@@ -1241,7 +1303,7 @@ export default function ProfitabilityView() {
                 <CardDescription>
                   {pareto.to80} de {pareto.count} {paretoDim === "product" ? "productos" : "clientes"} (
                   {percent(pareto.to80 / pareto.count)}) dan el 80% de la contribución.
-                  {pareto.losers > 0 &&
+                  {pareto.losers > 0 && withMoney &&
                     ` ${pareto.losers} ${paretoDim === "product" ? "productos" : "clientes"} restan ${formatMoney(-pareto.lost)}.`}
                 </CardDescription>
               </CardHeader>
@@ -1325,7 +1387,7 @@ export default function ProfitabilityView() {
                 </TableRow>
               </TableBody>
             </Table>
-            <div className="flex justify-end px-3 pb-3 sm:px-4">
+            <div className="flex justify-end px-3 pb-3 sm:px-4 print:hidden">
               <Button size="sm" variant="outline" onClick={() => setSetupOpen(true)}>
                 <Settings2 className="w-4 h-4" aria-hidden />
                 Configurar gastos de ruta
@@ -1552,6 +1614,52 @@ export default function ProfitabilityView() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={pdfOpen} onOpenChange={setPdfOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Exportar PDF</DialogTitle>
+            <DialogDescription>
+              {section === "costos" ? "Los gastos de ruta del periodo" : "Lo que se ve en " + (section === "resumen" ? "Resumen" : "Decisiones")}{" "}
+              con el periodo{filterLabels.length ? " y los filtros" : ""} de ahora, con la fecha de hoy.
+            </DialogDescription>
+          </DialogHeader>
+          {section !== "costos" && (
+            <div className="flex flex-col gap-3 text-sm">
+              {(section === "resumen"
+                ? ([["tiles", "Indicadores"], ["table", "Tabla"], ["chart", "Utilidad por mes"]] as const)
+                : ([["table", "Qué haría falta para no perder"], ["chart", "Concentración de la contribución"]] as const)
+              ).map(([part, label]) => {
+                // Utilidad por mes is all costs and profit: it goes with them.
+                const off = part === "chart" && section === "resumen" && !pdf.money;
+                return (
+                  <label key={part} className={cn("flex items-center gap-2", off && "text-gray-400")}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-slate-900"
+                      checked={pdf[part] && !off}
+                      disabled={off}
+                      onChange={(e) => setPdf((p) => ({ ...p, [part]: e.target.checked }))}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+              <label className="flex items-center justify-between gap-2 border-t pt-3">
+                <span>
+                  Incluir costos y utilidades
+                  <span className="block text-xs text-gray-500">Sin ellos quedan solo ventas y volumen, para compartir.</span>
+                </span>
+                <Switch checked={pdf.money} onCheckedChange={(money) => setPdf((p) => ({ ...p, money }))} />
+              </label>
+            </div>
+          )}
+          <Button onClick={exportPdf} disabled={section !== "costos" && !partsChosen(pdf, section)}>
+            <FileDown className="w-4 h-4" aria-hidden />
+            Exportar
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       {setupOpen && <SetupDialog onClose={() => setSetupOpen(false)} onSaved={() => setReload((n) => n + 1)} />}
 
