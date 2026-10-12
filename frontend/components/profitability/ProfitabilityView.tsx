@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { EyeOff, FileText, RefreshCw, Scale, Settings2, Trash2, X } from "lucide-react";
+import { Calculator, EyeOff, FileText, RefreshCw, Scale, Settings2, Trash2, X } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,6 +59,15 @@ interface Profitability {
 type Dim = "zone" | "category" | "brand" | "product" | "client" | "month";
 type Filters = Partial<Record<Exclude<Dim, "month">, string>>;
 type CommissionMode = "posibles" | "pagadas";
+// A negotiation what-if on a brand, line or product: percentages typed as numbers (5 = 5%).
+interface Adjustment {
+  dim: "brand" | "category" | "product";
+  key: string;
+  discount: number; // supplier discount on its cost (import costs shrink with it: they're a rate on cost)
+  price: number; // change in our selling price
+  volume: number; // change in units sold
+}
+const NO_ADJUSTMENT = { discount: 0, price: 0, volume: 0 };
 type RouteKey = "kg" | "pieza";
 
 const DIMS: { key: Dim; label: string; one: string }[] = [
@@ -209,6 +218,10 @@ export default function ProfitabilityView() {
   // What-if: products imagined not sold (per viewer, not saved), and the server's recomputation without them.
   const [dropped, setDropped] = useState<string[]>([]);
   const [scenario, setScenario] = useState<Profitability | null>(null);
+  // Negotiation simulator (in the browser, instant; not saved).
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [simOpen, setSimOpen] = useState(false);
+  const [paretoDim, setParetoDim] = useState<"product" | "client">("product");
 
   const setExcluded = async (productId: string, excluded: boolean) => {
     setExcludeError(null);
@@ -310,13 +323,29 @@ export default function ProfitabilityView() {
     }
   };
 
-  // The toggles decide which cost columns count.
-  const add = (s: Sums, f: Fact) => {
-    s.net += f[5];
-    s.cost += f[6] - (supplierDiscounts ? f[10] : 0) + (importCosts ? f[13] : 0);
-    s.commission += commissionMode === "pagadas" ? f[9] : f[8];
+  // The simulator's changes that apply to a fact, combined when several match (a brand and one of its products).
+  const adjustmentFor = (f: Fact) => {
+    if (!data || adjustments.length === 0) return NO_ADJUSTMENT;
+    let cost = 1, price = 1, volume = 1;
+    for (const a of adjustments) {
+      if (valueOf(f, a.dim, data.products) !== a.key) continue;
+      cost *= 1 - a.discount / 100;
+      price *= 1 + a.price / 100;
+      volume *= 1 + a.volume / 100;
+    }
+    return { discount: 1 - cost, price: price - 1, volume: volume - 1 };
+  };
+
+  // The toggles decide which cost columns count; `simulate` applies the negotiation simulator. Route costs
+  // don't move with it: salaries, trucks and rent stay whatever is sold.
+  const add = (s: Sums, f: Fact, simulate = true) => {
+    const a = simulate ? adjustmentFor(f) : NO_ADJUSTMENT;
+    const volume = 1 + a.volume, price = 1 + a.price;
+    s.net += f[5] * price * volume;
+    s.cost += (f[6] - (supplierDiscounts ? f[10] : 0) + (importCosts ? f[13] : 0)) * (1 - a.discount) * volume;
+    s.commission += (commissionMode === "pagadas" ? f[9] : f[8]) * price * volume; // commissions are a % of the sale
     s.route += routeKey === "kg" ? f[11] : f[12];
-    s.kg += f[7];
+    s.kg += f[7] * volume;
   };
 
   const applyFilters = (d: Profitability | null) => {
@@ -359,17 +388,20 @@ export default function ProfitabilityView() {
     return map;
   }, [data]);
 
-  const sumOf = (facts: Fact[]) => {
+  const sumOf = (facts: Fact[], simulate = true) => {
     const s = emptySums();
-    for (const f of facts) add(s, f);
+    for (const f of facts) add(s, f, simulate);
     return s;
   };
+  const simOn = adjustments.some((a) => a.discount || a.price || a.volume);
+  // Against the real figures whenever a what-if or a simulation is on, else against last year.
+  const versusReal = scenarioOn || simOn;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey, importCosts]);
+  const totals = useMemo(() => sumOf(filtered), [filtered, commissionMode, supplierDiscounts, routeKey, importCosts, adjustments]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalsReal = useMemo(() => sumOf(filteredReal), [filteredReal, commissionMode, supplierDiscounts, routeKey, importCosts]);
+  const totalsReal = useMemo(() => sumOf(filteredReal, false), [filteredReal, commissionMode, supplierDiscounts, routeKey, importCosts]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const totalsPrevious = useMemo(() => sumOf(filteredPrevious), [filteredPrevious, commissionMode, supplierDiscounts, routeKey, importCosts]);
+  const totalsPrevious = useMemo(() => sumOf(filteredPrevious, false), [filteredPrevious, commissionMode, supplierDiscounts, routeKey, importCosts]);
   const estimatedKg = useMemo(
     () => filtered.reduce((t, f) => t + (f[3] !== null && data?.products[f[3]]?.source === "estimado" ? f[7] : 0), 0),
     [filtered, data],
@@ -392,14 +424,14 @@ export default function ProfitabilityView() {
         const key = valueOf(f, groupBy, data.products);
         if (map.has(key) && !map.get(key)!.dropped) continue;
         const g = map.get(key) ?? { key, label: labelOf(groupBy, key), dropped: true, ...emptySums() };
-        add(g, f);
+        add(g, f, false);
         map.set(key, g);
       }
     }
     // A product sold and fully returned nets to nothing; it only clutters the list.
     return [...map.values()].filter((g) => [g.net, g.cost, g.kg, g.commission, g.route].some((v) => Math.abs(v) >= 0.5));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, filteredReal, groupBy, data, commissionMode, supplierDiscounts, routeKey, importCosts, scenarioOn, dropped]);
+  }, [filtered, filteredReal, groupBy, data, commissionMode, supplierDiscounts, routeKey, importCosts, scenarioOn, dropped, adjustments]);
 
   // What-if checkboxes, on line, brand and product rows: the products behind each row.
   const checkable = groupBy === "category" || groupBy === "brand" || groupBy === "product";
@@ -431,7 +463,7 @@ export default function ProfitabilityView() {
     }
     return [...byMonth.entries()].map(([m, s]) => ({ label: monthShort(m), bruta: gross(s), neta: result(s) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey, importCosts]);
+  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey, importCosts, adjustments]);
 
   // The period's route costs by pool and component (not affected by the filters).
   const pools = useMemo(() => {
@@ -449,6 +481,63 @@ export default function ProfitabilityView() {
     (t, p) => t + Object.values(p).reduce((a, b) => a + b, 0),
     0,
   );
+
+  // "Qué haría falta": for every loss-making brand, line or product in view, the supplier discount that
+  // would bring it to zero - on its own (contribution) and also covering its share of route costs (net).
+  // The selling price stays: the market won't take an increase (management, 2026-10-12).
+  const breakEven = useMemo(() => {
+    if (!checkable) return [];
+    return groups
+      .filter((g) => !g.dropped && g.cost > 0 && result(g) < 0)
+      .map((g) => ({
+        ...g,
+        forContribution: contribution(g) < 0 ? -contribution(g) / g.cost : 0,
+        forNet: -result(g) / g.cost,
+      }))
+      .sort((a, b) => result(a) - result(b));
+  }, [groups, checkable]);
+
+  // Concentration: how few products (or clients) bring most of the contribution.
+  const pareto = useMemo(() => {
+    if (!data) return null;
+    const by = new Map<string, Sums>();
+    for (const f of filtered) {
+      const key = valueOf(f, paretoDim, data.products);
+      if (!by.has(key)) by.set(key, emptySums());
+      add(by.get(key)!, f);
+    }
+    const items = [...by.values()].map(contribution).sort((a, b) => b - a);
+    const total = items.reduce((a, b) => a + b, 0);
+    if (items.length < 2 || total <= 0) return null;
+    let running = 0;
+    let to80 = 0;
+    const points = items.map((c, i) => {
+      running += c;
+      if (!to80 && running >= total * 0.8) to80 = i + 1;
+      return { share: ((i + 1) / items.length) * 100, cumulative: (running / total) * 100 };
+    });
+    const losers = items.filter((c) => c < 0);
+    return {
+      count: items.length, to80, points,
+      peak: Math.max(...points.map((p) => p.cumulative)),
+      losers: losers.length, lost: losers.reduce((a, b) => a + b, 0),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, paretoDim, data, commissionMode, supplierDiscounts, routeKey, importCosts, adjustments]);
+
+  const addAdjustment = (a: Partial<Adjustment>) => {
+    const dim = a.dim ?? (groupBy === "category" || groupBy === "product" ? groupBy : "brand");
+    setAdjustments((list) => [...list, { dim, key: a.key ?? "", discount: 0, price: 0, volume: 0, ...a }]);
+    setSimOpen(true);
+  };
+  const setAdjustment = (i: number, patch: Partial<Adjustment>) =>
+    setAdjustments((list) => list.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  // One adjustment row's real figures, for its hints.
+  const adjustmentBase = (a: Adjustment) => {
+    const s = emptySums();
+    if (data) for (const f of filteredReal) if (valueOf(f, a.dim, data.products) === a.key) add(s, f, false);
+    return s;
+  };
 
   const columns = useMemo(
     () => ({
@@ -560,6 +649,16 @@ export default function ProfitabilityView() {
         <Button size="sm" variant="outline" className="h-9 sm:h-8" onClick={() => setSetupOpen(true)}>
           <Settings2 className="w-4 h-4" aria-hidden />
           Gastos de ruta
+        </Button>
+        <Button
+          size="sm"
+          variant={simOpen ? "default" : "outline"}
+          className="h-9 sm:h-8"
+          disabled={!data}
+          onClick={() => (adjustments.length ? setSimOpen((o) => !o) : addAdjustment({}))}
+        >
+          <Calculator className="w-4 h-4" aria-hidden />
+          Simular
         </Button>
       </div>
 
@@ -700,19 +799,138 @@ export default function ProfitabilityView() {
             </div>
           )}
 
+          {(simOpen || simOn) && (
+            <Card className="border-sky-300">
+              <CardHeader className="p-3 sm:p-4">
+                <CardTitle className="text-base">Simulación de negociación</CardTitle>
+                <CardDescription>
+                  Cambie el costo del proveedor, el precio o el volumen de una marca, línea o producto y vea el efecto en
+                  todas las cifras. Los gastos de ruta no cambian. No se guarda.
+                </CardDescription>
+              </CardHeader>
+              <div className="flex flex-col gap-3 px-3 pb-3 sm:px-4 sm:pb-4">
+                {adjustments.map((a, i) => {
+                  const base = adjustmentBase(a);
+                  let simulated = emptySums();
+                  if (data) {
+                    simulated = sumOf(filteredReal.filter((f) => valueOf(f, a.dim, data.products) === a.key));
+                  }
+                  const effect = result(simulated) - result(base);
+                  // With a higher price, the volume it can lose before earning less than today (route costs stay).
+                  const perUnit = base.net * (1 + a.price / 100) - base.cost * (1 - a.discount / 100) - base.commission * (1 + a.price / 100);
+                  const tolerance = a.price > 0 && contribution(base) > 0 && perUnit > 0 ? 1 - contribution(base) / perUnit : null;
+                  return (
+                    <div key={i} className="flex flex-col gap-1 rounded-md border p-2">
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <select
+                          value={a.dim}
+                          aria-label="Qué ajustar"
+                          onChange={(e) => setAdjustment(i, { dim: e.target.value as Adjustment["dim"], key: "" })}
+                          className="h-8 rounded-md border border-input bg-background px-2"
+                        >
+                          <option value="brand">Marca</option>
+                          <option value="category">Línea</option>
+                          <option value="product">Producto</option>
+                        </select>
+                        <select
+                          value={a.key}
+                          aria-label="Cuál"
+                          onChange={(e) => setAdjustment(i, { key: e.target.value })}
+                          className="h-8 max-w-72 rounded-md border border-input bg-background px-2"
+                        >
+                          <option value="">Elegir…</option>
+                          {options(a.dim).map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        {([
+                          ["discount", "Descuento del proveedor"],
+                          ["price", "Precio de venta"],
+                          ["volume", "Volumen"],
+                        ] as const).map(([field, label]) => (
+                          <label key={field} className="flex items-center gap-1">
+                            <span className="text-gray-500">{label}</span>
+                            <Input
+                              type="number"
+                              step="0.5"
+                              aria-label={`${label} en %`}
+                              value={a[field] || ""}
+                              placeholder="0"
+                              onChange={(e) => setAdjustment(i, { [field]: Number(e.target.value) || 0 })}
+                              className="h-8 w-20 text-right"
+                            />
+                            <span className="text-gray-500">%</span>
+                          </label>
+                        ))}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2 text-gray-500"
+                          aria-label="Quitar ajuste"
+                          onClick={() => setAdjustments((list) => list.filter((_, j) => j !== i))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {a.key && (
+                        <p className="text-xs text-gray-600">
+                          Hoy: utilidad neta {formatMoney(result(base))}, contribución {formatMoney(contribution(base))}.
+                          {result(base) < 0 && base.cost > 0 && (
+                            <>
+                              {" "}
+                              Para no perder necesitaría{" "}
+                              {contribution(base) < 0 && <>{percent(-contribution(base) / base.cost)} de descuento por sí mismo y </>}
+                              {percent(-result(base) / base.cost)} para cubrir también su gasto de ruta.
+                            </>
+                          )}
+                          {(a.discount || a.price || a.volume) ? (
+                            <>
+                              {" "}
+                              {adjustments.length > 1 ? "Con todos los ajustes que le tocan" : "Con estos cambios"}:{" "}
+                              <strong className={effect < 0 ? "text-red-700" : "text-emerald-700"}>
+                                {effect >= 0 ? "+" : ""}
+                                {formatMoney(effect)}
+                              </strong>{" "}
+                              de utilidad neta.
+                            </>
+                          ) : null}
+                          {tolerance !== null && (
+                            <> Con +{a.price}% de precio podría perder hasta {percent(tolerance)} del volumen antes de ganar menos que hoy.</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => addAdjustment({})}>
+                    Agregar ajuste
+                  </Button>
+                  {adjustments.length > 0 && (
+                    <Button size="sm" variant="ghost" onClick={() => (setAdjustments([]), setSimOpen(false))}>
+                      Quitar simulación
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Tile
               label="Ventas"
               value={formatMoney(totals.net)}
-              change={scenarioOn ? change(totals.net, totalsReal.net) : change(totals.net, totalsPrevious.net)}
-              changeLabel={scenarioOn ? "vs real" : undefined}
+              change={versusReal ? change(totals.net, totalsReal.net) : change(totals.net, totalsPrevious.net)}
+              changeLabel={versusReal ? "vs real" : undefined}
             />
             <Tile
               label="Utilidad bruta"
               value={formatMoney(gross(totals))}
               sub={totals.net ? `Margen ${percent(gross(totals) / totals.net)}` : undefined}
-              change={scenarioOn ? change(gross(totals), gross(totalsReal)) : change(gross(totals), gross(totalsPrevious))}
-              changeLabel={scenarioOn ? "vs real" : undefined}
+              change={versusReal ? change(gross(totals), gross(totalsReal)) : change(gross(totals), gross(totalsPrevious))}
+              changeLabel={versusReal ? "vs real" : undefined}
             />
             <Tile
               label="Comisiones y gastos de ruta"
@@ -727,8 +945,8 @@ export default function ProfitabilityView() {
                   ? `Margen ${percent(result(totals) / totals.net)}${totals.kg >= 1 ? ` · ${formatMoney(result(totals) / totals.kg)} por kg` : ""}`
                   : undefined
               }
-              change={scenarioOn ? change(result(totals), result(totalsReal)) : change(result(totals), result(totalsPrevious))}
-              changeLabel={scenarioOn ? "vs real" : undefined}
+              change={versusReal ? change(result(totals), result(totalsReal)) : change(result(totals), result(totalsPrevious))}
+              changeLabel={versusReal ? "vs real" : undefined}
             />
           </div>
 
@@ -864,6 +1082,125 @@ export default function ProfitabilityView() {
               </TableBody>
             </Table>
           </Card>
+
+          {checkable && breakEven.length > 0 && (
+            <Card>
+              <CardHeader className="p-3 sm:p-4">
+                <CardTitle className="text-base">Qué haría falta para no perder</CardTitle>
+                <CardDescription>
+                  Descuento del proveedor sobre el costo, sin cambiar el precio de venta. El primero es para que deje de
+                  perder por sí mismo; el segundo, para que además cubra su parte de los gastos de ruta.
+                </CardDescription>
+              </CardHeader>
+              <Table className="[&_td]:px-2 [&_td]:whitespace-nowrap [&_th]:px-2">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{DIMS.find((d) => d.key === groupBy)!.label}</TableHead>
+                    <TableHead className="text-right">Utilidad neta</TableHead>
+                    <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Contribución</TableHead>
+                    <TableHead className="text-right">
+                      Para no
+                      <br />
+                      perder
+                    </TableHead>
+                    <TableHead className="text-right">
+                      Para cubrir
+                      <br />
+                      gasto de ruta
+                    </TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {breakEven.map((g) => (
+                    <TableRow key={g.key}>
+                      <TableCell className="max-w-72 truncate" title={g.label}>
+                        {g.label}
+                      </TableCell>
+                      {money(result(g))}
+                      {money(contribution(g), HIDE_BELOW_SM)}
+                      <TableCell className="text-right tabular-nums">{g.forContribution ? percent(g.forContribution) : "-"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{percent(g.forNet)}</TableCell>
+                      <TableCell className="w-px">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() =>
+                            addAdjustment({
+                              dim: groupBy as Adjustment["dim"],
+                              key: g.key,
+                              discount: Math.ceil(g.forNet * 1000) / 10,
+                            })
+                          }
+                        >
+                          Simular
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+
+          {pareto && (
+            <Card>
+              <CardHeader className="p-3 sm:p-4 gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base">Concentración de la contribución</CardTitle>
+                  <Tabs value={paretoDim} onValueChange={(v) => setParetoDim(v as "product" | "client")}>
+                    <TabsList className="h-8">
+                      <TabsTrigger value="product" className="text-xs">
+                        Productos
+                      </TabsTrigger>
+                      <TabsTrigger value="client" className="text-xs">
+                        Clientes
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+                <CardDescription>
+                  {pareto.to80} de {pareto.count} {paretoDim === "product" ? "productos" : "clientes"} (
+                  {percent(pareto.to80 / pareto.count)}) dan el 80% de la contribución.
+                  {pareto.losers > 0 &&
+                    ` ${pareto.losers} ${paretoDim === "product" ? "productos" : "clientes"} restan ${formatMoney(-pareto.lost)}.`}
+                </CardDescription>
+              </CardHeader>
+              <div className="h-56 px-2 pb-3">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={pareto.points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                    <CartesianGrid vertical={false} stroke="#e5e7eb" />
+                    <XAxis
+                      dataKey="share"
+                      type="number"
+                      domain={[0, 100]}
+                      ticks={[0, 20, 40, 60, 80, 100]}
+                      tickFormatter={(v) => `${v}%`}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 12, fill: "#6b7280" }}
+                    />
+                    <YAxis
+                      domain={[0, Math.ceil(pareto.peak / 10) * 10]}
+                      tickFormatter={(v) => `${v}%`}
+                      tickLine={false}
+                      axisLine={false}
+                      width={44}
+                      tick={{ fontSize: 12, fill: "#6b7280" }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`${Number(value).toFixed(1)}%`, "Contribución acumulada"]}
+                      labelFormatter={(v) => `${Number(v).toFixed(0)}% de los ${paretoDim === "product" ? "productos" : "clientes"}`}
+                      contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                    />
+                    <ReferenceLine y={80} stroke="#94a3b8" strokeDasharray="4 4" />
+                    <Line dataKey="cumulative" stroke={COLOR_GROSS} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="p-3 sm:p-4">
