@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Calculator, ChevronDown, EyeOff, FileText, Filter, RefreshCw, Scale, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -157,6 +157,7 @@ function compactMoney(value: number) {
   return `$${value.toLocaleString("es-MX", { notation: "compact", maximumFractionDigits: 1 })}`;
 }
 
+const CHART_MIN_MONTHS = 6;
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
 function monthShort(month: string) {
@@ -222,6 +223,8 @@ export default function ProfitabilityView() {
   const [from, setFrom] = useState(() => shiftMonth(lastCompleteMonth(), -11));
   const [data, setData] = useState<Profitability | null>(null);
   const [previous, setPrevious] = useState<Profitability | null>(null);
+  // The months before a short period, so the monthly chart always spans CHART_MIN_MONTHS.
+  const [chartLead, setChartLead] = useState<Profitability | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -304,11 +307,17 @@ export default function ProfitabilityView() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
-    Promise.all([load(from, to), load(shiftMonth(from, -12), shiftMonth(to, -12))])
-      .then(([current, prior]) => {
+    const chartFrom = shiftMonth(to, 1 - CHART_MIN_MONTHS);
+    Promise.all([
+      load(from, to),
+      load(shiftMonth(from, -12), shiftMonth(to, -12)),
+      chartFrom < from ? load(chartFrom, shiftMonth(from, -1)) : null,
+    ])
+      .then(([current, prior, lead]) => {
         if (cancelled) return;
         setData(current);
         setPrevious(prior);
+        setChartLead(lead);
       })
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
@@ -506,17 +515,19 @@ export default function ProfitabilityView() {
     setDropped((d) => (droppedCount(key) === 0 ? [...new Set([...d, ...ids])] : d.filter((id) => !ids.includes(id))));
   };
 
-  // Months of the period, for the chart: gross and net result per month.
+  // Gross and net result per month: the period, plus the real months before it when it's shorter
+  // than CHART_MIN_MONTHS (a single month alone is just two dots).
+  const chartFrom = chartLead ? shiftMonth(to, 1 - CHART_MIN_MONTHS) : from;
   const chart = useMemo(() => {
     const byMonth = new Map<string, Sums>();
-    for (let m = from; m <= to; m = shiftMonth(m, 1)) byMonth.set(m, emptySums());
-    for (const f of filtered) {
+    for (let m = chartFrom; m <= to; m = shiftMonth(m, 1)) byMonth.set(m, emptySums());
+    for (const f of [...applyFilters(chartLead), ...filtered]) {
       const s = byMonth.get(f[0]);
       if (s) add(s, f);
     }
     return [...byMonth.entries()].map(([m, s]) => ({ label: monthShort(m), bruta: gross(s), neta: result(s) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, from, to, commissionMode, supplierDiscounts, routeKey, importCosts, adjustments]);
+  }, [filtered, chartLead, chartFrom, to, commissionMode, supplierDiscounts, routeKey, importCosts, adjustments]);
 
   // The period's route costs by pool and component (not affected by the filters).
   const pools = useMemo(() => {
@@ -1103,16 +1114,27 @@ export default function ProfitabilityView() {
           <Card>
             <CardHeader className="p-3 sm:p-4">
               <CardTitle className="text-base">Utilidad por mes</CardTitle>
+              {chartLead && (
+                <CardDescription>
+                  Con los {CHART_MIN_MONTHS} meses hasta {formatMonth(to)}; el periodo elegido va marcado.
+                </CardDescription>
+              )}
             </CardHeader>
             <div className="h-56 px-2 pb-3">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chart} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#6b7280" }} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} padding={{ left: 16, right: 16 }} tick={{ fontSize: 12, fill: "#6b7280" }} />
                   <YAxis tickFormatter={compactMoney} tickLine={false} axisLine={false} width={56} tick={{ fontSize: 12, fill: "#6b7280" }} />
                   <Tooltip formatter={(value, name) => [formatMoney(Number(value)), name]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                   <Legend iconType="plainline" wrapperStyle={{ fontSize: 12 }} />
                   <ReferenceLine y={0} stroke="#94a3b8" />
+                  {chartLead &&
+                    (from === to ? (
+                      <ReferenceLine x={monthShort(to)} stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 4" />
+                    ) : (
+                      <ReferenceArea x1={monthShort(from)} x2={monthShort(to)} fill="#94a3b8" fillOpacity={0.15} />
+                    ))}
                   <Line name="Utilidad bruta" dataKey="bruta" stroke={COLOR_GROSS} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                   <Line name="Utilidad neta" dataKey="neta" stroke={COLOR_NET} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                 </LineChart>
