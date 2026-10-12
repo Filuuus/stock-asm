@@ -201,3 +201,36 @@ class ImportedTests(SimpleTestCase):
             (8, 0, 30),  # brand 30 all foreign
         ]
         self.assertEqual(imported_products(purchases, catalog), {1, 5, 8})
+
+
+class MatchClientTests(SimpleTestCase):
+    CLIENTS = [(1, 'PEDRO RAMON TELLO NUÑEZ'), (2, 'PEDRO RAMON TELLO SOLIS'), (3, 'LECHEROS UNIDOS DE LAS PALMAS, SPR DE RL'),
+               (4, 'ANDRES BRISEÑO OCHOA')]
+
+    def test_matches_when_one_client_holds_every_word(self):
+        from .places import match_client
+        self.assertEqual(match_client('Pedro Ramón Tello Núñez', self.CLIENTS), 1)
+        self.assertEqual(match_client('Lecheros Unidos Las Palmas', self.CLIENTS), 3)
+        self.assertEqual(match_client('Casa Andrés Briceño Ochoa', self.CLIENTS), 4)  # small typo
+
+    def test_ambiguous_or_too_short_names_stay_unmatched(self):
+        from .places import match_client
+        self.assertIsNone(match_client('Pedro Ramón Tello', self.CLIENTS))  # two clients
+        self.assertIsNone(match_client('Pedro', self.CLIENTS))
+        self.assertIsNone(match_client('Andrés Vázquez', [(9, 'ANDRES VELAZQUEZ LUNA')]))
+
+    def test_reads_pin_coordinates_and_names_from_the_note(self):
+        import tempfile
+        from pathlib import Path
+        from .places import read_takeout
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'Save').mkdir()
+            (Path(tmp) / 'Save' / 'Lista.csv').write_text(
+                'Título,Nota,URL,Etiquetas,Comentario\n,,,,\n'
+                'Marcador,Ana Lira,"https://www.google.com/maps/search/20.5,-101.5",,\n'
+                '"19°30\'00.0""N 101°30\'00.0""W",Eva Mora,https://www.google.com/maps/place/x/data=!1s0x1,,\n'
+                'Chincheta,,"https://www.google.com/maps/search/1.0,2.0",,\n', encoding='utf-8')
+            places = list(read_takeout(tmp))
+        self.assertEqual([p['name'] for p in places], ['Ana Lira', 'Eva Mora'])
+        self.assertEqual((places[0]['lat'], places[0]['lng']), (20.5, -101.5))
+        self.assertAlmostEqual(places[1]['lng'], -101.5, places=4)

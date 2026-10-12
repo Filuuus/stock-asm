@@ -87,3 +87,18 @@ class VehicleMonthlyCost(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['vehicle', 'month', 'kind'], name='unique_vehicle_month_cost')]
+
+
+class SavedPlace(models.Model):
+    """A place saved in Google Maps by the sales team (import_maps_takeout), and the ERP client it is,
+    when known. Names stay in the local database only: the repo is public."""
+    url = models.CharField(max_length=500, unique=True)  # the place's Maps link; labeled places get a geo: key
+    name = models.CharField(max_length=200)  # the list note when there is one (pins are named in it), else the title
+    list_name = models.CharField(max_length=100)
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    client_id = models.IntegerField(null=True, blank=True)  # admClientes.CIDCLIENTEPROVEEDOR
+    matched_by = models.CharField(max_length=10, blank=True)  # 'auto' (name match) or 'manual'
+
+    def __str__(self):
+        return self.name
