@@ -1,18 +1,19 @@
 """Tests for the fleet GPS log's pure functions, on made-up Zeek/Notion data."""
 
-from datetime import datetime
+from datetime import date, datetime
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .services import LOCAL_TZ, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
+from .services import LOCAL_TZ, close_month, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
 
 
 def point(odo, fecha='/Date(1759363200000)/', lat=2053123, lon=-10275000, ng=None):
     return {'odo': str(odo), 'Fecha': fecha, 'Latitud': lat, 'Longitud': lon, 'ng': ng}
 
 
-def log_page(name, day, km, odometer, route=None):
-    return {'properties': {
+def log_page(name, day, km, odometer, route=None, page_id=None):
+    return {'id': page_id or f'{name}-{day}', 'properties': {
         'Vehículo': {'type': 'title', 'title': [{'plain_text': name}]},
         'Fecha': {'type': 'date', 'date': {'start': day}},
         'Recorrido Diario': {'type': 'number', 'number': km},
@@ -62,3 +63,24 @@ class SummaryTests(SimpleTestCase):
         self.assertEqual(summary['Hilux']['odometer'], 1010.1)
         self.assertEqual([d for d, _, _ in summary['Hilux']['days']], ['2026-09-01', '2026-09-02'])
         self.assertEqual(summary['Fiat']['km'], 0)
+        self.assertEqual(summary['Hilux']['page_ids'], ['Hilux-2026-09-02', 'Hilux-2026-09-01'])
+
+
+class CloseMonthTests(SimpleTestCase):
+    @patch('fleet.services.notion')
+    @patch('fleet.services.notion_query')
+    def test_archives_daily_entries_and_skips_vehicles_already_closed(self, query, notion):
+        query.side_effect = [
+            [log_page('Reporte Mensual - Fiat', '2026-09-01', 7, 500)],
+            [log_page('Hilux', '2026-09-01', 5, 1000), log_page('Fiat', '2026-09-03', 7, 500)],
+        ]
+        close_month(date(2026, 9, 1), date(2026, 9, 30), lambda msg: None)
+        calls = [(c.args[0], c.args[1]) for c in notion.call_args_list]
+        # Only Hilux gets a monthly entry, created before its daily entry is archived; Fiat's
+        # leftover daily entry is archived too.
+        self.assertEqual(calls, [
+            ('POST', 'pages'),
+            ('PATCH', 'pages/Hilux-2026-09-01'),
+            ('PATCH', 'pages/Fiat-2026-09-03'),
+        ])
+        self.assertEqual(notion.call_args_list[1].args[2], {'archived': True})

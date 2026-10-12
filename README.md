@@ -87,7 +87,7 @@ python manage.py sync_fleet_log                     # yesterday; or --date 2026-
 python manage.py close_fleet_month                  # previous month; or --year 2026 --month 9
 ```
 
-`sync_fleet_log` writes one log entry per vehicle that moved (km, Google Maps route, one block per trip) and adds the km to the vehicle card's `Kilometraje`. `close_fleet_month` adds a `Reporte Mensual - <vehículo>` entry per vehicle. Both skip work already done, so re-running is safe. Schedule the first nightly and the second on the 1st.
+`sync_fleet_log` writes one log entry per vehicle that moved (km, Google Maps route, one block per trip) and adds the km to the vehicle card's `Kilometraje`. `close_fleet_month` adds a `Reporte Mensual - <vehículo>` entry per vehicle (date, km and route link for each day) and then archives that month's daily entries to stay within Notion's limits; archived pages sit in Notion's trash for 30 days, after which the per-trip detail is gone. Both skip work already done, so re-running is safe. Schedule the first nightly and the second on the 1st.
 
 Configuration goes in `backend/.env` (never in code, the repo is public):
 
