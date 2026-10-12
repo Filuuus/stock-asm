@@ -1,9 +1,13 @@
 import os
+from dotenv import load_dotenv
 import json
 import requests
 from datetime import datetime, timedelta, timezone
 
 # --- 1. CONFIGURACIÓN Y CREDENCIALES (Variables de Entorno) ---
+
+load_dotenv()
+
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "TU_TOKEN_DE_NOTION")
 DATABASE_BITACORA_ID = os.getenv("DATABASE_BITACORA_ID", "TU_ID_DE_BASE_DE_DATOS")
 
