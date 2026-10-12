@@ -158,6 +158,7 @@ function compactMoney(value: number) {
 }
 
 const CHART_MIN_MONTHS = 6;
+const FETCH_DELAY_MS = 600;
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
 function monthShort(month: string) {
@@ -308,7 +309,8 @@ export default function ProfitabilityView() {
     setLoading(true);
     setError(null);
     const chartFrom = shiftMonth(to, 1 - CHART_MIN_MONTHS);
-    Promise.all([
+    // Waits for the month arrows to settle, so clicking through months fetches only the last one.
+    const timer = setTimeout(() => Promise.all([
       load(from, to),
       load(shiftMonth(from, -12), shiftMonth(to, -12)),
       chartFrom < from ? load(chartFrom, shiftMonth(from, -1)) : null,
@@ -320,9 +322,10 @@ export default function ProfitabilityView() {
         setChartLead(lead);
       })
       .catch((err) => !cancelled && setError(err.message))
-      .finally(() => !cancelled && setLoading(false));
+      .finally(() => !cancelled && setLoading(false)), refresh ? 0 : FETCH_DELAY_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [from, to, isManagement, reload]);
 
@@ -333,15 +336,17 @@ export default function ProfitabilityView() {
       return;
     }
     let cancelled = false;
-    apiFetch(`/api/profitability/?from=${from}&to=${to}&drop=${dropped.join(",")}`)
+    // Same wait, for ticking several checkboxes in a row.
+    const timer = setTimeout(() => apiFetch(`/api/profitability/?from=${from}&to=${to}&drop=${dropped.join(",")}`)
       .then(async (res) => {
         if (!res.ok) throw new Error("No se pudo calcular el escenario.");
         const json = await res.json();
         if (!cancelled) setScenario(json);
       })
-      .catch((err) => !cancelled && setError(err.message));
+      .catch((err) => !cancelled && setError(err.message)), FETCH_DELAY_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [from, to, isManagement, reload, dropped]);
 
