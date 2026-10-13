@@ -2,7 +2,7 @@
 
 Copies the trip history of each company vehicle from the Zeek GPS API into a Notion workspace: one log entry per vehicle per day, a running odometer on each vehicle's card, and a monthly summary per vehicle. It replaces the manual mileage log.
 
-Based on Emmanuel Alcalá's original standalone scripts (`rastreo_zeek.py`, `cierre_mensual.py`), now two Django management commands. The app reads Zeek and writes Notion only; it never touches the ERP or the local database.
+Based on Emmanuel Alcalá's original standalone scripts (`rastreo_zeek.py`, `cierre_mensual.py`), now two Django management commands. The app reads Zeek and writes Notion, plus daily km per unit to the local database; it never touches the ERP.
 
 ## What it does
 
@@ -66,13 +66,18 @@ venv/bin/python manage.py sync_fleet_log                       # yesterday
 venv/bin/python manage.py sync_fleet_log --date 2026-10-06     # a specific day, e.g. to fill a gap
 venv/bin/python manage.py close_fleet_month                    # previous month
 venv/bin/python manage.py close_fleet_month --year 2026 --month 9
+venv/bin/python manage.py store_fleet_km                       # yesterday's km per unit into the local DB
+venv/bin/python manage.py store_fleet_km --from 2026-10-02 --to 2026-10-09
 ```
+
+`store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move; a unit Zeek fails to answer for gets no row, so gaps show. Re-running overwrites. Zeek has no data before 2026-10-02, so this table is the only long-term km record.
 
 Schedule `sync_fleet_log` every morning to log the previous day, and `close_fleet_month` on the 1st of each month. For example, with cron:
 
 ```cron
 0 6 * * * cd /path/to/stock-asm/backend && venv/bin/python manage.py sync_fleet_log
 0 7 1 * * cd /path/to/stock-asm/backend && venv/bin/python manage.py close_fleet_month
+15 6 * * * cd /path/to/stock-asm/backend && venv/bin/python manage.py store_fleet_km
 ```
 
 Days are calendar days in Mexico's fixed UTC-6. Mexico has had no daylight saving time since 2022.

@@ -1,9 +1,10 @@
 """Fleet GPS log: pulls each vehicle's trips from Zeek GPS and writes them to
 Notion (a daily log database plus one card per vehicle holding its odometer).
+Separately, store_km keeps each unit's daily km in the local database, since
+Notion's daily entries get archived and Zeek keeps no long history.
 
-Nothing here touches the ERP or the local database: Zeek is read, Notion is the
-store. All credentials and ids come from settings (backend/.env), since the
-repo is public."""
+Nothing here touches the ERP. All credentials and ids come from settings
+(backend/.env), since the repo is public."""
 
 import json
 import re
@@ -12,6 +13,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
+
+from .models import VehicleDayKm
 
 # Zeek reports in fixed UTC-6 (Mexico has had no DST since 2022).
 LOCAL_TZ = timezone(timedelta(hours=-6))
@@ -99,10 +102,16 @@ def zeek_time(raw):
     return datetime.fromtimestamp(int(re.search(r'\d+', raw).group()) / 1000, tz=LOCAL_TZ)
 
 
+def day_km(trips):
+    """Km between the day's first and last odometer reading (Zeek's odo is in meters)."""
+    first, last = trips[0]['listaUbicaciones'][0], trips[-1]['listaUbicaciones'][-1]
+    return round((int(last['odo']) - int(first['odo'])) / 1000, 2)
+
+
 def summarize_day(trips):
     """Daily km, a Google Maps route link and one Notion callout per trip."""
-    first, last = trips[0]['listaUbicaciones'][0], trips[-1]['listaUbicaciones'][-1]
-    km = round((int(last['odo']) - int(first['odo'])) / 1000, 2)
+    first = trips[0]['listaUbicaciones'][0]
+    km = day_km(trips)
 
     points = [f"{zeek_coord(first['Latitud'])},{zeek_coord(first['Longitud'])}"]
     blocks = []
@@ -177,6 +186,26 @@ def sync_day(day, log):
         })
         notion('PATCH', f'pages/{card_id}', {'properties': {'Kilometraje': {'number': odometer}}})
         log(f'[{name}] {km} km, odómetro {odometer} km.')
+
+
+def store_km(first_day, last_day, log):
+    """Saves every unit's km for each day in the range, 0 when it didn't move. Overwrites
+    existing rows, so re-running is safe; a unit Zeek fails to answer for is skipped and
+    left without a row for that day, so the gap is visible."""
+    day = first_day
+    while day <= last_day:
+        start = datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
+        end = start + timedelta(hours=23, minutes=59, seconds=59)
+        for n, imei in enumerate(settings.ZEEK_FLEET, 1):
+            try:
+                trips = fetch_zeek_trips(imei, start, end)
+            except (OSError, ValueError) as e:
+                log(f'[unidad {n}] {day}: error leyendo Zeek: {e}')
+                continue
+            km = day_km(trips) if trips else 0
+            VehicleDayKm.objects.update_or_create(imei=imei, day=day, defaults={'km': km})
+            log(f'[unidad {n}] {day}: {km} km')
+        day += timedelta(days=1)
 
 
 # --- Monthly close ------------------------------------------------------------------------

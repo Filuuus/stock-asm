@@ -3,9 +3,10 @@
 from datetime import date, datetime
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
-from .services import LOCAL_TZ, close_month, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
+from .models import VehicleDayKm
+from .services import LOCAL_TZ, close_month, store_km, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
 
 
 def point(odo, fecha='/Date(1759363200000)/', lat=2053123, lon=-10275000, ng=None):
@@ -84,3 +85,23 @@ class CloseMonthTests(SimpleTestCase):
             ('PATCH', 'pages/Fiat-2026-09-03'),
         ])
         self.assertEqual(notion.call_args_list[1].args[2], {'archived': True})
+
+
+@override_settings(ZEEK_FLEET={'111': 'card-a', '222': 'card-b', '333': 'card-c'})
+class StoreKmTests(TestCase):
+    @patch('fleet.services.fetch_zeek_trips')
+    def test_stores_km_and_zero_and_skips_units_zeek_failed_on(self, fetch):
+        trips = [{'listaUbicaciones': [point(100000), point(130250)]}]
+
+        def fake_fetch(imei, start, end):
+            if imei == '333':
+                raise OSError('down')
+            return trips if imei == '111' else []
+        fetch.side_effect = fake_fetch
+        store_km(date(2026, 10, 2), date(2026, 10, 3), lambda msg: None)
+        store_km(date(2026, 10, 3), date(2026, 10, 3), lambda msg: None)  # re-run overwrites, no duplicates
+        rows = {(r.imei, r.day.isoformat()): float(r.km) for r in VehicleDayKm.objects.all()}
+        self.assertEqual(rows, {
+            ('111', '2026-10-02'): 30.25, ('222', '2026-10-02'): 0,
+            ('111', '2026-10-03'): 30.25, ('222', '2026-10-03'): 0,
+        })

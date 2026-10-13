@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'facturas',
     'analytics',
     'fleet',
+    'profitability',
 ]
 
 MIDDLEWARE = [
@@ -219,3 +220,7 @@ ZEEK_FLEET = dict(
 )
 NOTION_TOKEN = os.getenv('NOTION_TOKEN', '')
 NOTION_FLEET_LOG_DB = os.getenv('NOTION_FLEET_LOG_DB', '')
+
+# Rentabilidad: the accounting share holding the accountant's "Reportes Mensuales <year>.xlsx"
+# (one folder per year), read by import_vehicle_reports. Empty = not configured.
+VEHICLE_REPORTS_DIR = os.getenv('VEHICLE_REPORTS_DIR', '')
