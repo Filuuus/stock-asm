@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsManagement
 
-from .models import ExcludedProduct, ProductWeight
+from .models import ExcludedProduct, ExcludedSaleLine, ProductWeight
 from .services import calculate_profitability, product_invoices
 from .setup import route_setup, save_route_setup
 
@@ -80,6 +80,30 @@ def set_exclusion(request):
         ExcludedProduct.objects.get_or_create(producto_id=product_id, defaults={'created_by': request.user})
     else:
         ExcludedProduct.objects.filter(producto_id=product_id).delete()
+    return Response({'ok': True})
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def set_line_exclusion(request):
+    """{"line_id": 9, "document_id": 1, "product_id": 2, "excluded": true, "folio": "B 123",
+    "date": "2026-01-31", "client_id": 3, "reason": "Regalo"}; with excluded false only line_id is needed."""
+    try:
+        line_id = int(request.data['line_id'])
+        if request.data.get('excluded'):
+            ExcludedSaleLine.objects.update_or_create(
+                movement_id=line_id,
+                defaults={
+                    'document_id': int(request.data['document_id']), 'producto_id': int(request.data['product_id']),
+                    'folio': str(request.data['folio'])[:20], 'date': date.fromisoformat(request.data['date']),
+                    'client_id': int(request.data['client_id']), 'reason': str(request.data.get('reason', ''))[:60],
+                    'created_by': request.user,
+                },
+            )
+        else:
+            ExcludedSaleLine.objects.filter(movement_id=line_id).delete()
+    except (KeyError, TypeError, ValueError):
+        return Response({'error': 'Datos de la partida inválidos.'}, status=400)
     return Response({'ok': True})
 
 

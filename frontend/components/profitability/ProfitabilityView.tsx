@@ -47,12 +47,23 @@ interface Product {
   source: WeightSource;
 }
 
-type Pools = Record<string, Record<string, number>>; // pool -> component -> amount
+type Pools = Record<string, Record<string, number>>;
+
+interface ExcludedLine {
+  line_id: number;
+  document_id: number;
+  product_id: number;
+  folio: string;
+  date: string;
+  client_id: number;
+  reason: string;
+} // pool -> component -> amount
 
 interface Profitability {
   facts: Fact[];
   excluded: number[]; // product ids left out altogether, with their returns and credit notes
   unreliable_cost: number[]; // goods whose ERP cost is 0 or a guess: their margin isn't real
+  excluded_lines: ExcludedLine[]; // single invoice lines left out (gifts and such), dated in the period
   products: Record<string, Product>;
   clients: Record<string, string>;
   route_costs: Record<string, Pools>; // month -> pools
@@ -589,6 +600,16 @@ export default function ProfitabilityView() {
   // What the selection carries: a PDF leaves out the costs of the rest of the business (import costs, the
   // service crew) when none of it applies to what's shown.
   const selectionImports = filtered.some((f) => f[13] > 0);
+  // "regalo: 20, error de captura: 1" for the method notes.
+  const excludedReasons = Object.entries(
+    (data?.excluded_lines ?? []).reduce<Record<string, number>>((acc, l) => {
+      const r = (l.reason || "sin motivo").toLowerCase();
+      acc[r] = (acc[r] ?? 0) + 1;
+      return acc;
+    }, {}),
+  )
+    .map(([r, n]) => `${r}: ${n}`)
+    .join(", ");
   const unreliableShown = data ? data.unreliable_cost.filter((p) => filtered.some((f) => f[3] === p)).length : 0;
   const selectionServices = filtered.some((f) => f[3] !== null && data?.products[f[3]]?.category === "S");
   const poolPrintClass = (pool: string) => (pool === "SERVICIOS" && !selectionServices ? "print:hidden" : undefined);
@@ -897,7 +918,10 @@ export default function ProfitabilityView() {
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2" disabled={!data} onSelect={() => setExcludedOpen(true)}>
                 <EyeOff className="w-4 h-4" aria-hidden />
-                Productos excluidos{data?.excluded.length ? ` (${data.excluded.length})` : ""}
+                Exclusiones
+                {data && data.excluded.length + data.excluded_lines.length > 0
+                  ? ` (${data.excluded.length + data.excluded_lines.length})`
+                  : ""}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1296,6 +1320,8 @@ export default function ProfitabilityView() {
                 </>
               )}
               {unallocated >= 1 && `${formatMoney(unallocated)} de gastos de ruta sin repartir. `}
+              {data.excluded_lines.length > 0 &&
+                `${data.excluded_lines.length === 1 ? "1 partida excluida" : `${data.excluded_lines.length} partidas excluidas`}. `}
               {unreliableShown > 0 &&
                 `${unreliableShown === 1 ? "1 producto" : `${unreliableShown} productos`} sin costo confiable en el ERP: su margen no es real. `}
               {notesLink}
@@ -1560,6 +1586,13 @@ export default function ProfitabilityView() {
                 {data.excluded.length > 0 &&
                   ` ${data.excluded.length === 1 ? "Una venta única se deja fuera" : `${data.excluded.length} ventas únicas se dejan fuera`} para no distorsionar los resultados.`}
               </li>
+              {data.excluded_lines.length > 0 && (
+                <li>
+                  Se dejan fuera {data.excluded_lines.length === 1 ? "una partida" : `${data.excluded_lines.length} partidas`}{" "}
+                  de facturas del periodo ({excludedReasons}): no son ventas normales y su costo no se carga a ningún
+                  producto.
+                </li>
+              )}
               <li>
                 Costo: el costo de cada partida registrado en el ERP.
                 <span className={cn(!selectionImports && "print:hidden")}>
@@ -1799,14 +1832,45 @@ export default function ProfitabilityView() {
         <Dialog open={excludedOpen} onOpenChange={setExcludedOpen}>
           <DialogContent className="max-w-xl">
             <DialogHeader>
-              <DialogTitle>Productos excluidos</DialogTitle>
+              <DialogTitle>Exclusiones</DialogTitle>
             </DialogHeader>
+            <p className="text-sm font-medium text-gray-700">Productos completos</p>
             <ul className="divide-y">
               {data.excluded.length === 0 && <li className="py-3 text-sm text-gray-500">Ninguno.</li>}
               {data.excluded.map((id) => (
                 <li key={id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="truncate">{labelOf("product", String(id))}</span>
                   <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
+                    Volver a incluir
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <p className="text-sm font-medium text-gray-700">Partidas sueltas del periodo</p>
+            <ul className="max-h-80 divide-y overflow-y-auto">
+              {data.excluded_lines.length === 0 && (
+                <li className="py-3 text-sm text-gray-500">
+                  Ninguna. Se excluyen desde las facturas de un producto (icono de factura en la tabla).
+                </li>
+              )}
+              {data.excluded_lines.map((l) => (
+                <li key={l.line_id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className="min-w-0">
+                    <span className="block truncate">{labelOf("product", String(l.product_id))}</span>
+                    <span className="block truncate text-xs text-gray-500">
+                      {l.folio} · {formatDay(l.date)} · {data.clients[l.client_id] ?? `Cliente ${l.client_id}`}
+                      {l.reason && ` · ${l.reason}`}
+                    </span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setLineExcluded(l, false)
+                        .then(() => setReload((n) => n + 1))
+                        .catch((err) => setExcludeError(err.message))
+                    }
+                  >
                     Volver a incluir
                   </Button>
                 </li>
@@ -1907,6 +1971,8 @@ export default function ProfitabilityView() {
       {data && invoicesOf && (
         <ProductInvoicesDialog
           title={labelOf("product", invoicesOf)}
+          productId={Number(invoicesOf)}
+          onChanged={() => setReload((n) => n + 1)}
           query={new URLSearchParams({
             from,
             to,
@@ -2255,12 +2321,50 @@ interface InvoiceLine {
   units: number;
   net: number;
   cost: number;
+  line_id: number;
+  excluded: boolean;
+}
+
+// Leaves one product on one invoice out of Rentabilidad, or brings it back.
+async function setLineExcluded(line: { line_id: number }, excluded: boolean, extra = {}) {
+  const res = await apiFetch("/api/profitability/excluded-lines/", {
+    method: "POST",
+    body: JSON.stringify({ ...line, excluded, ...extra }),
+  });
+  if (!res.ok) throw new Error("No se pudo guardar el cambio.");
 }
 
 // The invoice and return lines behind a product's numbers, for the period and the zone/client filters.
-function ProductInvoicesDialog({ title, query, onClose }: { title: string; query: string; onClose: () => void }) {
+// Each line can be left out of the figures (gifts invoiced at $0 or a few cents, and such).
+function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: {
+  title: string;
+  productId: number;
+  query: string;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const [lines, setLines] = useState<InvoiceLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+
+  const toggle = async (l: InvoiceLine) => {
+    const reason = l.excluded ? "" : window.prompt("Motivo para dejar fuera esta partida:", "Regalo");
+    if (reason === null) return;
+    try {
+      await setLineExcluded({ line_id: l.line_id }, !l.excluded, {
+        document_id: l.invoice_id,
+        product_id: productId,
+        folio: l.folio,
+        date: l.date,
+        client_id: l.client_id,
+        reason,
+      });
+      setVersion((v) => v + 1);
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2274,7 +2378,7 @@ function ProductInvoicesDialog({ title, query, onClose }: { title: string; query
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [query, version]);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -2296,12 +2400,13 @@ function ProductInvoicesDialog({ title, query, onClose }: { title: string; query
                   <TableHead className="text-right">Unidades</TableHead>
                   <TableHead className="text-right">Venta</TableHead>
                   <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Utilidad bruta</TableHead>
+                  <TableHead className="w-px" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.length === 0 && <EmptyRow colSpan={7}>Sin facturas en el periodo.</EmptyRow>}
+                {lines.length === 0 && <EmptyRow colSpan={8}>Sin facturas en el periodo.</EmptyRow>}
                 {lines.map((l) => (
-                  <TableRow key={l.invoice_id}>
+                  <TableRow key={l.line_id} className={cn(l.excluded && "text-gray-400")}>
                     <TableCell className="whitespace-nowrap">
                       <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
                       {l.return && <span className="ml-1 text-xs text-gray-500">(devolución)</span>}
@@ -2316,12 +2421,18 @@ function ProductInvoicesDialog({ title, query, onClose }: { title: string; query
                     <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
                       {formatMoney(l.net - l.cost)}
                     </TableCell>
+                    <TableCell className="whitespace-nowrap py-0 text-right">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l)}>
+                        {l.excluded ? "Volver a incluir" : "Excluir"}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
             <p className="mt-2 text-xs text-gray-500">
               Las notas de crédito que se repartieron sobre este producto no aparecen aquí; se ven al abrir cada factura.
+              Una partida excluida deja de contar en todas las cifras; la lista está en Configuración › Exclusiones.
             </p>
           </div>
         )}

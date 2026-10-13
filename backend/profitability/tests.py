@@ -259,11 +259,20 @@ class DollarCostTests(SimpleTestCase):
         from datetime import datetime
         from .services import aggregate_sales
         lines = [
-            (4, datetime(2025, 9, 1), 7, 1, 100, 1, 10, 25000, 750),  # dollar cost read as pesos
-            (4, datetime(2025, 9, 2), 7, 1, 200, 1, 1, 5000, 0),  # cost 0
-            (4, datetime(2025, 9, 3), 7, 1, 300, 1, 1, 4000, 100),  # never purchased, 97.5% margin
-            (4, datetime(2025, 9, 4), 7, 1, 400, 3, 1, 900, 0),  # a service: no cost is normal
+            (1, 4, datetime(2025, 9, 1), 7, 1, 100, 1, 10, 25000, 750),  # dollar cost read as pesos
+            (2, 4, datetime(2025, 9, 2), 7, 1, 200, 1, 1, 5000, 0),  # cost 0
+            (3, 4, datetime(2025, 9, 3), 7, 1, 300, 1, 1, 4000, 100),  # never purchased, 97.5% margin
+            (4, 4, datetime(2025, 9, 4), 7, 1, 400, 3, 1, 900, 0),  # a service: no cost is normal
         ]
         rows, unreliable = aggregate_sales(lines, {100: self.BUYS}, {100, 200})
         self.assertAlmostEqual(next(r for r in rows if r[5] == 100)[8], 750 * 19.0)
         self.assertEqual(unreliable, [200, 300])
+
+    def test_excluded_lines_are_left_out(self):
+        from datetime import datetime
+        from .services import aggregate_sales
+        lines = [(1, 4, datetime(2025, 9, 1), 7, 1, 100, 1, 2, 0.02, 600),  # a gift
+                 (1, 4, datetime(2025, 9, 1), 7, 1, 101, 1, 5, 2000, 1500)]  # a real sale on the same invoice
+        lines[1] = (2, *lines[1][1:])  # its own line id
+        rows, _ = aggregate_sales(lines, {}, {100, 101}, excluded_lines={1})
+        self.assertEqual([r[5] for r in rows], [101])
