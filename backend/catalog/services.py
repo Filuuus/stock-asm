@@ -33,13 +33,14 @@ def save_photo(code, upload):
     if upload.size > MAX_UPLOAD_BYTES:
         raise PhotoError('La foto pesa más de 20 MB.')
     try:
-        im = ImageOps.exif_transpose(Image.open(upload)).convert('RGB')
+        im = ImageOps.exif_transpose(Image.open(upload)).convert('RGBA')
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         raise PhotoError('El archivo no es una imagen.')
     im.thumbnail((MAX_SIDE, MAX_SIDE))
     side = max(im.size)
+    # Transparent backgrounds (manufacturer PNGs) end up white, not black.
     square = Image.new('RGB', (side, side), 'white')
-    square.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+    square.paste(im, ((side - im.width) // 2, (side - im.height) // 2), im)
     name = secrets.token_hex(8) + '.webp'
     square.save(PRODUCTS_DIR / name, 'WEBP', quality=85)
     first = not ProductImage.objects.filter(producto_codigo=code).exists()
