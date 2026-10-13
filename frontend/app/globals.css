@@ -161,4 +161,13 @@
   body {
     background: #fff !important;
   }
+  /* Tighter rows than on screen: more of a table per page, and its total row doesn't end up alone. */
+  main td,
+  main th {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+  }
+  main tr {
+    break-inside: avoid;
+  }
 }

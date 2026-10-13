@@ -111,6 +111,8 @@ const POOL_LABELS: Record<string, string> = {
   SERVICIOS: "Servicios",
 };
 const NO_PRODUCT = "Sin producto";
+// Route-cost components merged into one printed row (route_costs' names); the rest, like rent, print as they are.
+const CREW_COMPONENTS = ["Sueldos", "Combustible", "Mantenimiento", "Seguros"];
 // Wording for the PDF's method notes; management's reasons (2026-10-13). Update COSTS_NOT_YET_COUNTED as
 // those costs get into the calculation.
 const SUPPLIER_NOTES_EXCLUDED =
@@ -826,6 +828,12 @@ export default function ProfitabilityView() {
         </p>
         {pdf.money && <p className="text-xs text-gray-500">{printCriteria}</p>}
         <p className="text-xs text-gray-500">Generado el {formatDay(todayISO())}</p>
+        {filterLabels.length > 0 && everything.kg > 0 && (
+          <p className="mt-2 text-sm text-gray-800">
+            Esta selección es el {percent(totals.kg / everything.kg)} del peso que movemos: {tonnes(totals.kg)} de{" "}
+            {tonnes(everything.kg)} en el periodo.
+          </p>
+        )}
         {pdf.compare && pdf.money && filterLabels.length > 0 && everything.net > 0 && rest.net > 0 && (
           <p className="mt-2 text-sm text-gray-800">
             Esta selección es el {percent(totals.net / everything.net)} de las ventas del periodo y deja{" "}
@@ -1478,7 +1486,7 @@ export default function ProfitabilityView() {
               </TableHeader>
               <TableBody>
                 {poolComponents.map((c) => (
-                  <TableRow key={c}>
+                  <TableRow key={c} className={cn(CREW_COMPONENTS.includes(c) && "print:hidden")}>
                     <TableCell>{c}</TableCell>
                     {Object.keys(POOL_LABELS).map((p) => (
                       <TableCell key={p} className={cn("text-right tabular-nums", poolPrintClass(p))}>
@@ -1487,6 +1495,16 @@ export default function ProfitabilityView() {
                     ))}
                   </TableRow>
                 ))}
+                {/* In print, one row for the crew and its vehicles: a route has one salesperson, so its payroll
+                    on a line of its own would be that person's pay. */}
+                <TableRow className="hidden print:table-row">
+                  <TableCell>Personal y vehículos</TableCell>
+                  {Object.keys(POOL_LABELS).map((p) => (
+                    <TableCell key={p} className={cn("text-right tabular-nums", poolPrintClass(p))}>
+                      {formatMoney(CREW_COMPONENTS.reduce((t, c) => t + (pools[p]?.[c] ?? 0), 0))}
+                    </TableCell>
+                  ))}
+                </TableRow>
                 <TableRow className="font-medium hover:bg-transparent">
                   <TableCell>Total</TableCell>
                   {Object.keys(POOL_LABELS).map((p) => (
