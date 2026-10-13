@@ -19,7 +19,8 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   if (method !== "GET" && method !== "HEAD") {
     const csrfToken = getCookie("csrftoken");
     if (csrfToken) headers.set("X-CSRFToken", csrfToken);
-    if (options.body && !headers.has("Content-Type")) {
+    // FormData (file uploads) sets its own multipart type and boundary.
+    if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
   }

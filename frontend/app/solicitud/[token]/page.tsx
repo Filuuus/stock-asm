@@ -16,7 +16,7 @@ interface PublicRequest {
   name: string;
   valid_until: string | null;
   total: number | null;
-  items: { code: string; name: string; image: string | null; quantity: number; unit_price: number | null; subtotal: number | null }[];
+  items: { name: string; image: string | null; quantity: number; unit_price: number | null; subtotal: number | null }[];
 }
 
 // The customer's personal link: status while it's reviewed; once approved, the
@@ -59,15 +59,15 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
       </div>
 
       <ul className="mt-6 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">
-        {req.items.map((item) => (
-          <li key={item.code} className="flex items-center gap-3 p-3 sm:p-4">
+        {req.items.map((item, i) => (
+          <li key={i} className="flex items-center gap-3 p-3 sm:p-4">
             <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded bg-gray-50">
               <Image src={item.image ? `/products/${item.image}` : "/placeholder.svg"} alt="" fill sizes="56px" className="object-cover" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="line-clamp-2 text-sm font-medium text-gray-800">{item.name}</p>
               <p className="text-xs text-gray-400">
-                SKU: {item.code} · {qty(item.quantity)} {Number(item.quantity) === 1 ? "pieza" : "piezas"}
+                {qty(item.quantity)} {Number(item.quantity) === 1 ? "pieza" : "piezas"}
                 {approved && item.unit_price !== null && ` × ${formatMoney(item.unit_price)}`}
               </p>
             </div>
@@ -83,6 +83,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
       {approved && req.total !== null && (
         <p className="mt-4 text-right text-lg font-semibold text-gray-900">
           Total: <span className="num">{formatMoney(req.total)}</span>
+          <span className="block text-xs font-normal text-gray-500">IVA incluido</span>
         </p>
       )}
     </main>

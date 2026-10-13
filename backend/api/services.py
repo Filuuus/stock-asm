@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import unicodedata
 from collections import defaultdict
 from functools import lru_cache
@@ -7,9 +8,63 @@ from functools import lru_cache
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connections
+from django.utils.text import slugify
 from .models import AdmClasificacionesValores, AdmProductos
-from catalog.services import get_images_by_codes, get_public_price_codes
+from catalog.models import ProductDescription
+from catalog.services import get_images_by_codes
 from commissions.services import _classify_line
+
+# Public catalog rules (owner, 2026-10-13): logged-out visitors only see products
+# in stock; prices only for these categories (not chemicals, fans, services -
+# too many close competitors) and only while in stock; no part numbers anywhere
+# (customers would buy the exact piece elsewhere); and the brand only when it's
+# a real brand, never the distributor we buy from.
+PUBLIC_PRICE_CATEGORIES = {'R', 'R_NW', 'B'}
+PUBLIC_BRANDS = {
+    'GEA FARM TECHNOLOGIES': 'GEA',
+    'BIONAT-SANO, SA DE CV': 'Bionat',
+    'NORTH WEST RUBBER': 'North West Rubber',
+    'VES-ARTEX': 'VES-Artex',
+}
+NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
+# Out of stock but still public as "Sobre pedido" (management wants to push
+# them, 2026-10-13): mats and fans always, Bionat only if sold in the last 12
+# months (the rest is mostly discontinued).
+ON_ORDER_CATEGORIES = {'R_NW', 'R_FAN'}
+# GEA-style codes inside names ("VALVULA (7050-1935-000)", "JGO 4X7023-2721-060").
+CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
+# Keys that carry a part number (ours, GEA's, or a GEA document number).
+CODE_KEYS = {'CCODIGOPRODUCTO', 'code', 'gea_code', 'replacement'}
+TEXT_KEYS = {'CNOMBREPRODUCTO', 'desc', 'name', 'description'}
+RELATED_LIMIT = 8
+
+# The catalog's Bionat Línea: the whole brand is one category, split into a
+# few big groups by product type (the ERP's line and the commission split are
+# pay rules, not kinds). First match on the name wins; drafted from
+# bionatsano.com.mx's descriptions. Finer levels (species, stage) can come later.
+BIONAT_TYPES = [
+    ('ENERGIZER', 'Aditivos'),
+    ('CONCENTRADO', 'Alimentos'),
+    ('MIPRO', 'Minerales y premezclas'),
+    ('SUSAN', 'Minerales y premezclas'),
+    ('PREMIX', 'Minerales y premezclas'),
+    ('SANOLAC', 'Sustitutos de leche'),
+    ('MILSAN', 'Sustitutos de leche'),
+    ('LATTECCINO', 'Sustitutos de leche'),
+    ('FORMULA LACTEA', 'Sustitutos de leche'),
+    ('SUSTITUTO', 'Sustitutos de leche'),
+    ('LEMMI', 'Sustitutos de leche'),
+    # Starters, concentrates and complete feeds.
+    ('MEGGI', 'Alimentos'),
+    ('PREKERN', 'Alimentos'),
+    ('BONNI', 'Alimentos'),
+    ('OVISAN', 'Alimentos'),
+]
+
+
+def _bionat_type(name):
+    name = (name or '').upper()
+    return next((t for marker, t in BIONAT_TYPES if marker in name), 'Aditivos')
 
 # Values that mean "no supplier assigned" rather than a real brand.
 NO_BRAND_VALUES = {'(Ninguna)', '(Ninguno)'}
@@ -26,6 +81,7 @@ class InventoryRepository:
                 'CCODIGOPRODUCTO',
                 'CNOMBREPRODUCTO',
                 'CPRECIO1',
+                'CIMPUESTO1',
                 'CIDVALORCLASIFICACION1',
                 'CIDVALORCLASIFICACION2',
                 'CTIPOPRODUCTO',
@@ -117,7 +173,11 @@ class InventoryRepository:
             )
         )
 
-def get_inventory_catalog(is_worker):
+def get_inventory_catalog(is_worker, raw=False):
+    """The catalog as the API serves it. raw=True keeps the codes (server-side
+    use only - see _catalog)."""
+    if not raw and not is_worker:
+        return scrub(_catalog(False))
     cache_key = 'inventory_catalog'
     data = cache.get(cache_key)
     if data is None:
@@ -132,11 +192,19 @@ def get_inventory_catalog(is_worker):
         for product in data:
             # Commission categories double as the catalog's Categoría. An
             # empty zero-commission set: that list is a pay rule, not a kind.
-            product['category'] = _classify_line(product, brand_names, set())
+            category = _classify_line(product, brand_names, set())
+            # Mipro and Bovifit are Bionat; they only differ in commission rate.
+            product['category'] = 'B' if category.startswith('B') else category
             brand = brand_names.get(product.pop('CIDVALORCLASIFICACION1'))
             product['brand'] = brand if brand and brand not in NO_BRAND_VALUES else None
             line = brand_names.get(product.pop('CIDVALORCLASIFICACION2'))
             product['line'] = line if line and line not in NO_BRAND_VALUES else None
+            if product['category'] == 'B':
+                product['line'] = _bionat_type(product['CNOMBREPRODUCTO'])
+            # The public id: the URL, cart and quotes use it instead of the code.
+            product['key'] = str(product['CIDPRODUCTO'])
+            # Readable URL tail (/producto/86-pulsador-vacopuls-...), never with a code.
+            product['slug'] = slugify(CODE_IN_TEXT_RE.sub('', product['CNOMBREPRODUCTO'] or ''))[:60].strip('-')
             del product['CTIPOPRODUCTO']
             product['stock'] = stock.get(product['CIDPRODUCTO'], 0) or 0
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
@@ -147,28 +215,65 @@ def get_inventory_catalog(is_worker):
 
         cache.set(cache_key, data, timeout=600)
 
-    # Price visibility is role/resource-aware and computed per request, never
-    # cached - the cached catalog above is shared across every requester
-    # regardless of who's asking. Prices are private to company workers by
-    # default; a product is public only via an explicit ProductPriceVisibility
-    # row (see catalog.models - the owner's 2026-09 decision).
-    public_codes = get_public_price_codes()
+    return _apply_role(data, is_worker)
+
+
+def _apply_role(data, is_worker):
+    """Per request, never cached: the cached catalog is shared by every role.
+    Staff see everything; the public only what's in stock or on order
+    (ON_ORDER_CATEGORIES), priced per PUBLIC_PRICE_CATEGORIES. Codes are still here - _scrub removes them."""
     gea = _gea_products() if is_worker else {}
     result = []
     for product in data:
+        in_stock = product['stock'] > 0
+        on_order = not in_stock and (product['category'] in ON_ORDER_CATEGORIES
+                                     or (product['category'] == 'B' and product['sold_rank'] is not None))
+        if not is_worker and not in_stock and not on_order:
+            continue
         note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
-        visible = is_worker or product['CCODIGOPRODUCTO'] in public_codes
+        visible = is_worker or product['category'] in PUBLIC_PRICE_CATEGORIES
+        brand = product['brand']
+        if not is_worker:
+            brand = None if product['category'] in NO_PUBLIC_BRAND_CATEGORIES else PUBLIC_BRANDS.get(brand)
         result.append({
             **product,
             'CPRECIO1': product['CPRECIO1'] if visible else None,
+            # What the customer pays: CPRECIO1 is before IVA, and the rate is the
+            # product's own (16% parts, 0% Bionat feed; matches every invoice).
+            'price': _with_iva(product['CPRECIO1'], product['CIMPUESTO1']) if visible else None,
             'price_visible': visible,
+            'brand': brand,
             # Staff see units; the public only whether there is any.
             'stock': product['stock'] if is_worker else None,
-            'in_stock': product['stock'] > 0,
+            'in_stock': in_stock,
+            'on_order': on_order,
             # Staff only: GEA no longer supplies it (and what replaces it).
             'discontinued': {'replacement': note.get('replacement')} if note.get('not_orderable') else None,
         })
     return result
+
+
+def _with_iva(price, rate):
+    return round(price * (1 + (rate or 0) / 100), 2) if price else price
+
+
+def _catalog(is_worker):
+    """The role's catalog with codes kept, for use inside the server."""
+    return get_inventory_catalog(is_worker, raw=True)
+
+
+def scrub(obj):
+    """Removes part numbers from anything about to reach the public: code
+    fields go blank, codes inside names and descriptions are cut out."""
+    if isinstance(obj, list):
+        return [scrub(v) for v in obj]
+    if isinstance(obj, dict):
+        return {
+            k: None if k in CODE_KEYS else
+            CODE_IN_TEXT_RE.sub('', v).strip() if k in TEXT_KEYS and isinstance(v, str) else scrub(v)
+            for k, v in obj.items()
+        }
+    return obj
 
 
 # GEA portal data (backend/exports/gea, gitignored - pulled from GEA's dealer
@@ -190,8 +295,16 @@ def _gea_products():
         return {}
 
 
-# GEA's exploded drawings, downloaded unresized (the hotspots are in their pixels).
+# GEA's exploded drawings, downloaded unresized (the hotspots are in their pixels),
+# stored under random names (GEA names them by part number): the
+# hide_media_names command keeps the map.
 DRAWINGS_DIR = settings.BASE_DIR.parent / 'frontend' / 'public' / 'products' / 'ets'
+DRAWING_NAMES_FILE = settings.BASE_DIR / 'exports' / 'gea' / 'drawing_names.json'
+
+
+@lru_cache(maxsize=1)
+def _load_drawing_names(mtime):
+    return json.loads(DRAWING_NAMES_FILE.read_text())
 
 
 def _local_drawing(drawing):
@@ -199,8 +312,11 @@ def _local_drawing(drawing):
     (13 referenced drawings 404 there)."""
     if not drawing or not drawing.get('img'):
         return None
-    name = os.path.basename(drawing['img'])
-    if not (DRAWINGS_DIR / name).exists():
+    try:
+        name = _load_drawing_names(os.path.getmtime(DRAWING_NAMES_FILE)).get(os.path.basename(drawing['img']))
+    except OSError:
+        return None
+    if not name or not (DRAWINGS_DIR / name).exists():
         return None
     return {'img': f'/products/ets/{name}', 'hotspots': drawing['hotspots']}
 
@@ -247,15 +363,33 @@ def _staff_note(note, link):
     return {**note, 'replacement_ours': replacement['ours'] if replacement else []}
 
 
-def get_product_detail(code, is_worker):
-    catalog = get_inventory_catalog(is_worker)
+def get_product_detail(key, is_worker):
+    catalog = _catalog(is_worker)
     by_code = {p['CCODIGOPRODUCTO']: p for p in catalog}
-    product = by_code.get(code)
+    product = next((p for p in catalog if p['key'] == key), None)
     if product is None:
         return None
+    code = product['CCODIGOPRODUCTO']
+    detail = _product_detail(product, code, catalog, by_code, is_worker)
+    description = ProductDescription.objects.filter(producto_codigo=code).values_list('text', flat=True).first()
+    detail.update(description=description, related=_related(product, catalog))
+    return detail if is_worker else scrub(detail)
 
-    def summary(p):
-        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price_visible', 'in_stock', 'images')}
+
+def summary(p):
+    return {k: p[k] for k in ('key', 'slug', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price',
+                              'price_visible', 'in_stock', 'on_order', 'images')}
+
+
+def _related(product, catalog):
+    """Same category and line: in stock, best sellers and photographed first."""
+    same = [p for p in catalog if p['key'] != product['key']
+            and p['category'] == product['category'] and p['line'] == product['line']]
+    same.sort(key=lambda p: (not p['in_stock'], p['sold_rank'] or float('inf'), not p['images']))
+    return [summary(p) for p in same[:RELATED_LIMIT]]
+
+
+def _product_detail(product, code, catalog, by_code, is_worker):
 
     gea = _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
@@ -286,8 +420,9 @@ def get_product_detail(code, is_worker):
             'drawing': _local_drawing(drawing),
             'spare_parts': [link(r) for r in gea.get('spare_parts', [])],
             'used_in': [link(r) for r in gea.get('used_in', []) if r['code'] not in shown],
-            # GEA manual document numbers per language.
-            'manuals': gea.get('manuals', []),
+            # GEA manual document numbers per language; staff only, a
+            # document number identifies the machine just like a part number.
+            'manuals': gea.get('manuals', []) if is_worker else [],
             # GEA's service interval; public (owner, 2026-10-01).
             'service': gea.get('service') and {
                 'rules': gea['service']['rules'],
@@ -313,12 +448,12 @@ def search_gea_parts(query, is_worker, limit=20):
     terms = _fold(query).split()
     if not terms or sum(len(t) for t in terms) < 3:
         return []
-    catalog = get_inventory_catalog(is_worker)
+    catalog = _catalog(is_worker)
     by_code = {p['CCODIGOPRODUCTO']: p for p in catalog}
     sold = {_plain_code(c) for c in by_code}
 
     def summary(p):
-        return {k: p[k] for k in ('CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'images')}
+        return {k: p[k] for k in ('key', 'slug', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'images')}
 
     descs = {}
     for gea in _gea_products().values():

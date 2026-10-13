@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { productHref } from "@/components/catalog/ProductCard";
+import { productHref } from "@/lib/utils";
 
 interface GeaPart {
   code: string;
@@ -13,7 +13,7 @@ interface GeaPart {
     pos: string;
     qty: number;
     has_drawing: boolean;
-    parent: { CCODIGOPRODUCTO: string; CNOMBREPRODUCTO: string };
+    parent: { key: string; slug: string; CCODIGOPRODUCTO: string; CNOMBREPRODUCTO: string };
   }[];
 }
 
@@ -66,9 +66,9 @@ export default function GeaPartResults({ query }: { query: string }) {
               </p>
               <ul className="mt-1 space-y-0.5">
                 {part.appears_in.map((a) => (
-                  <li key={a.parent.CCODIGOPRODUCTO} className="text-xs">
+                  <li key={a.parent.key} className="text-xs">
                     <Link
-                      href={`${productHref(a.parent.CCODIGOPRODUCTO)}?pieza=${encodeURIComponent(part.code)}`}
+                      href={`${productHref(a.parent.key, a.parent.slug)}?pieza=${encodeURIComponent(part.code)}`}
                       className="text-blue-600 hover:underline"
                     >
                       {a.parent.CNOMBREPRODUCTO}

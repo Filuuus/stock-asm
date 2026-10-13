@@ -6,12 +6,11 @@ import { ChevronLeft, Copy, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
-import { productHref } from "@/components/catalog/ProductCard";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
 import { formatDay } from "@/lib/dates";
 import { QUOTE_STATUS, type QuoteStatus } from "@/lib/quote-status";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, productHref } from "@/lib/utils";
 
 interface Detail {
   id: number;
@@ -26,7 +25,7 @@ interface Detail {
   decided_by: string | null;
   valid_until: string | null;
   total: number;
-  items: { code: string; name: string; quantity: number; unit_price: number | null; subtotal: number | null; stock: number | null }[];
+  items: { key: string | null; code: string; name: string; quantity: number; unit_price: number | null; subtotal: number | null; stock: number | null }[];
 }
 
 const units = (n: number | null) => (n === null ? "-" : Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 }));
@@ -141,7 +140,11 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
             {req.items.map((i) => (
               <tr key={i.code} className="align-top">
                 <td className="px-4 py-3">
-                  <Link href={productHref(i.code)} className="font-medium text-gray-800 hover:text-blue-700">{i.name}</Link>
+                  {i.key ? (
+                    <Link href={productHref(i.key)} className="font-medium text-gray-800 hover:text-blue-700">{i.name}</Link>
+                  ) : (
+                    <span className="font-medium text-gray-800">{i.name}</span>
+                  )}
                   <p className="text-xs text-gray-400">SKU: {i.code}</p>
                 </td>
                 <td className="px-4 py-3">
@@ -170,7 +173,8 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
           <tfoot>
             <tr className="border-t border-gray-200">
               <td colSpan={5} className="px-4 py-3 text-right font-semibold text-gray-900">
-                Total: <span className="num">{formatMoney(req.total)}</span>
+                Total: <span className="num">{formatMoney(req.total)}</span>{" "}
+                <span className="text-xs font-normal text-gray-500">IVA incluido</span>
               </td>
             </tr>
           </tfoot>

@@ -21,20 +21,22 @@ export interface Filters {
   category: Set<string>;
   line: Set<string>;
   brand: Set<string>;
-  inStock: boolean;
+  // Out-of-stock products are hidden unless this is on (staff only: the
+  // public catalog never includes them).
+  withoutStock: boolean;
   withPrice: boolean;
   min: string;
   max: string;
 }
 
-export type FilterGroup = "category" | "line" | "brand" | "inStock" | "withPrice" | "price";
+export type FilterGroup = "category" | "line" | "brand" | "withoutStock" | "withPrice" | "price";
 type SetGroup = "category" | "line" | "brand";
 
 export const EMPTY_FILTERS: Filters = {
   category: new Set(),
   line: new Set(),
   brand: new Set(),
-  inStock: false,
+  withoutStock: false,
   withPrice: false,
   min: "",
   max: "",
@@ -47,7 +49,7 @@ export function filtersToParams(f: Filters, params = new URLSearchParams()) {
   f.category.forEach((v) => params.append("categoria", v));
   f.line.forEach((v) => params.append("linea", v));
   f.brand.forEach((v) => params.append("marca", v));
-  if (f.inStock) params.set("disponible", "1");
+  if (f.withoutStock) params.set("sinexistencia", "1");
   if (f.withPrice) params.set("conprecio", "1");
   if (f.min) params.set("min", f.min);
   if (f.max) params.set("max", f.max);
@@ -60,7 +62,7 @@ export function filtersFromParams(params: URLSearchParams): Filters {
     category: new Set(params.getAll("categoria")),
     line: new Set(params.getAll("linea")),
     brand: new Set(params.getAll("marca")),
-    inStock: params.get("disponible") === "1",
+    withoutStock: params.get("sinexistencia") === "1",
     withPrice: params.get("conprecio") === "1",
     min: num(params.get("min")),
     max: num(params.get("max")),
@@ -76,7 +78,7 @@ export function normalize(text: string) {
 
 // A hidden price counts as priced, so neither this filter nor the sort
 // reveals which hidden prices are $0.
-export const hasPrice = (p: Product) => p.CPRECIO1 === null || p.CPRECIO1 > 0;
+export const hasPrice = (p: Product) => p.price === null || p.price > 0;
 
 // Line names are uppercase in the ERP; show them as a sentence.
 export const lineLabel = (line: string) => line.charAt(0) + line.slice(1).toLowerCase();
@@ -87,15 +89,16 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
   if (skip !== "category" && f.category.size && !f.category.has(p.category)) return false;
   if (skip !== "line" && f.line.size && !(p.line && f.line.has(p.line))) return false;
   if (skip !== "brand" && f.brand.size && !(p.brand && f.brand.has(p.brand))) return false;
-  if (skip !== "inStock" && f.inStock && !p.in_stock) return false;
+  // "Sobre pedido" products are offered, so they show by default.
+  if (skip !== "withoutStock" && !f.withoutStock && !p.in_stock && !p.on_order) return false;
   if (skip !== "withPrice" && f.withPrice && !hasPrice(p)) return false;
   if (skip !== "price" && (f.min || f.max)) {
     // A hidden price can't be checked against a range - leave it out.
-    if (p.CPRECIO1 === null) return false;
-    if (f.min && p.CPRECIO1 < parseFloat(f.min)) return false;
-    if (f.max && p.CPRECIO1 > parseFloat(f.max)) return false;
+    if (p.price === null) return false;
+    if (f.min && p.price < parseFloat(f.min)) return false;
+    if (f.max && p.price > parseFloat(f.max)) return false;
   }
-  if (query && !normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO}`).includes(query)) return false;
+  if (query && !normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO ?? ""}`).includes(query)) return false;
   return true;
 }
 
@@ -103,7 +106,7 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
 // significant digits ("Hasta $450", "$450 a $2,300", "Más de $2,300").
 export function priceBreaks(products: Product[]): [number, number] | null {
   const prices = products
-    .map((p) => p.CPRECIO1)
+    .map((p) => p.price)
     .filter((v): v is number => v !== null && v > 0)
     .sort((a, b) => a - b);
   if (prices.length < 6) return null;
@@ -232,7 +235,7 @@ function PriceGroup({
 
   const count = (lo: number | null, hi: number | null) =>
     products.filter(
-      (p) => p.CPRECIO1 !== null && p.CPRECIO1 > 0 && (lo === null || p.CPRECIO1 >= lo) && (hi === null || p.CPRECIO1 <= hi)
+      (p) => p.price !== null && p.price > 0 && (lo === null || p.price >= lo) && (hi === null || p.price <= hi)
     ).length;
   const ranges = breaks
     ? [
@@ -344,7 +347,9 @@ export default function CatalogFilters({
     ...[...filters.category].map((v) => ({ label: CATEGORY_LABELS[v] ?? v, remove: () => toggle("category", v) })),
     ...[...filters.line].map((v) => ({ label: lineLabel(v), remove: () => toggle("line", v) })),
     ...[...filters.brand].map((v) => ({ label: v, remove: () => toggle("brand", v) })),
-    ...(filters.inStock ? [{ label: "Disponible", remove: () => onChange({ ...filters, inStock: false }) }] : []),
+    ...(filters.withoutStock
+      ? [{ label: "Incluye sin existencia", remove: () => onChange({ ...filters, withoutStock: false }) }]
+      : []),
     ...(filters.withPrice ? [{ label: "Con precio", remove: () => onChange({ ...filters, withPrice: false }) }] : []),
     ...(filters.min || filters.max
       ? [
@@ -360,7 +365,7 @@ export default function CatalogFilters({
       : []),
   ];
 
-  const inStockCount = pool("inStock").filter((p) => p.in_stock).length;
+  const outOfStockCount = pool("withoutStock").filter((p) => !p.in_stock && !p.on_order).length;
   const withPriceCount = pool("withPrice").filter(hasPrice).length;
 
   return (
@@ -413,15 +418,18 @@ export default function CatalogFilters({
         selected={filters.brand}
         onToggle={(v) => toggle("brand", v)}
       />
-      <section>
-        <h3 className="mb-2 text-sm font-semibold text-gray-900">Disponibilidad</h3>
-        <Toggle
-          label="Disponible"
-          count={inStockCount}
-          checked={filters.inStock}
-          onChange={(inStock) => onChange({ ...filters, inStock })}
-        />
-      </section>
+      {/* Only staff get out-of-stock products at all. */}
+      {outOfStockCount > 0 && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-gray-900">Disponibilidad</h3>
+          <Toggle
+            label="Incluir sin existencia"
+            count={outOfStockCount}
+            checked={filters.withoutStock}
+            onChange={(withoutStock) => onChange({ ...filters, withoutStock })}
+          />
+        </section>
+      )}
       <PriceGroup
         products={pool("price")}
         breaks={breaks}

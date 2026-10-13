@@ -76,10 +76,10 @@ from commissions.services import (
 
 from fleet.models import VehicleDayKm
 
-from .models import ExcludedProduct, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
+from .models import ExcludedProduct, ExcludedSaleLine, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
 from .weights import estimate_kg, load_gea
 
-CACHE_KEY = 'profitability_v6_{}_{}'  # bump the version when the cached shape changes
+CACHE_KEY = 'profitability_v7_{}_{}'  # bump the version when the cached shape changes
 CACHE_SECONDS = 600
 NO_BRAND = 'Sin marca'
 SERVICE_PRODUCT_TYPE = 3
@@ -112,13 +112,13 @@ def _in_thread(fn, *args):
 
 def fetch_sales(date_from, date_to):
     """Factura and return lines in [date_from, date_to), one row per line (the cost is corrected
-    line by line, see correct_dollar_cost): doc type, date, agent, client, product, product type,
-    units, net, cost."""
+    line by line, see correct_dollar_cost): line id, doc type, date, agent, client, product,
+    product type, units, net, cost."""
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT d.CIDDOCUMENTODE, d.CFECHA, d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR, m.CIDPRODUCTO, p.CTIPOPRODUCTO,
-                   m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO
+            SELECT m.CIDMOVIMIENTO, d.CIDDOCUMENTODE, d.CFECHA, d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR, m.CIDPRODUCTO,
+                   p.CTIPOPRODUCTO, m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
             JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
@@ -178,13 +178,15 @@ def correct_dollar_cost(units, net, cost, day, purchases):
     return cost
 
 
-def aggregate_sales(lines, dollar_purchases, purchased):
+def aggregate_sales(lines, dollar_purchases, purchased, excluded_lines=frozenset()):
     """Corrects each line's cost and sums lines per (doc type, year, month, agent, client, product):
-    units, net, cost - the shape build_facts takes. Also returns the goods without a usable cost: a
-    sale line at cost 0, or never purchased and over 80% gross margin (their cost is a guess)."""
+    units, net, cost - the shape build_facts takes. Lines whose id is in `excluded_lines` are left out. Also returns the goods without a usable cost: a sale line at cost 0, or never
+    purchased and over 80% gross margin (their cost is a guess)."""
     groups = defaultdict(lambda: [0.0, 0.0, 0.0])
     zero_cost, totals = set(), defaultdict(lambda: [0.0, 0.0])
-    for doc_type, day, agent, client, product, product_type, units, net, cost in lines:
+    for line_id, doc_type, day, agent, client, product, product_type, units, net, cost in lines:
+        if line_id in excluded_lines:
+            continue
         units, net, cost = float(units), float(net), float(cost)
         if product_type != SERVICE_PRODUCT_TYPE:
             cost = correct_dollar_cost(units, net, cost, day.date(), dollar_purchases.get(product))
@@ -205,7 +207,7 @@ def aggregate_sales(lines, dollar_purchases, purchased):
 def fetch_credit_notes(date_from, date_to):
     """Credit notes in the period with each application to a Factura: (note id, year, month,
     agent, client, net before IVA, total with IVA, invoice id or None, applied with IVA); the
-    lines of those invoices: (invoice id, agent, client, product, net); and the ids of the notes
+    lines of those invoices: (line id, invoice id, agent, client, product, net); and the ids of the notes
     that apply an advance (see is_advance_application)."""
     notes_sql = f"""
         FROM admDocumentos n
@@ -226,7 +228,7 @@ def fetch_credit_notes(date_from, date_to):
         notes = [list(r) for r in cursor.fetchall()]
         cursor.execute(
             f"""
-            SELECT m.CIDDOCUMENTO, d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR, m.CIDPRODUCTO, {NET}
+            SELECT m.CIDMOVIMIENTO, m.CIDDOCUMENTO, d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR, m.CIDPRODUCTO, {NET}
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
             WHERE m.CIDDOCUMENTO IN (SELECT a.CIDDOCUMENTOCARGO {notes_sql})
@@ -444,9 +446,10 @@ def fetch_erp(date_from, date_to, refresh=False):
             brands = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
             notes, invoice_lines, advances = credits.result()
             advances = set(advances)
-            sale_rows, unreliable_cost = aggregate_sales(sales.result(), *dollar.result())
+            dollar_purchases, purchased = dollar.result()
             data = {
-                'sales': sale_rows, 'unreliable_cost': unreliable_cost,
+                # Raw lines: aggregated per request, after the invoice-line exclusions (see calculate_profitability).
+                'sale_lines': sales.result(), 'dollar_purchases': dollar_purchases, 'purchased': purchased,
                 'notes': [n for n in notes if n[0] not in advances],
                 'invoice_lines': invoice_lines,
                 'products': products.result(), 'clients': clients.result(), 'brands': brands.result(),
@@ -624,9 +627,14 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     commissions and supplier discounts go; the route costs stay - salaries, trucks and rent don't
     leave with a product - and are spread over what's left."""
     data = fetch_erp(date_from, date_to, refresh)
+    line_exclusions = list(ExcludedSaleLine.objects.filter(date__gte=date_from, date__lt=date_to))
+    excluded_lines = {e.movement_id for e in line_exclusions}
+    sales, unreliable_cost = aggregate_sales(data['sale_lines'], data['dollar_purchases'], data['purchased'],
+                                             excluded_lines)
+    invoice_lines = [line[1:] for line in data['invoice_lines'] if line[0] not in excluded_lines]
 
     units, amounts = defaultdict(float), defaultdict(float)
-    for doc_type, _, _, _, _, product, u, net, _ in data['sales']:
+    for doc_type, _, _, _, _, product, u, net, _ in sales:
         if doc_type == FACTURA_DOC_TYPE:
             units[product] += float(u)
             amounts[product] += float(net)
@@ -664,7 +672,7 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
                        for m, zone, client, code, amount in data['commissions']]
 
     excluded = set(ExcludedProduct.objects.values_list('producto_id', flat=True))
-    facts = build_facts(data['sales'], allocate_credit_notes(data['notes'], data['invoice_lines']),
+    facts = build_facts(sales, allocate_credit_notes(data['notes'], invoice_lines),
                         commission_rows, zone_of, kg_of, rate_of)
     facts = [f for f in facts if f[3] not in excluded and f[3] not in drop]
     imports = data['imports']
@@ -702,11 +710,16 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     unallocated = allocate_route_costs(facts, costs, is_service)
     allocate_route_costs(facts, costs, is_service, by='pieces')
     first_gps = VehicleDayKm.objects.order_by('day').values_list('day', flat=True).first()
-    used_products, used_clients = {f[3] for f in facts} | excluded | set(drop), {f[2] for f in facts}
+    used_products = {f[3] for f in facts} | excluded | set(drop) | {e.producto_id for e in line_exclusions}
+    used_clients = {f[2] for f in facts} | {e.client_id for e in line_exclusions}
     return {
         'facts': facts,
         'excluded': sorted(excluded),
-        'unreliable_cost': [p for p in data['unreliable_cost'] if p not in excluded],
+        'unreliable_cost': [p for p in unreliable_cost if p not in excluded],
+        'excluded_lines': [{'line_id': e.movement_id, 'document_id': e.document_id, 'product_id': e.producto_id,
+                            'folio': e.folio,
+                            'date': e.date.isoformat(), 'client_id': e.client_id, 'reason': e.reason}
+                           for e in sorted(line_exclusions, key=lambda e: (e.date, e.folio))],
         'dropped': sorted(drop),
         'imports': {'cost': round(imports['cost'], 2), 'purchases': round(imports['purchases'], 2),
                     'rate': round(import_rate, 4)},
@@ -732,7 +745,7 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
         cursor.execute(
             f"""
             SELECT d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCONCEPTODOCUMENTO, d.CFOLIO, d.CFECHA, d.CIDAGENTE,
-                   d.CIDCLIENTEPROVEEDOR, m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO, p.CTIPOPRODUCTO
+                   d.CIDCLIENTEPROVEEDOR, m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO, p.CTIPOPRODUCTO, m.CIDMOVIMIENTO
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
             JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
@@ -743,24 +756,21 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
             params,
         )
         lines = cursor.fetchall()
-    # Same cost correction as the facts, then one row per document.
+    # Same cost correction as the facts; one row per line, so a gift next to a paid line can be left out alone.
     purchases = fetch_dollar_purchases()[0].get(product_id)
-    docs = {}
-    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, product_type in lines:
+    excluded = set(ExcludedSaleLine.objects.filter(producto_id=product_id).values_list('movement_id', flat=True))
+    rows = []
+    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, product_type, line_id in lines:
         units, net, cost = float(units), float(net), float(cost)
         if product_type != SERVICE_PRODUCT_TYPE:
             cost = correct_dollar_cost(units, net, cost, day.date(), purchases)
-        doc = docs.setdefault(doc_id, [doc_id, doc_type, concept, folio, day, agent, client, 0.0, 0.0, 0.0])
-        doc[7] += units
-        doc[8] += net
-        doc[9] += cost
-    rows = list(docs.values())
+        rows.append([doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, line_id])
     series = CommissionRepository.fetch_concepto_series()
     clients = fetch_client_names()
     agent_zone = {agent_id: code for code, agent_id in ZONE_SCOPE.items()}
     pv = CommissionRepository.fetch_puntoventa_clients()
     out = []
-    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost in rows:
+    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, line_id in rows:
         line_zone = agent_zone.get(agent, PUNTOVENTA_ZONE_NAME)
         if line_zone == PUNTOVENTA_ZONE_NAME and client in pv:
             line_zone = pv[client].zone
@@ -778,5 +788,7 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
             'units': sign * float(units),
             'net': round(sign * float(net), 2),
             'cost': round(sign * float(cost), 2),
+            'line_id': line_id,
+            'excluded': line_id in excluded,
         })
     return out

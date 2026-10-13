@@ -10,10 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Notice } from "@/components/notice";
-import { productHref } from "@/components/catalog/ProductCard";
 import { useCart } from "@/hooks/use-cart";
 import { apiFetch } from "@/lib/api";
-import { plural } from "@/lib/utils";
+import { plural, productHref } from "@/lib/utils";
 
 // The quote-request cart: prices stay private, so the customer sends the list
 // and management approves it; their personal link then shows the prices.
@@ -40,7 +39,7 @@ export default function CartPage() {
     try {
       const res = await apiFetch("/api/solicitudes/", {
         method: "POST",
-        body: JSON.stringify({ ...form, items: items.map((i) => ({ code: i.code, quantity: i.quantity })) }),
+        body: JSON.stringify({ ...form, items: items.map((i) => ({ key: i.key, quantity: i.quantity })) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -79,7 +78,7 @@ export default function CartPage() {
 
       <ul className="mt-6 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">
         {items.map((item) => (
-          <li key={item.code} className="flex items-center gap-3 p-3 sm:p-4">
+          <li key={item.key} className="flex items-center gap-3 p-3 sm:p-4">
             <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded bg-gray-50">
               <Image
                 src={item.image ? `/products/${item.image}` : "/placeholder.svg"}
@@ -90,10 +89,9 @@ export default function CartPage() {
               />
             </div>
             <div className="min-w-0 flex-1">
-              <Link href={productHref(item.code)} className="line-clamp-2 text-sm font-medium text-gray-800 hover:text-blue-700">
+              <Link href={productHref(item.key)} className="line-clamp-2 text-sm font-medium text-gray-800 hover:text-blue-700">
                 {item.name}
               </Link>
-              <p className="text-xs text-gray-400">SKU: {item.code}</p>
             </div>
             <input
               type="number"
@@ -101,13 +99,13 @@ export default function CartPage() {
               step="1"
               inputMode="numeric"
               value={item.quantity || ""}
-              onChange={(e) => setQuantity(item.code, Math.max(0, Number(e.target.value)))}
+              onChange={(e) => setQuantity(item.key, Math.max(0, Number(e.target.value)))}
               aria-label={`Cantidad de ${item.name}`}
               className="w-20 shrink-0 rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
             />
             <button
               type="button"
-              onClick={() => remove(item.code)}
+              onClick={() => remove(item.key)}
               aria-label={`Quitar ${item.name}`}
               className="shrink-0 rounded p-2 text-gray-400 hover:bg-gray-100 hover:text-red-600"
             >

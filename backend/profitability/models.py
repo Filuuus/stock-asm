@@ -12,6 +12,22 @@ class ProductWeight(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class ExcludedSaleLine(models.Model):
+    """One invoice or return line left out of Rentabilidad: gifts invoiced at $0 or a few
+    cents, and other lines the review decides shouldn't count (management, 2026-10-14). Folio, date
+    and client are copied from the ERP for the list; the client's name is resolved live."""
+    movement_id = models.IntegerField(unique=True)  # admMovimientos.CIDMOVIMIENTO: one line (a product can
+    # appear twice on an invoice, once as a gift and once paid)
+    document_id = models.IntegerField()  # admDocumentos.CIDDOCUMENTO
+    producto_id = models.IntegerField()
+    folio = models.CharField(max_length=20)
+    date = models.DateField()
+    client_id = models.IntegerField()
+    reason = models.CharField(max_length=60, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class ExcludedProduct(models.Model):
     """A product left out of Rentabilidad altogether, with its returns and credit notes: one-off
     deals that would distort the numbers (management, 2026-10-10: code 0001 "EQUIPO DE ORDEÑO
