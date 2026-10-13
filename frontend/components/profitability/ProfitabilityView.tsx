@@ -111,6 +111,15 @@ const POOL_LABELS: Record<string, string> = {
   SERVICIOS: "Servicios",
 };
 const NO_PRODUCT = "Sin producto";
+// Wording for the PDF's method notes; management's reasons (2026-10-13). Update COSTS_NOT_YET_COUNTED as
+// those costs get into the calculation.
+const SUPPLIER_NOTES_EXCLUDED =
+  "Las notas de crédito de los proveedores no se restan del costo: corresponden al descuento por pronto pago, que " +
+  "compensa el capital y el riesgo que asumimos al pagar en una semana, y a acuerdos comerciales ajenos a la " +
+  "distribución. No pagan los gastos de ruta.";
+const COSTS_NOT_YET_COUNTED =
+  "Algunos gastos todavía no se incluyen, como el combustible del montacargas y el seguro de dos vehículos: los " +
+  "gastos de ruta mostrados son, si acaso, menores que los reales.";
 const SOURCE_LABELS: Record<WeightSource, string> = {
   manual: "Capturado",
   nombre: "Del nombre",
@@ -159,11 +168,21 @@ function compactMoney(value: number) {
 
 const CHART_MIN_MONTHS = 6;
 // What the PDF export includes; `money` off leaves sales and volume only, for sharing outside.
-const PDF_ALL = { tiles: true, table: true, chart: true, money: true };
-type PdfParts = typeof PDF_ALL;
-function partsChosen(pdf: PdfParts, section: "resumen" | "decisiones") {
-  if (section === "decisiones") return pdf.table || pdf.chart;
-  return pdf.tiles || pdf.table || (pdf.chart && pdf.money);
+// Parts of the PDF, in the order they print; each one's element carries the pdf-<key> class.
+const PDF_PARTS = ["tiles", "table", "chart", "discounts", "pareto", "costs", "method"] as const;
+type PdfPart = (typeof PDF_PARTS)[number];
+// Parts that are all costs and profit: left out with `money`.
+const MONEY_PARTS: PdfPart[] = ["chart", "costs", "method"];
+const SECTION_PARTS: Record<Section, PdfPart[]> = {
+  resumen: ["tiles", "table", "chart"],
+  decisiones: ["discounts", "pareto"],
+  costos: ["costs", "method"],
+};
+interface PdfOptions {
+  parts: PdfPart[];
+  money: boolean; // off: sales and volume only, for sharing outside
+  hideClients: boolean; // a supplier could use client names to sell to them directly
+  compare: boolean; // the selection's share and margin against the rest of the business
 }
 const FETCH_DELAY_MS = 600;
 const MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -193,6 +212,11 @@ const result = (s: Sums) => s.net - s.cost - s.commission - s.route;
 
 function emptySums(): Sums {
   return { net: 0, cost: 0, commission: 0, route: 0, kg: 0 };
+}
+function sumGroups(groups: Sums[]): Sums {
+  const s = emptySums();
+  for (const g of groups) for (const k of Object.keys(s) as (keyof Sums)[]) s[k] += g[k];
+  return s;
 }
 
 function Tile({ label, value, sub, change, changeLabel = "vs año anterior", money }: {
@@ -235,7 +259,9 @@ export default function ProfitabilityView() {
   // The months before a short period, so the monthly chart always spans CHART_MIN_MONTHS.
   const [chartLead, setChartLead] = useState<Profitability | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
-  const [pdf, setPdf] = useState(PDF_ALL);
+  const [pdf, setPdf] = useState<PdfOptions>({ parts: [], money: true, hideClients: true, compare: false });
+  // While true, the sections not on screen render too (hidden on screen) so one PDF can hold several.
+  const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -264,6 +290,7 @@ export default function ProfitabilityView() {
   const [paretoDim, setParetoDim] = useState<"product" | "client">("product");
   const [section, setSection] = useState<Section>("resumen");
   const [detail, setDetail] = useState(false); // all the cost columns in the breakdown table
+  const [onlyLosing, setOnlyLosing] = useState(false); // breakdown rows that don't cover their costs
   const [decisionDim, setDecisionDim] = useState<DecisionDim>("product");
 
   // Remembered settings: read once on mount, written on every change.
@@ -556,6 +583,26 @@ export default function ProfitabilityView() {
     return out;
   }, [data]);
   const poolComponents = [...new Set(Object.values(pools).flatMap((c) => Object.keys(c)))].sort();
+  // What the selection carries: a PDF leaves out the costs of the rest of the business (import costs, the
+  // service crew) when none of it applies to what's shown.
+  const selectionImports = filtered.some((f) => f[13] > 0);
+  const selectionServices = filtered.some((f) => f[3] !== null && data?.products[f[3]]?.category === "S");
+  const poolPrintClass = (pool: string) => (pool === "SERVICIOS" && !selectionServices ? "print:hidden" : undefined);
+  const poolTotal = (pool: string) => Object.values(pools[pool] ?? {}).reduce((a, b) => a + b, 0);
+  // What each pool is spread over in the period (as allocate_route_costs): a route over its zone's kg or
+  // pieces, the warehouse over all of them. Pieces are units of anything but services.
+  const poolBase = useMemo(() => {
+    const out: Record<string, { kg: number; pieza: number }> = {};
+    for (const f of data?.facts ?? []) {
+      const pieces = f[3] !== null && data?.products[f[3]]?.category !== "S" ? f[4] : 0;
+      for (const pool of [f[1], "ALMACEN"]) {
+        out[pool] ??= { kg: 0, pieza: 0 };
+        out[pool].kg += f[7];
+        out[pool].pieza += pieces;
+      }
+    }
+    return out;
+  }, [data]);
   const unallocated = Object.values(data?.unallocated ?? {}).reduce(
     (t, p) => t + Object.values(p).reduce((a, b) => a + b, 0),
     0,
@@ -643,6 +690,8 @@ export default function ProfitabilityView() {
     [groupBy],
   );
   const { sorted, sortKey, sortDir, toggle } = useSort(groups, columns, { key: "net", dir: "desc" });
+  const losingOnly = onlyLosing && groupBy !== "month";
+  const rows = losingOnly ? sorted.filter((g) => !g.dropped && result(g) < 0) : sorted;
 
   // Clicking a row filters by it and moves on to the next breakdown not yet filtered.
   const drill = (g: Group) => {
@@ -699,7 +748,7 @@ export default function ProfitabilityView() {
       {detail && money(s.route, HIDE_BELOW_LG)}
       {money(result(s))}
       <TableCell className={cn("pdf-money text-right tabular-nums", result(s) < 0 && "text-red-700")}>
-        {s.net ? percent(result(s) / s.net) : "-"}
+        {Math.abs(s.net) >= 1 ? percent(result(s) / s.net) : "-"}
       </TableCell>
       <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_MD)}>{s.kg ? tonnes(s.kg) : "-"}</TableCell>
       {detail && (
@@ -721,43 +770,69 @@ export default function ProfitabilityView() {
     </button>
   );
 
-  const filterLabels = (Object.entries(filters) as [Dim, string][]).map(([d, v]) => labelOf(d, v));
+  const filterLabels = (Object.entries(filters) as [Dim, string][]).map(([d, v]) =>
+    d === "client" && pdf.hideClients ? "Un cliente" : labelOf(d, v),
+  );
   const periodLabel = from === to ? formatMonth(from) : `${formatMonth(from)} a ${formatMonth(to)}`;
-  const withMoney = pdf.money || section === "costos";
-  // Prints the current section with the chosen parts; the browser's print dialog saves or shares it as PDF.
+  // The criteria line without the import costs when nothing in the selection is imported.
+  const printCriteria = selectionImports
+    ? criteriaSummary
+    : criteriaSummary.replace(/ · (con|sin) importación/, "");
+  const pdfParts = pdf.parts.filter((p) => pdf.money || !MONEY_PARTS.includes(p));
+  const openPdf = () => {
+    setPdf((o) => ({ ...o, parts: SECTION_PARTS[section] }));
+    setPdfOpen(true);
+  };
+  // Prints the chosen parts of every section; the browser's print dialog saves or shares it as PDF.
   // The page title becomes the suggested file name: period, filters and today's date.
   const exportPdf = () => {
     setPdfOpen(false);
     setSimOpen(false);
+    setExporting(true);
     const title = document.title;
     document.title = ["Rentabilidad", from === to ? from : `${from} a ${to}`, ...filterLabels, todayISO()]
       .join(" - ")
       .replace(/[\\/:*?"<>|]/g, "");
-    window.addEventListener("afterprint", () => (document.title = title), { once: true });
-    // Lets the dialog close before the page is captured.
-    setTimeout(() => window.print(), 300);
+    window.addEventListener("afterprint", () => (document.title = title, setExporting(false)), { once: true });
+    // Lets the dialog close and the other sections render before the page is captured.
+    setTimeout(() => window.print(), 400);
+  };
+  // A section's content: on screen when it's the open one, and in print while exporting.
+  const sectionClass = (s: Section) => cn("contents", section !== s && "hidden print:contents");
+  const showSection = (s: Section) => section === s || exporting;
+  // The selection against everything else in the period, for the PDF's optional comparison line.
+  const everything = sumOf(shown?.facts ?? []);
+  const rest = {
+    net: everything.net - totals.net,
+    cost: everything.cost - totals.cost,
+    commission: everything.commission - totals.commission,
+    route: everything.route - totals.route,
+    kg: everything.kg - totals.kg,
   };
 
   return (
     <main
       className={cn(
         "max-w-7xl mx-auto w-full p-4 sm:p-6 print:p-0 flex flex-col gap-4",
-        !pdf.tiles && "pdf-no-tiles",
-        !pdf.table && "pdf-no-table",
-        !pdf.chart && "pdf-no-chart",
-        !withMoney && "pdf-no-money",
+        PDF_PARTS.filter((p) => !pdfParts.includes(p)).map((p) => `pdf-no-${p}`),
+        !pdf.money && "pdf-no-money",
       )}
     >
       <div className="hidden print:block">
         <p className="text-sm text-gray-500">Agropecuaria Santa María</p>
-        <h1 className="text-xl font-bold text-gray-900">
-          Rentabilidad · {section === "resumen" ? "Resumen" : section === "decisiones" ? "Decisiones" : "Gastos de ruta"}
-        </h1>
+        <h1 className="text-xl font-bold text-gray-900">Análisis de rentabilidad</h1>
         <p className="text-sm text-gray-700">
           {[periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1), ...filterLabels].join(" · ")}
         </p>
-        {withMoney && section !== "costos" && <p className="text-xs text-gray-500">{criteriaSummary}</p>}
+        {pdf.money && <p className="text-xs text-gray-500">{printCriteria}</p>}
         <p className="text-xs text-gray-500">Generado el {formatDay(todayISO())}</p>
+        {pdf.compare && pdf.money && filterLabels.length > 0 && everything.net > 0 && rest.net > 0 && (
+          <p className="mt-2 text-sm text-gray-800">
+            Esta selección es el {percent(totals.net / everything.net)} de las ventas del periodo y deja{" "}
+            {percent(result(totals) / totals.net)} de utilidad neta; el resto del negocio deja{" "}
+            {percent(result(rest) / rest.net)}.
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <h1 className="text-2xl font-bold text-gray-900">Rentabilidad</h1>
@@ -789,7 +864,7 @@ export default function ProfitabilityView() {
             <Calculator className="w-4 h-4" aria-hidden />
             Simular
           </Button>
-          <Button size="sm" variant="outline" className="h-9 sm:h-8" disabled={!data || loading} onClick={() => setPdfOpen(true)}>
+          <Button size="sm" variant="outline" className="h-9 sm:h-8" disabled={!data || loading} onClick={openPdf}>
             <FileDown className="w-4 h-4" aria-hidden />
             PDF
           </Button>
@@ -999,8 +1074,8 @@ export default function ProfitabilityView() {
         </div>
       )}
 
-      {data && section === "resumen" && (
-        <>
+      {data && showSection("resumen") && (
+        <div className={sectionClass("resumen")}>
           <div className="pdf-tiles pdf-keep grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-3">
             <Tile
               label="Ventas"
@@ -1042,7 +1117,10 @@ export default function ProfitabilityView() {
 
           <Card className="pdf-table">
             <CardHeader className="p-3 sm:p-4 gap-2">
-              <CardTitle className="hidden text-base print:block">Por {DIMS.find((d) => d.key === groupBy)!.label.toLowerCase()}</CardTitle>
+              <CardTitle className="hidden text-base print:block">
+                {onlyLosing && groupBy !== "month" ? "No cubren sus gastos, por " : "Por "}
+                {DIMS.find((d) => d.key === groupBy)!.label.toLowerCase()}
+              </CardTitle>
               <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
                 <Tabs value={groupBy} onValueChange={(v) => setGroupBy(v as Dim)}>
                   <TabsList className="h-auto flex-wrap">
@@ -1053,10 +1131,18 @@ export default function ProfitabilityView() {
                     ))}
                   </TabsList>
                 </Tabs>
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <Switch checked={detail} onCheckedChange={setDetail} />
-                  Ver detalle
-                </label>
+                <div className="flex flex-wrap items-center gap-4">
+                  {groupBy !== "month" && (
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <Switch checked={onlyLosing} onCheckedChange={setOnlyLosing} />
+                      Solo los que no cubren sus gastos
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 text-sm text-gray-600">
+                    <Switch checked={detail} onCheckedChange={setDetail} />
+                    Ver detalle
+                  </label>
+                </div>
               </div>
               {groupBy !== "month" && (
                 <CardDescription className="print:hidden">
@@ -1083,15 +1169,22 @@ export default function ProfitabilityView() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.length === 0 && <EmptyRow colSpan={colCount}>Sin ventas con estos filtros.</EmptyRow>}
-                {sorted.map((g) => (
+                {rows.length === 0 && (
+                  <EmptyRow colSpan={colCount}>
+                    {losingOnly ? "Todos cubren sus gastos." : "Sin ventas con estos filtros."}
+                  </EmptyRow>
+                )}
+                {rows.map((g, i) => (
                   <TableRow
                     key={g.key}
                     className={cn(groupBy !== "month" && !g.dropped && "cursor-pointer", g.dropped && "text-gray-400")}
                     onClick={() => !g.dropped && drill(g)}
                   >
                     <TableCell
-                      className={cn("truncate", groupBy === "product" ? "max-w-48" : detail ? "max-w-56" : "max-w-80")}
+                      className={cn(
+                        "truncate print:!max-w-none print:!whitespace-normal",
+                        groupBy === "product" ? "max-w-48" : detail ? "max-w-56" : "max-w-80",
+                      )}
                       title={g.label}
                     >
                       {checkable && g.key !== NO_PRODUCT && (
@@ -1111,7 +1204,16 @@ export default function ProfitabilityView() {
                           onChange={() => toggleDrop(g.key)}
                         />
                       )}
-                      {groupBy === "client" ? <ClientLink clientId={Number(g.key)} label={g.label} /> : g.label}
+                      {groupBy !== "client" ? (
+                        g.label
+                      ) : (
+                        <>
+                          <span className={cn(pdf.hideClients && "print:hidden")}>
+                            <ClientLink clientId={Number(g.key)} label={g.label} />
+                          </span>
+                          {pdf.hideClients && <span className="hidden print:inline">Cliente {i + 1}</span>}
+                        </>
+                      )}
                     </TableCell>
                     {sumRow(g)}
                     {groupBy === "product" && (
@@ -1152,10 +1254,10 @@ export default function ProfitabilityView() {
                     )}
                   </TableRow>
                 ))}
-                {sorted.length > 1 && (
+                {rows.length > 1 && (
                   <TableRow className="font-medium hover:bg-transparent">
-                    <TableCell>Total</TableCell>
-                    {sumRow(totals)}
+                    <TableCell>{losingOnly ? "Total de estos" : "Total"}</TableCell>
+                    {sumRow(losingOnly ? sumGroups(rows) : totals)}
                     {groupBy === "product" && <TableCell className="print:hidden" />}
                   </TableRow>
                 )}
@@ -1208,12 +1310,12 @@ export default function ProfitabilityView() {
               </ResponsiveContainer>
             </div>
           </Card>
-        </>
+        </div>
       )}
 
-      {data && section === "decisiones" && (
-        <>
-          <Card className="pdf-table">
+      {data && showSection("decisiones") && (
+        <div className={sectionClass("decisiones")}>
+          <Card className="pdf-discounts print:break-before-page">
             <CardHeader className="p-3 sm:p-4 gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-base">Qué haría falta para no perder</CardTitle>
@@ -1282,10 +1384,18 @@ export default function ProfitabilityView() {
                 ))}
               </TableBody>
             </Table>
+            {breakEven.length > 0 && (
+              <p className="px-3 pb-3 pt-2 text-sm text-gray-700 sm:px-4">
+                En total les faltan {formatMoney(-result(sumGroups(breakEven)))} para cubrir sus gastos: un descuento de{" "}
+                {percent(-result(sumGroups(breakEven)) / totals.cost)} sobre el costo de todo lo de esta selección
+                {filterLabels.length ? ` (${filterLabels.join(" · ")})` : ""}, o de{" "}
+                {percent(-result(sumGroups(breakEven)) / sumGroups(breakEven).cost)} solo sobre estos.
+              </p>
+            )}
           </Card>
 
           {pareto && (
-            <Card className="pdf-chart pdf-keep">
+            <Card className="pdf-pareto pdf-keep">
               <CardHeader className="p-3 sm:p-4 gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="text-base">Concentración de la contribución</CardTitle>
@@ -1303,7 +1413,7 @@ export default function ProfitabilityView() {
                 <CardDescription>
                   {pareto.to80} de {pareto.count} {paretoDim === "product" ? "productos" : "clientes"} (
                   {percent(pareto.to80 / pareto.count)}) dan el 80% de la contribución.
-                  {pareto.losers > 0 && withMoney &&
+                  {pareto.losers > 0 && pdf.money &&
                     ` ${pareto.losers} ${paretoDim === "product" ? "productos" : "clientes"} restan ${formatMoney(-pareto.lost)}.`}
                 </CardDescription>
               </CardHeader>
@@ -1341,18 +1451,18 @@ export default function ProfitabilityView() {
               </div>
             </Card>
           )}
-        </>
+        </div>
       )}
 
-      {data && section === "costos" && (
-        <>
-          <Card>
+      {data && showSection("costos") && (
+        <div className={sectionClass("costos")}>
+          <Card className="pdf-costs pdf-keep print:break-before-page">
             <CardHeader className="p-3 sm:p-4">
               <CardTitle className="text-base">Gastos de ruta del periodo</CardTitle>
               <CardDescription>
                 Todo el periodo, sin filtros. Cada ruta se reparte entre los {routeKey === "kg" ? "kg" : "piezas"} de su
-                zona, el almacén entre {routeKey === "kg" ? "todos los kg vendidos" : "todas las piezas vendidas"} y los
-                servicios entre las ventas de servicio.
+                zona y el almacén entre {routeKey === "kg" ? "todos los kg vendidos" : "todas las piezas vendidas"}
+                <span className={cn(!selectionServices && "print:hidden")}>; los servicios, entre las ventas de servicio</span>.
               </CardDescription>
             </CardHeader>
             <Table>
@@ -1360,7 +1470,7 @@ export default function ProfitabilityView() {
                 <TableRow>
                   <TableHead>Concepto</TableHead>
                   {Object.keys(POOL_LABELS).map((p) => (
-                    <TableHead key={p} className="text-right">
+                    <TableHead key={p} className={cn("text-right", poolPrintClass(p))}>
                       {POOL_LABELS[p]}
                     </TableHead>
                   ))}
@@ -1371,7 +1481,7 @@ export default function ProfitabilityView() {
                   <TableRow key={c}>
                     <TableCell>{c}</TableCell>
                     {Object.keys(POOL_LABELS).map((p) => (
-                      <TableCell key={p} className="text-right tabular-nums">
+                      <TableCell key={p} className={cn("text-right tabular-nums", poolPrintClass(p))}>
                         {pools[p]?.[c] ? formatMoney(pools[p][c]) : "-"}
                       </TableCell>
                     ))}
@@ -1380,11 +1490,21 @@ export default function ProfitabilityView() {
                 <TableRow className="font-medium hover:bg-transparent">
                   <TableCell>Total</TableCell>
                   {Object.keys(POOL_LABELS).map((p) => (
-                    <TableCell key={p} className="text-right tabular-nums">
-                      {formatMoney(Object.values(pools[p] ?? {}).reduce((a, b) => a + b, 0))}
+                    <TableCell key={p} className={cn("text-right tabular-nums", poolPrintClass(p))}>
+                      {formatMoney(poolTotal(p))}
                     </TableCell>
                   ))}
                 </TableRow>
+                {(["kg", "pieza"] as const).map((unit) => (
+                  <TableRow key={unit} className="text-gray-600 hover:bg-transparent">
+                    <TableCell>{unit === "kg" ? "Promedio por kg vendido" : "Promedio por pieza vendida"}</TableCell>
+                    {Object.keys(POOL_LABELS).map((p) => (
+                      <TableCell key={p} className={cn("text-right tabular-nums", poolPrintClass(p))}>
+                        {p !== "SERVICIOS" && poolBase[p]?.[unit] ? formatMoney(poolTotal(p) / poolBase[p][unit]) : "-"}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
             <div className="flex justify-end px-3 pb-3 sm:px-4 print:hidden">
@@ -1395,38 +1515,74 @@ export default function ProfitabilityView() {
             </div>
           </Card>
 
-          <Card>
+          <Card className="pdf-method print:break-before-page">
             <CardHeader className="p-3 sm:p-4">
               <CardTitle className="text-base">Cómo se calcula</CardTitle>
             </CardHeader>
             <ul className="list-disc space-y-1 px-3 pb-4 pl-8 text-sm text-gray-600 sm:px-4 sm:pl-9">
               <li>
-                Ventas: facturas sin IVA de las mismas zonas que Ventas y Comisiones, con devoluciones y notas de crédito
-                en su mes. Los anticipos no cuentan: la factura del anticipo y la nota que lo aplica se dejan fuera, y la
-                factura final cuenta completa en su mes; por eso algunos meses difieren de Ventas.
+                Ventas: facturas sin IVA<span className="print:hidden"> de las mismas zonas que Ventas y Comisiones</span>,
+                con devoluciones y notas de crédito en su mes. Los anticipos no cuentan: la factura del anticipo y la nota que lo aplica se dejan fuera, y la
+                factura final cuenta completa en su mes<span className="print:hidden">; por eso algunos meses difieren de
+                Ventas</span>.
+                {data.excluded.length > 0 &&
+                  ` ${data.excluded.length === 1 ? "Una venta única se deja fuera" : `${data.excluded.length} ventas únicas se dejan fuera`} para no distorsionar los resultados.`}
               </li>
+              <li>Costo: el costo de cada partida registrado en el ERP.</li>
               <li>
                 Las notas de crédito no traen producto en el ERP: cada una se reparte entre las partidas de la factura a
                 la que se aplicó, en proporción a su importe.
               </li>
               <li>
-                Contribución: utilidad bruta menos comisiones, antes de los gastos de ruta. Es lo que se dejaría de ganar
-                si no se vendiera; una utilidad neta negativa con contribución positiva solo indica que carga mucho gasto
-                compartido.
+                Contribución: utilidad bruta menos comisiones, antes de los gastos de ruta.
+                <span className="print:hidden">
+                  {" "}
+                  Es lo que se dejaría de ganar si no se vendiera; una utilidad neta negativa con contribución positiva
+                  solo indica que carga mucho gasto compartido.
+                </span>
               </li>
               <li>
-                Comisiones completas: la tasa base de cada línea sobre cada factura del periodo, sin descuento por
-                atraso. Pagadas: lo que calculó Comisiones, en el mes en que se pagó.
+                {commissionMode === "posibles"
+                  ? "Comisiones: la tasa base de cada línea sobre cada factura del periodo, sin descuento por atraso."
+                  : "Comisiones: las que se pagaron a los vendedores, en el mes en que se pagaron."}
               </li>
+              {importCosts ? (
+                <li className={cn(!selectionImports && "print:hidden")}>
+                  Costos de importación: fletes del extranjero, impuestos y derechos de importación, agentes aduanales y
+                  costo indirecto del periodo ({formatMoney(data.imports.cost)}) entre las compras en moneda extranjera (
+                  {formatMoney(data.imports.purchases)}): {percent(data.imports.rate)} sobre el costo de los productos
+                  importados. Importado es lo que se compró en moneda extranjera; lo comprado solo en pesos no lo lleva.
+                </li>
+              ) : (
+                <li className={cn(!selectionImports && "print:hidden")}>No se suman costos de importación.</li>
+              )}
+              {supplierDiscounts ? (
+                <li>
+                  Notas de crédito de proveedor: los descuentos sobre compras de Bionat (3% por pronto pago y otros) del
+                  mes contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
+                </li>
+              ) : (
+                <li>{SUPPLIER_NOTES_EXCLUDED}</li>
+              )}
               <li>
-                Costos de importación: fletes del extranjero, impuestos y derechos de importación, agentes aduanales y
-                costo indirecto del periodo ({formatMoney(data.imports.cost)}) entre las compras en moneda extranjera (
-                {formatMoney(data.imports.purchases)}): {percent(data.imports.rate)} sobre el costo de los productos
-                importados. Importado es lo que se compró en moneda extranjera; lo comprado solo en pesos no lo lleva.
-              </li>
-              <li>
-                Notas de crédito de proveedor: los descuentos sobre compras de Bionat (3% por pronto pago y otros) del
-                mes contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
+                {/* Same total as the printed cost table: without the service crew when the selection sells no services. */}
+                Gastos de ruta del periodo:{" "}
+                <span className={cn(!selectionServices && "print:hidden")}>
+                  {formatMoney(Object.keys(pools).reduce((t, p) => t + poolTotal(p), 0))}
+                </span>
+                {!selectionServices && (
+                  <span className="hidden print:inline">
+                    {formatMoney(Object.keys(pools).reduce((t, p) => t + (p === "SERVICIOS" ? 0 : poolTotal(p)), 0))}
+                  </span>
+                )}
+                , con la nómina de cada ruta, el combustible, mantenimiento y seguro de sus vehículos y la renta del
+                almacén. Cada ruta se reparte entre {routeKey === "kg" ? "los kg vendidos" : "las piezas vendidas"} en su
+                zona y el almacén entre {routeKey === "kg" ? "todos los kg vendidos" : "todas las piezas vendidas"}
+                <span className={cn(!selectionServices && "print:hidden")}>
+                  ; los servicios, entre las ventas de servicio
+                </span>
+                , mes por mes. El promedio por {routeKey === "kg" ? "kg" : "pieza"} de cada
+                ruta está en la tabla de gastos de ruta.
               </li>
               <li>
                 Combustible y mantenimiento de los vehículos: del reporte mensual de Contabilidad
@@ -1435,7 +1591,7 @@ export default function ProfitabilityView() {
                 GPS{data.gps_since ? ` (desde el ${formatDay(data.gps_since)})` : ""} por rendimiento y precio para el
                 resto del combustible.
               </li>
-              <li>
+              <li className={cn(!selectionServices && "print:hidden")}>
                 Los servicios no tienen costo en el ERP; su costo (técnicos y sus vehículos) entra en los gastos de ruta
                 de Servicios.
               </li>
@@ -1443,12 +1599,18 @@ export default function ProfitabilityView() {
                 El peso se toma del nombre del producto, del catálogo GEA o de lo capturado en Pesos de productos; el{" "}
                 {totals.kg ? percent(estimatedKg / totals.kg) : "0%"} del peso vendido es estimado.
               </li>
+              <li>
+                Descuento necesario: cuánto tendría que bajar el costo del proveedor, sin cambiar el precio de venta,
+                para que el producto deje de perder (sobre su costo). El primero cubre solo su costo y comisión; el
+                segundo, además, su parte de los gastos de ruta.
+              </li>
+              <li>{COSTS_NOT_YET_COUNTED}</li>
               {unallocated >= 1 && (
                 <li>{formatMoney(unallocated)} de gastos de ruta no se repartieron: su zona no tuvo ventas ese mes.</li>
               )}
             </ul>
           </Card>
-        </>
+        </div>
       )}
 
       <Sheet open={simOpen} onOpenChange={setSimOpen} modal={false}>
@@ -1616,45 +1778,85 @@ export default function ProfitabilityView() {
       )}
 
       <Dialog open={pdfOpen} onOpenChange={setPdfOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Exportar PDF</DialogTitle>
             <DialogDescription>
-              {section === "costos" ? "Los gastos de ruta del periodo" : "Lo que se ve en " + (section === "resumen" ? "Resumen" : "Decisiones")}{" "}
-              con el periodo{filterLabels.length ? " y los filtros" : ""} de ahora, con la fecha de hoy.
+              Con el periodo{filterLabels.length ? " y los filtros" : ""} de ahora y la fecha de hoy. Las partes salen en
+              este orden, cada una con los mismos criterios.
             </DialogDescription>
           </DialogHeader>
-          {section !== "costos" && (
-            <div className="flex flex-col gap-3 text-sm">
-              {(section === "resumen"
-                ? ([["tiles", "Indicadores"], ["table", "Tabla"], ["chart", "Utilidad por mes"]] as const)
-                : ([["table", "Qué haría falta para no perder"], ["chart", "Concentración de la contribución"]] as const)
-              ).map(([part, label]) => {
-                // Utilidad por mes is all costs and profit: it goes with them.
-                const off = part === "chart" && section === "resumen" && !pdf.money;
-                return (
-                  <label key={part} className={cn("flex items-center gap-2", off && "text-gray-400")}>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-slate-900"
-                      checked={pdf[part] && !off}
-                      disabled={off}
-                      onChange={(e) => setPdf((p) => ({ ...p, [part]: e.target.checked }))}
-                    />
-                    {label}
-                  </label>
-                );
-              })}
-              <label className="flex items-center justify-between gap-2 border-t pt-3">
+          <div className="flex flex-col gap-2 text-sm">
+            {(
+              [
+                ["tiles", "Indicadores"],
+                ["table", `Tabla por ${DIMS.find((d) => d.key === groupBy)!.label.toLowerCase()}`],
+                ["chart", "Utilidad por mes"],
+                ["discounts", `Descuento necesario, por ${DIMS.find((d) => d.key === decisionDim)!.label.toLowerCase()}`],
+                ["pareto", "Concentración de la contribución"],
+                ["costs", "Gastos de ruta del periodo"],
+                ["method", "Cómo se calcula (al final)"],
+              ] as const
+            ).map(([part, label]) => {
+              const off = !pdf.money && MONEY_PARTS.includes(part);
+              return (
+                <label key={part} className={cn("flex items-center gap-2", off && "text-gray-400")}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-slate-900"
+                    checked={pdf.parts.includes(part) && !off}
+                    disabled={off}
+                    onChange={(e) =>
+                      setPdf((o) => ({
+                        ...o,
+                        parts: e.target.checked ? [...o.parts, part] : o.parts.filter((x) => x !== part),
+                      }))
+                    }
+                  />
+                  {label}
+                </label>
+              );
+            })}
+            {pdf.parts.includes("table") && groupBy !== "month" && (
+              <label className="ml-6 flex items-center gap-2 text-gray-600">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-slate-900"
+                  checked={onlyLosing}
+                  onChange={(e) => setOnlyLosing(e.target.checked)}
+                />
+                Solo los que no cubren sus gastos
+              </label>
+            )}
+            <div className="mt-2 flex flex-col gap-3 border-t pt-3">
+              <label className="flex items-center justify-between gap-2">
                 <span>
                   Incluir costos y utilidades
-                  <span className="block text-xs text-gray-500">Sin ellos quedan solo ventas y volumen, para compartir.</span>
+                  <span className="block text-xs text-gray-500">Sin ellos quedan solo ventas y volumen.</span>
                 </span>
-                <Switch checked={pdf.money} onCheckedChange={(money) => setPdf((p) => ({ ...p, money }))} />
+                <Switch checked={pdf.money} onCheckedChange={(money) => setPdf((o) => ({ ...o, money }))} />
               </label>
+              <label className="flex items-center justify-between gap-2">
+                <span>
+                  Ocultar nombres de clientes
+                  <span className="block text-xs text-gray-500">Para documentos que salen de la empresa.</span>
+                </span>
+                <Switch checked={pdf.hideClients} onCheckedChange={(hideClients) => setPdf((o) => ({ ...o, hideClients }))} />
+              </label>
+              {filterLabels.length > 0 && pdf.money && (
+                <label className="flex items-center justify-between gap-2">
+                  <span>
+                    Comparar con el resto del negocio
+                    <span className="block text-xs text-gray-500">
+                      Su parte de las ventas y su margen contra el de todo lo demás.
+                    </span>
+                  </span>
+                  <Switch checked={pdf.compare} onCheckedChange={(compare) => setPdf((o) => ({ ...o, compare }))} />
+                </label>
+              )}
             </div>
-          )}
-          <Button onClick={exportPdf} disabled={section !== "costos" && !partsChosen(pdf, section)}>
+          </div>
+          <Button onClick={exportPdf} disabled={pdfParts.length === 0}>
             <FileDown className="w-4 h-4" aria-hidden />
             Exportar
           </Button>
