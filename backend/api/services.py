@@ -31,12 +31,13 @@ CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?
 CODE_KEYS = {'CCODIGOPRODUCTO', 'code', 'gea_code', 'replacement'}
 TEXT_KEYS = {'CNOMBREPRODUCTO', 'desc', 'name'}
 
-# The catalog's Bionat Línea: the whole brand is one category, split by product
-# type (the ERP's line and the commission split are pay rules, not kinds).
-# First match on the name wins; drafted from bionatsano.com.mx's descriptions.
+# The catalog's Bionat Línea: the whole brand is one category, split into a
+# few big groups by product type (the ERP's line and the commission split are
+# pay rules, not kinds). First match on the name wins; drafted from
+# bionatsano.com.mx's descriptions. Finer levels (species, stage) can come later.
 BIONAT_TYPES = [
-    ('CONCENTRADO', 'Concentrados'),
     ('ENERGIZER', 'Aditivos'),
+    ('CONCENTRADO', 'Alimentos'),
     ('MIPRO', 'Minerales y premezclas'),
     ('SUSAN', 'Minerales y premezclas'),
     ('PREMIX', 'Minerales y premezclas'),
@@ -46,9 +47,10 @@ BIONAT_TYPES = [
     ('FORMULA LACTEA', 'Sustitutos de leche'),
     ('SUSTITUTO', 'Sustitutos de leche'),
     ('LEMMI', 'Sustitutos de leche'),
-    ('MEGGI', 'Iniciadores'),
-    ('PREKERN', 'Iniciadores'),
-    ('BONNI', 'Iniciadores'),
+    # Starters, concentrates and complete feeds.
+    ('MEGGI', 'Alimentos'),
+    ('PREKERN', 'Alimentos'),
+    ('BONNI', 'Alimentos'),
     ('OVISAN', 'Alimentos'),
 ]
 

@@ -67,7 +67,8 @@ class InventoryCatalogTests(SimpleTestCase):
                 'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': 1.0}
 
     def test_bionat_types(self):
-        self.assertEqual(_bionat_type('CONCENTRADO MIPRO PREN 400'), 'Concentrados')
+        self.assertEqual(_bionat_type('CONCENTRADO MIPRO PREN 400'), 'Alimentos')
+        self.assertEqual(_bionat_type('MEGGI 100 E 25 KG'), 'Alimentos')
         self.assertEqual(_bionat_type('MIPRO ENERGIZER 25 KG'), 'Aditivos')
         self.assertEqual(_bionat_type('MIPRO 250 HM 25 KG'), 'Minerales y premezclas')
         self.assertEqual(_bionat_type('SANOLAC LAMB 2 KG'), 'Sustitutos de leche')

@@ -26,10 +26,33 @@ class PhotoError(ValueError):
     """Shown to the user."""
 
 
+def _blank_corners(im):
+    """White or transparent corners: a cut-out on a plain background."""
+    w, h = im.size
+    return all(a < 16 or min(rgb) > 235
+               for *rgb, a in (im.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))))
+
+
+def to_square(im):
+    """Square, like every catalog image. A cut-out on a white or transparent
+    background is padded with white (the padding doesn't show); anything else,
+    a phone photo or a gray studio background, is center-cropped, since
+    padding would show as bands. ponytail: corner check only, a photo on a
+    white table with the product touching an edge still gets padded."""
+    side = max(im.size)
+    if _blank_corners(im):
+        square = Image.new('RGB', (side, side), 'white')
+        square.paste(im, ((side - im.width) // 2, (side - im.height) // 2), im)
+        return square
+    side = min(im.size)
+    left, top = (im.width - side) // 2, (im.height - side) // 2
+    return im.convert('RGB').crop((left, top, left + side, top + side))
+
+
 def save_photo(code, upload):
     """A staff photo (usually straight from a phone camera): upright, at most
-    MAX_SIDE, padded to a white square like the rest, saved as webp under a
-    random name (names never carry the part number)."""
+    MAX_SIDE, made square (to_square), saved as webp under a random name
+    (names never carry the part number)."""
     if upload.size > MAX_UPLOAD_BYTES:
         raise PhotoError('La foto pesa más de 20 MB.')
     try:
@@ -37,10 +60,7 @@ def save_photo(code, upload):
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         raise PhotoError('El archivo no es una imagen.')
     im.thumbnail((MAX_SIDE, MAX_SIDE))
-    side = max(im.size)
-    # Transparent backgrounds (manufacturer PNGs) end up white, not black.
-    square = Image.new('RGB', (side, side), 'white')
-    square.paste(im, ((side - im.width) // 2, (side - im.height) // 2), im)
+    square = to_square(im)
     name = secrets.token_hex(8) + '.webp'
     square.save(PRODUCTS_DIR / name, 'WEBP', quality=85)
     first = not ProductImage.objects.filter(producto_codigo=code).exists()
