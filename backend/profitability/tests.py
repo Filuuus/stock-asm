@@ -1,6 +1,6 @@
 """Tests for the profitability pure functions, on made-up data."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from django.test import SimpleTestCase, TestCase
 
@@ -234,3 +234,36 @@ class MatchClientTests(SimpleTestCase):
         self.assertEqual([p['name'] for p in places], ['Ana Lira', 'Eva Mora'])
         self.assertEqual((places[0]['lat'], places[0]['lng']), (20.5, -101.5))
         self.assertAlmostEqual(places[1]['lng'], -101.5, places=4)
+
+
+class DollarCostTests(SimpleTestCase):
+    """Dollar costs the ERP reads as pesos (management, 2026-10-13). Made-up figures."""
+    BUYS = [(date(2025, 1, 10), 70.0, 20.0), (date(2025, 6, 1), 75.0, 19.0), (date(2026, 6, 20), 80.0, 17.5)]
+
+    def test_cost_equal_to_a_dollar_price_is_converted_at_that_purchases_rate(self):
+        from .services import correct_dollar_cost
+        self.assertAlmostEqual(correct_dollar_cost(10, 25000, 750, date(2025, 9, 1), self.BUYS), 750 * 19.0)
+
+    def test_average_dragged_down_uses_the_latest_purchase_before_the_sale(self):
+        from .services import correct_dollar_cost
+        # 90/unit is no single price: an average of peso-read lots. Latest buy before Mar 2026: 75 x 19.
+        self.assertAlmostEqual(correct_dollar_cost(2, 5000, 180, date(2026, 3, 1), self.BUYS), 2 * 75 * 19.0)
+
+    def test_real_peso_costs_and_unit_mismatches_are_left_alone(self):
+        from .services import correct_dollar_cost
+        self.assertEqual(correct_dollar_cost(1, 2500, 1400, date(2026, 3, 1), self.BUYS), 1400)  # a real cost
+        self.assertEqual(correct_dollar_cost(1, 20, 1, date(2026, 3, 1), self.BUYS), 1)  # sold by piece, bought by box
+        self.assertEqual(correct_dollar_cost(1, 2500, 75, date(2026, 3, 1), None), 75)  # never bought in dollars
+
+    def test_aggregate_corrects_lines_and_flags_goods_without_a_usable_cost(self):
+        from datetime import datetime
+        from .services import aggregate_sales
+        lines = [
+            (4, datetime(2025, 9, 1), 7, 1, 100, 1, 10, 25000, 750),  # dollar cost read as pesos
+            (4, datetime(2025, 9, 2), 7, 1, 200, 1, 1, 5000, 0),  # cost 0
+            (4, datetime(2025, 9, 3), 7, 1, 300, 1, 1, 4000, 100),  # never purchased, 97.5% margin
+            (4, datetime(2025, 9, 4), 7, 1, 400, 3, 1, 900, 0),  # a service: no cost is normal
+        ]
+        rows, unreliable = aggregate_sales(lines, {100: self.BUYS}, {100, 200})
+        self.assertAlmostEqual(next(r for r in rows if r[5] == 100)[8], 750 * 19.0)
+        self.assertEqual(unreliable, [200, 300])

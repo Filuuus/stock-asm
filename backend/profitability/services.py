@@ -79,7 +79,7 @@ from fleet.models import VehicleDayKm
 from .models import ExcludedProduct, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
 from .weights import estimate_kg, load_gea
 
-CACHE_KEY = 'profitability_v5_{}_{}'  # bump the version when the cached shape changes
+CACHE_KEY = 'profitability_v6_{}_{}'  # bump the version when the cached shape changes
 CACHE_SECONDS = 600
 NO_BRAND = 'Sin marca'
 SERVICE_PRODUCT_TYPE = 3
@@ -111,24 +111,95 @@ def _in_thread(fn, *args):
 
 
 def fetch_sales(date_from, date_to):
-    """Factura and return lines in [date_from, date_to) per (doc type, month, agent, client,
-    product): units, net, cost."""
+    """Factura and return lines in [date_from, date_to), one row per line (the cost is corrected
+    line by line, see correct_dollar_cost): doc type, date, agent, client, product, product type,
+    units, net, cost."""
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT d.CIDDOCUMENTODE, YEAR(d.CFECHA), MONTH(d.CFECHA), d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR,
-                   m.CIDPRODUCTO, SUM(m.CUNIDADES), SUM({NET}), SUM(m.CCOSTOESPECIFICO)
+            SELECT d.CIDDOCUMENTODE, d.CFECHA, d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR, m.CIDPRODUCTO, p.CTIPOPRODUCTO,
+                   m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
             JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
             WHERE d.CIDDOCUMENTODE IN (%s, %s) AND d.CCANCELADO = 0 AND d.CIDAGENTE {ZONE_FILTER}
               AND d.CFECHA >= %s AND d.CFECHA < %s AND p.CCODIGOPRODUCTO <> %s
-            GROUP BY d.CIDDOCUMENTODE, YEAR(d.CFECHA), MONTH(d.CFECHA), d.CIDAGENTE, d.CIDCLIENTEPROVEEDOR,
-                     m.CIDPRODUCTO
             """,
             [FACTURA_DOC_TYPE, DEVOLUCION_DOC_TYPE, *ZONE_IDS, date_from, date_to, ADVANCE_PRODUCT_CODE],
         )
-        return [list(r) for r in cursor.fetchall()]
+        return cursor.fetchall()
+
+
+def fetch_dollar_purchases():
+    """Every purchase line priced in dollars: {product: [(date, dollar price, exchange rate)]},
+    oldest first. Dollar-priced means a foreign-currency purchase, or one entered in pesos from a
+    supplier that bills us in dollars (North West Rubber's 2023-2025 purchases were entered that way,
+    found 2026-10-13). Also returns every product ever purchased."""
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT m.CIDPRODUCTO, d.CFECHA, m.CPRECIO, d.CTIPOCAMBIO, d.CIDMONEDA, d.CIDCLIENTEPROVEEDOR
+            FROM admMovimientos m
+            JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            WHERE d.CIDDOCUMENTODE = %s AND d.CCANCELADO = 0 AND m.CUNIDADES > 0
+            ORDER BY d.CFECHA
+            """,
+            [PURCHASE_DOC_TYPE],
+        )
+        rows = cursor.fetchall()
+    dollar_suppliers = {supplier for _, _, _, _, currency, supplier in rows if currency != 1}
+    dollar = defaultdict(list)
+    for product, day, price, rate, currency, supplier in rows:
+        if price and float(rate) > 1 and (currency != 1 or supplier in dollar_suppliers):
+            dollar[product].append((day.date(), float(price), float(rate)))
+    return dict(dollar), {r[0] for r in rows}
+
+
+def correct_dollar_cost(units, net, cost, day, purchases):
+    """A sale line's cost in pesos, fixing the ERP's dollar costs read as pesos (management,
+    2026-10-13). `purchases`: the product's dollar purchases, oldest first (fetch_dollar_purchases).
+    - The cost per unit is one purchase's dollar price (within 2%): times that purchase's rate.
+    - The average cost was dragged down by such lots (under 30% of the latest purchase before the sale
+      at its rate): that purchase's price at its rate.
+    Either only when the corrected cost stays under the selling price and the recorded one is under a
+    fifth of it, so a real peso cost (17-20 times higher) or a box-vs-piece unit is never touched."""
+    if not purchases or units <= 0 or cost <= 0 or net <= 0:
+        return cost
+    per_unit, price = cost / units, net / units
+    if per_unit * 5 >= price:
+        return cost
+    for _, dollars, rate in purchases:
+        if abs(per_unit - dollars) <= 0.02 * dollars and dollars * rate < price:
+            return cost * rate
+    latest = next((p for p in reversed(purchases) if p[0] <= day), purchases[0])
+    reference = latest[1] * latest[2]
+    if per_unit < 0.3 * reference and reference < price:
+        return units * reference
+    return cost
+
+
+def aggregate_sales(lines, dollar_purchases, purchased):
+    """Corrects each line's cost and sums lines per (doc type, year, month, agent, client, product):
+    units, net, cost - the shape build_facts takes. Also returns the goods without a usable cost: a
+    sale line at cost 0, or never purchased and over 80% gross margin (their cost is a guess)."""
+    groups = defaultdict(lambda: [0.0, 0.0, 0.0])
+    zero_cost, totals = set(), defaultdict(lambda: [0.0, 0.0])
+    for doc_type, day, agent, client, product, product_type, units, net, cost in lines:
+        units, net, cost = float(units), float(net), float(cost)
+        if product_type != SERVICE_PRODUCT_TYPE:
+            cost = correct_dollar_cost(units, net, cost, day.date(), dollar_purchases.get(product))
+            if doc_type == FACTURA_DOC_TYPE:
+                if units > 0 and cost == 0:
+                    zero_cost.add(product)
+                totals[product][0] += net
+                totals[product][1] += cost
+        g = groups[(doc_type, day.year, day.month, agent, client, product)]
+        g[0] += units
+        g[1] += net
+        g[2] += cost
+    guessed = {p for p, (net, cost) in totals.items() if p not in purchased and net > 0 and (net - cost) / net > 0.8}
+    rows = [[*key, *values] for key, values in groups.items()]
+    return rows, sorted(zero_cost | guessed)
 
 
 def fetch_credit_notes(date_from, date_to):
@@ -366,14 +437,17 @@ def fetch_erp(date_from, date_to, refresh=False):
             commissions = pool.submit(_in_thread, fetch_paid_commissions, date_from, date_to)
             discounts = pool.submit(_in_thread, fetch_supplier_discounts, date_from, date_to)
             sales = pool.submit(_in_thread, fetch_sales, date_from, date_to)
+            dollar = pool.submit(_in_thread, fetch_dollar_purchases)
             credits = pool.submit(_in_thread, fetch_credit_notes, date_from, date_to)
             products = pool.submit(_in_thread, fetch_products)
             clients = pool.submit(_in_thread, fetch_client_names)
             brands = pool.submit(_in_thread, CommissionRepository.fetch_brand_names)
             notes, invoice_lines, advances = credits.result()
             advances = set(advances)
+            sale_rows, unreliable_cost = aggregate_sales(sales.result(), *dollar.result())
             data = {
-                'sales': sales.result(), 'notes': [n for n in notes if n[0] not in advances],
+                'sales': sale_rows, 'unreliable_cost': unreliable_cost,
+                'notes': [n for n in notes if n[0] not in advances],
                 'invoice_lines': invoice_lines,
                 'products': products.result(), 'clients': clients.result(), 'brands': brands.result(),
                 'commissions': commissions.result(), 'supplier_discounts': discounts.result(),
@@ -632,6 +706,7 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     return {
         'facts': facts,
         'excluded': sorted(excluded),
+        'unreliable_cost': [p for p in data['unreliable_cost'] if p not in excluded],
         'dropped': sorted(drop),
         'imports': {'cost': round(imports['cost'], 2), 'purchases': round(imports['purchases'], 2),
                     'rate': round(import_rate, 4)},
@@ -657,18 +732,29 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
         cursor.execute(
             f"""
             SELECT d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCONCEPTODOCUMENTO, d.CFOLIO, d.CFECHA, d.CIDAGENTE,
-                   d.CIDCLIENTEPROVEEDOR, SUM(m.CUNIDADES), SUM({NET}), SUM(m.CCOSTOESPECIFICO)
+                   d.CIDCLIENTEPROVEEDOR, m.CUNIDADES, {NET}, m.CCOSTOESPECIFICO, p.CTIPOPRODUCTO
             FROM admMovimientos m
             JOIN admDocumentos d ON d.CIDDOCUMENTO = m.CIDDOCUMENTO
+            JOIN admProductos p ON p.CIDPRODUCTO = m.CIDPRODUCTO
             WHERE d.CIDDOCUMENTODE IN (%s, %s) AND d.CCANCELADO = 0 AND d.CIDAGENTE {ZONE_FILTER}
               AND d.CFECHA >= %s AND d.CFECHA < %s AND m.CIDPRODUCTO = %s {client_sql}
-            GROUP BY d.CIDDOCUMENTO, d.CIDDOCUMENTODE, d.CIDCONCEPTODOCUMENTO, d.CFOLIO, d.CFECHA, d.CIDAGENTE,
-                     d.CIDCLIENTEPROVEEDOR
             ORDER BY d.CFECHA DESC, d.CFOLIO DESC
             """,
             params,
         )
-        rows = cursor.fetchall()
+        lines = cursor.fetchall()
+    # Same cost correction as the facts, then one row per document.
+    purchases = fetch_dollar_purchases()[0].get(product_id)
+    docs = {}
+    for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, product_type in lines:
+        units, net, cost = float(units), float(net), float(cost)
+        if product_type != SERVICE_PRODUCT_TYPE:
+            cost = correct_dollar_cost(units, net, cost, day.date(), purchases)
+        doc = docs.setdefault(doc_id, [doc_id, doc_type, concept, folio, day, agent, client, 0.0, 0.0, 0.0])
+        doc[7] += units
+        doc[8] += net
+        doc[9] += cost
+    rows = list(docs.values())
     series = CommissionRepository.fetch_concepto_series()
     clients = fetch_client_names()
     agent_zone = {agent_id: code for code, agent_id in ZONE_SCOPE.items()}

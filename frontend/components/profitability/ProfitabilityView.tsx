@@ -52,6 +52,7 @@ type Pools = Record<string, Record<string, number>>; // pool -> component -> amo
 interface Profitability {
   facts: Fact[];
   excluded: number[]; // product ids left out altogether, with their returns and credit notes
+  unreliable_cost: number[]; // goods whose ERP cost is 0 or a guess: their margin isn't real
   products: Record<string, Product>;
   clients: Record<string, string>;
   route_costs: Record<string, Pools>; // month -> pools
@@ -588,6 +589,7 @@ export default function ProfitabilityView() {
   // What the selection carries: a PDF leaves out the costs of the rest of the business (import costs, the
   // service crew) when none of it applies to what's shown.
   const selectionImports = filtered.some((f) => f[13] > 0);
+  const unreliableShown = data ? data.unreliable_cost.filter((p) => filtered.some((f) => f[3] === p)).length : 0;
   const selectionServices = filtered.some((f) => f[3] !== null && data?.products[f[3]]?.category === "S");
   const poolPrintClass = (pool: string) => (pool === "SERVICIOS" && !selectionServices ? "print:hidden" : undefined);
   const poolTotal = (pool: string) => Object.values(pools[pool] ?? {}).reduce((a, b) => a + b, 0);
@@ -1213,7 +1215,17 @@ export default function ProfitabilityView() {
                         />
                       )}
                       {groupBy !== "client" ? (
-                        g.label
+                        <>
+                          {g.label}
+                          {groupBy === "product" && data.unreliable_cost.includes(Number(g.key)) && (
+                            <span
+                              className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
+                              title="El ERP no tiene un costo real para este producto (costo 0, o nunca se compró): su margen no es real."
+                            >
+                              sin costo confiable
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <>
                           <span className={cn(pdf.hideClients && "print:hidden")}>
@@ -1284,6 +1296,8 @@ export default function ProfitabilityView() {
                 </>
               )}
               {unallocated >= 1 && `${formatMoney(unallocated)} de gastos de ruta sin repartir. `}
+              {unreliableShown > 0 &&
+                `${unreliableShown === 1 ? "1 producto" : `${unreliableShown} productos`} sin costo confiable en el ERP: su margen no es real. `}
               {notesLink}
             </p>
           </Card>
@@ -1546,7 +1560,14 @@ export default function ProfitabilityView() {
                 {data.excluded.length > 0 &&
                   ` ${data.excluded.length === 1 ? "Una venta única se deja fuera" : `${data.excluded.length} ventas únicas se dejan fuera`} para no distorsionar los resultados.`}
               </li>
-              <li>Costo: el costo de cada partida registrado en el ERP.</li>
+              <li>
+                Costo: el costo de cada partida registrado en el ERP.
+                <span className={cn(!selectionImports && "print:hidden")}>
+                  {" "}
+                  Cuando el ERP tomó como pesos un costo en dólares (el precio en dólares de la compra), se convierte con
+                  el tipo de cambio de esa compra.
+                </span>
+              </li>
               <li>
                 Las notas de crédito no traen producto en el ERP: cada una se reparte entre las partidas de la factura a
                 la que se aplicó, en proporción a su importe.
