@@ -10,10 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Notice } from "@/components/notice";
-import { productHref } from "@/components/catalog/ProductCard";
 import { useCart } from "@/hooks/use-cart";
 import { apiFetch } from "@/lib/api";
-import { plural } from "@/lib/utils";
+import { plural, productHref } from "@/lib/utils";
 
 // The quote-request cart: prices stay private, so the customer sends the list
 // and management approves it; their personal link then shows the prices.

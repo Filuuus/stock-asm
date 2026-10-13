@@ -4,17 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Maximize2, Minus, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minus, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
-import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
-import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
-import { cn, formatMoney } from "@/lib/utils";
+import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
+import ProductCard, { Availability, Price } from "@/components/catalog/ProductCard";
+import { apiFetch } from "@/lib/api";
+import { cn, formatMoney, productHref } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
-import { ProductDetail, RelatedPart, ServiceRule } from "@/types/api";
+import { ProductDetail, ProductImage, RelatedPart, ServiceRule } from "@/types/api";
 
 const imageSrc = (images: { file: string; is_primary: boolean }[]) => {
   const img = images.find((i) => i.is_primary) ?? images[0];
@@ -37,7 +38,7 @@ function PartCell({ part }: { part: RelatedPart }) {
     );
   }
   return (
-    <Link href={productHref(ours.key)} className="group flex items-center gap-3">
+    <Link href={productHref(ours.key, ours.slug)} className="group flex items-center gap-3">
       <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-gray-50">
         <Image src={imageSrc(ours.images)} alt="" fill sizes="48px" className="object-cover" />
       </div>
@@ -252,7 +253,7 @@ function Service({ service }: { service: NonNullable<NonNullable<ProductDetail["
             {service.in_assemblies.map((a, i) => (
               <li key={`${a.code}-${i}`}>
                 {a.ours[0] ? (
-                  <Link href={productHref(a.ours[0].key)} className="text-gray-800 hover:text-blue-700">
+                  <Link href={productHref(a.ours[0].key, a.ours[0].slug)} className="text-gray-800 hover:text-blue-700">
                     {a.ours[0].CNOMBREPRODUCTO}
                   </Link>
                 ) : (
@@ -338,7 +339,7 @@ function AppearsIn({ product }: { product: ProductDetail }) {
         {product.appears_in.map(({ parent, pos, qty, has_drawing }) => (
           <li key={parent.key} className="px-4 py-3">
             <Link
-              href={`${productHref(parent.key)}?pieza=${encodeURIComponent(product.key)}`}
+              href={`${productHref(parent.key, parent.slug)}?pieza=${encodeURIComponent(product.key)}`}
               className="group flex items-center gap-3"
             >
               <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-gray-50">
@@ -355,6 +356,125 @@ function AppearsIn({ product }: { product: ProductDetail }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+// Catálogo › Bionat › Sustitutos de leche, each a link to the filtered catalog.
+function Breadcrumb({ product }: { product: ProductDetail }) {
+  const category = new URLSearchParams({ categoria: product.category });
+  const crumbs = [{ href: `/?${category}`, label: CATEGORY_LABELS[product.category] ?? product.category }];
+  if (product.line) {
+    category.append("linea", product.line);
+    crumbs.push({ href: `/?${category}`, label: lineLabel(product.line) });
+  }
+  return (
+    <nav aria-label="Ruta" className="mb-4 -mt-2 flex flex-wrap items-center gap-1 text-sm text-gray-500">
+      {crumbs.map((c, i) => (
+        <span key={c.href} className="flex items-center gap-1">
+          {i > 0 && <ChevronRight className="h-3.5 w-3.5" />}
+          <Link href={c.href} className="hover:text-blue-700 hover:underline">{c.label}</Link>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+// The main photo plus thumbnails to switch between them.
+function Gallery({ images, alt }: { images: ProductImage[]; alt: string }) {
+  const [index, setIndex] = useState(Math.max(images.findIndex((i) => i.is_primary), 0));
+  const current = images[index];
+  return (
+    <div className="mx-auto w-full max-w-md">
+      <div className="relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <Image
+          src={current ? `/products/${current.file}` : "/placeholder.svg"}
+          alt={alt}
+          fill
+          sizes="(min-width: 768px) 50vw, 100vw"
+          className="object-contain"
+          priority
+        />
+      </div>
+      {images.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {images.map((img, i) => (
+            <button
+              key={img.id}
+              type="button"
+              onClick={() => setIndex(i)}
+              aria-label={`Ver imagen ${i + 1}`}
+              className={cn(
+                "relative h-16 w-16 overflow-hidden rounded-lg border bg-white",
+                i === index ? "border-blue-600 ring-1 ring-blue-600" : "border-gray-200 hover:border-gray-400",
+              )}
+            >
+              <Image src={`/products/${img.file}`} alt="" fill sizes="64px" className="object-contain" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The product's description; staff can write or edit it right here.
+function Description({ product }: { product: ProductDetail }) {
+  const [text, setText] = useState(product.description ?? "");
+  const [draft, setDraft] = useState<string | null>(null); // null = not editing
+  const [error, setError] = useState<string | null>(null);
+  const isStaff = product.staff !== null;
+
+  const save = async () => {
+    setError(null);
+    const res = await apiFetch(`/api/inventory/${product.key}/descripcion/`, {
+      method: "PUT",
+      body: JSON.stringify({ text: draft }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "No se pudo guardar.");
+    setText(data.description ?? "");
+    setDraft(null);
+  };
+
+  if (!text && !isStaff) return null;
+  return (
+    <section className="mt-10 max-w-3xl">
+      <h2 className="mb-3 text-lg font-semibold text-gray-900">Descripción</h2>
+      {draft !== null ? (
+        <>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={10}
+            maxLength={4000}
+            placeholder="Para qué sirve, características, presentación, uso recomendado…"
+            className="w-full rounded-lg border border-gray-300 p-3 text-sm"
+          />
+          {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={save} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700">
+              Guardar
+            </button>
+            <button type="button" onClick={() => setDraft(null)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+              Cancelar
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {text ? (
+            <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">{text}</p>
+          ) : (
+            <p className="text-sm text-gray-400">Sin descripción.</p>
+          )}
+          {isStaff && (
+            <button type="button" onClick={() => setDraft(text)} className="mt-2 text-xs text-blue-600 hover:underline">
+              {text ? "Editar descripción" : "Agregar descripción"}
+            </button>
+          )}
+        </>
+      )}
     </section>
   );
 }
@@ -401,21 +521,12 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
         <ChevronLeft className="h-4 w-4" />
         Catálogo
       </Link>
+      <Breadcrumb product={product} />
 
       <div className="grid gap-6 md:grid-cols-2">
-        <div className="relative mx-auto aspect-square w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <Image
-            src={imageSrc(product.images)}
-            alt={product.CNOMBREPRODUCTO}
-            fill
-            sizes="(min-width: 768px) 50vw, 100vw"
-            className="object-contain"
-            priority
-          />
-        </div>
+        <Gallery images={product.images} alt={product.CNOMBREPRODUCTO} />
         <div>
-          <p className="text-sm text-gray-500">{CATEGORY_LABELS[product.category] ?? product.category}</p>
-          <h1 className="mt-1 text-2xl font-semibold text-gray-900">{product.CNOMBREPRODUCTO}</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">{product.CNOMBREPRODUCTO}</h1>
           {product.CCODIGOPRODUCTO && <p className="mt-1 text-sm text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
@@ -441,7 +552,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
                     <>
                       Reemplazo:{" "}
                       {note.replacement_ours[0] ? (
-                        <Link href={productHref(note.replacement_ours[0].key)} className="font-medium underline">
+                        <Link href={productHref(note.replacement_ours[0].key, note.replacement_ours[0].slug)} className="font-medium underline">
                           {note.replacement_ours[0].CNOMBREPRODUCTO} ({replacement})
                         </Link>
                       ) : (
@@ -460,6 +571,8 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           )}
         </div>
       </div>
+
+      <Description product={product} />
 
       {gea?.drawing?.img && (
         <section className="mt-10">
@@ -505,6 +618,16 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
       <AppearsIn product={product} />
       {gea && <PartsList title="Refacciones" parts={gea.spare_parts} />}
       {gea && <PartsList title="Se usa en" parts={gea.used_in} />}
+      {product.related.length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 text-lg font-semibold text-gray-900">Productos relacionados</h2>
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {product.related.map((p) => (
+              <ProductCard key={p.key} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

@@ -18,3 +18,7 @@ export function formatMoney(value: number) {
 export function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+// /producto/86-pulsador-vacopuls-...: the key is what counts, the name is for people
+// and search engines (the page redirects to the right one).
+export const productHref = (key: string, slug?: string) => `/producto/${encodeURIComponent(key)}${slug ? `-${slug}` : ""}`;

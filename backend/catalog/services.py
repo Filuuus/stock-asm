@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.cache import cache
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from .models import ProductImage
+from .models import ProductDescription, ProductImage
 
 PRODUCTS_DIR = settings.BASE_DIR.parent / 'frontend' / 'public' / 'products'
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -23,7 +23,7 @@ def get_images_by_codes(codes):
 
 
 class PhotoError(ValueError):
-    """Shown to the user."""
+    """Shown to the user (photo and description edits)."""
 
 
 def _blank_corners(im):
@@ -88,3 +88,18 @@ def delete_photo(code, pk):
             nxt.save(update_fields=['is_primary'])
     cache.delete('inventory_catalog')
     return True
+
+
+MAX_DESCRIPTION = 4000
+
+
+def set_description(code, text, user):
+    """Staff edit the product page's description; empty text removes it."""
+    text = str(text or '').strip()
+    if len(text) > MAX_DESCRIPTION:
+        raise PhotoError(f'Máximo {MAX_DESCRIPTION} caracteres.')
+    if not text:
+        ProductDescription.objects.filter(producto_codigo=code).delete()
+        return None
+    ProductDescription.objects.update_or_create(producto_codigo=code, defaults={'text': text, 'updated_by': user})
+    return text

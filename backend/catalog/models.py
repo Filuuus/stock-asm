@@ -16,6 +16,18 @@ class ProductImage(models.Model):
         ordering = ["producto_codigo", "order"]
 
 
+class ProductDescription(models.Model):
+    """The product page's description, written by staff (or pre-filled from
+    the manufacturer's site). Shown to the public, with any part number in it
+    cut out like everywhere else."""
+
+    # Not a real ForeignKey: mirrors AdmProductos.CCODIGOPRODUCTO in the ERP.
+    producto_codigo = models.CharField(max_length=30, unique=True)
+    text = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+
 def _new_token():
     return secrets.token_urlsafe(16)
 

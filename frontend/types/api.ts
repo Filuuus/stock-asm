@@ -8,6 +8,7 @@ export interface Product {
   CIDPRODUCTO: number;
   // The public id (URLs, cart, quotes). Part numbers are private to staff.
   key: string;
+  slug: string; // readable URL tail, from the name without codes
   // null for the public (owner, 2026-10-13: customers would buy it elsewhere).
   CCODIGOPRODUCTO: string | null;
   CNOMBREPRODUCTO: string;
@@ -33,7 +34,7 @@ export interface Product {
 // What the product page gets for a related part we also sell.
 export type ProductSummary = Pick<
   Product,
-  "key" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price" | "price_visible" | "in_stock" | "images"
+  "key" | "slug" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price" | "price_visible" | "in_stock" | "images"
 > & { stock?: number | null };
 
 export interface ServiceRule {
@@ -52,6 +53,8 @@ export interface RelatedPart {
 
 // Product page: the catalog fields plus what GEA's dealer portal says about it.
 export interface ProductDetail extends Product {
+  description: string | null; // written by staff (or pre-filled from the manufacturer)
+  related: ProductSummary[]; // same category and line
   // Staff only (null for the public): live from the ERP.
   staff: {
     warehouses: { name: string; units: number }[]; // every warehouse holding stock, trucks included

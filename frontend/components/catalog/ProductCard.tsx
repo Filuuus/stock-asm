@@ -5,9 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import AddToCart from "@/components/catalog/AddToCart";
 import { Product, ProductSummary } from "@/types/api";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, productHref } from "@/lib/utils";
 
-export default function ProductCard({ product }: { product: Product }) {
+// Takes a full catalog product or a related-product summary.
+export default function ProductCard({ product }: { product: ProductSummary & Pick<Partial<Product>, "discontinued"> }) {
   const images = product.images;
   const initialIndex = Math.max(
     images.findIndex((img) => img.is_primary),
@@ -24,7 +25,7 @@ export default function ProductCard({ product }: { product: Product }) {
       {/* Square box, photo cropped to fill it, so every card lines up. */}
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-50">
         <Link
-          href={productHref(product.key)}
+          href={productHref(product.key, product.slug)}
           aria-label={product.CNOMBREPRODUCTO}
           tabIndex={-1}
           className="absolute inset-0 z-[1]"
@@ -58,7 +59,7 @@ export default function ProductCard({ product }: { product: Product }) {
       </div>
       <div className="mt-3 flex w-full flex-1 flex-col items-start">
         <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
-          <Link href={productHref(product.key)} className="hover:text-blue-700">
+          <Link href={productHref(product.key, product.slug)} className="hover:text-blue-700">
             {product.CNOMBREPRODUCTO}
           </Link>
         </h3>
@@ -77,8 +78,6 @@ export default function ProductCard({ product }: { product: Product }) {
     </div>
   );
 }
-
-export const productHref = (key: string) => `/producto/${encodeURIComponent(key)}`;
 
 export function Price({ product, className }: { product: ProductSummary; className?: string }) {
   if (!product.price_visible || product.price === null) {

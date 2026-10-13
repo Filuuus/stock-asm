@@ -91,15 +91,20 @@ class ProductDetailTests(SimpleTestCase):
 
     def detail(self, is_worker):
         catalog = [
-            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
+            {'key': '1', 'slug': 'pulsador', 'category': 'R', 'line': None, 'sold_rank': 1,
+             'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
              'price_visible': True, 'in_stock': True, 'images': []},
             # Our code carries a regional letter; GEA's doesn't.
-            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
+            {'key': '2', 'slug': 'pieza', 'category': 'R', 'line': None, 'sold_rank': None,
+             'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
              'price_visible': False, 'in_stock': False, 'images': []},
         ]
         with patch('api.services._catalog', return_value=catalog), \
+                patch('api.services.ProductDescription') as descriptions, \
                 patch('api.services._gea_products', return_value=self.GEA), \
                 patch.object(InventoryRepository, 'fetch_product_activity', return_value={'sold_12m': 5}) as activity:
+            descriptions.objects.filter.return_value.values_list.return_value.first.return_value = \
+                'Repuesto (7021-2764-010)'
             detail = get_product_detail('1', is_worker)
             # The ERP is only queried for staff.
             self.assertEqual(activity.called, is_worker)
@@ -107,13 +112,16 @@ class ProductDetailTests(SimpleTestCase):
 
     def test_part_lists_the_assemblies_it_appears_in(self):
         catalog = [
-            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
+            {'key': '1', 'slug': 'pulsador', 'category': 'R', 'line': None, 'sold_rank': 1,
+             'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
              'price_visible': True, 'in_stock': True, 'images': []},
-            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
+            {'key': '2', 'slug': 'pieza', 'category': 'R', 'line': None, 'sold_rank': None,
+             'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
              'price_visible': False, 'in_stock': False, 'images': []},
         ]
         # The part has no GEA data of its own; it's found through the pulsator's list.
         with patch('api.services._catalog', return_value=catalog), \
+                patch('api.services.ProductDescription') as descriptions, \
                 patch('api.services._gea_products', return_value=self.GEA), \
                 patch.object(InventoryRepository, 'fetch_product_activity', return_value={}):
             part = get_product_detail('2', True)
@@ -132,6 +140,11 @@ class ProductDetailTests(SimpleTestCase):
         self.assertEqual((public['gea']['code'], part['code'], part['ours'][0]['key']), (None, None, '2'))
         self.assertIsNone(part['ours'][0]['CCODIGOPRODUCTO'])
 
+    def test_description_is_scrubbed_and_related_share_the_line(self):
+        public = self.detail(False)
+        self.assertEqual(public['description'], 'Repuesto')
+        self.assertEqual([p['key'] for p in public['related']], ['2'])
+
 
 class GeaPartSearchTests(SimpleTestCase):
     GEA = {'7041-2700-550': {'gea_code': '7041-2700-550', 'desc': 'Pulsador', 'parts': [
@@ -139,8 +152,8 @@ class GeaPartSearchTests(SimpleTestCase):
         {'pos': '0040', 'qty': 4.0, 'code': '7041-2745-010', 'desc': 'Disco presión'},
     ]}}
     CATALOG = [
-        {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'images': []},
-        {'key': '2', 'CCODIGOPRODUCTO': '7041-2745-010W', 'CNOMBREPRODUCTO': 'DISCO', 'images': []},
+        {'key': '1', 'slug': 'pulsador', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'images': []},
+        {'key': '2', 'slug': 'disco', 'CCODIGOPRODUCTO': '7041-2745-010W', 'CNOMBREPRODUCTO': 'DISCO', 'images': []},
     ]
 
     def search(self, q):

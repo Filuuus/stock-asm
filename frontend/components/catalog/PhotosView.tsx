@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Camera, Loader2, X } from "lucide-react";
 import { Notice } from "@/components/notice";
-import { productHref } from "@/components/catalog/ProductCard";
+import { productHref } from "@/lib/utils";
 import { normalize } from "@/components/catalog/CatalogFilters";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
@@ -143,7 +143,7 @@ function PhotoRow({ product, onChange }: { product: Product; onChange: (images: 
     <li className="p-3 sm:p-4">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <Link href={productHref(product.key)} className="line-clamp-2 text-sm font-medium text-gray-800 hover:text-blue-700">
+          <Link href={productHref(product.key, product.slug)} className="line-clamp-2 text-sm font-medium text-gray-800 hover:text-blue-700">
             {product.CNOMBREPRODUCTO}
           </Link>
           <p className={cn("text-xs", product.in_stock ? "text-green-700" : "text-gray-400")}>

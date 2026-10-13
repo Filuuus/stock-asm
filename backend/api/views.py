@@ -2,7 +2,7 @@ from rest_framework.decorators import api_view, parser_classes, permission_class
 from rest_framework.parsers import MultiPartParser
 from accounts.permissions import IsWorker
 from rest_framework.response import Response
-from catalog.services import PhotoError, delete_photo, save_photo
+from catalog.services import PhotoError, delete_photo, save_photo, set_description
 from .services import _catalog, get_inventory_catalog, get_product_detail, search_gea_parts
 
 @api_view(['GET'])
@@ -53,3 +53,16 @@ def product_photo(request, key, pk):
     if code is None or not delete_photo(code, pk):
         return Response(status=404)
     return Response(status=204)
+
+
+@api_view(['PUT'])
+@permission_classes([IsWorker])
+def product_description(request, key):
+    code = _code(key)
+    if code is None:
+        return Response({'error': 'Producto no encontrado.'}, status=404)
+    try:
+        text = set_description(code, request.data.get('text'), request.user)
+    except PhotoError as e:
+        return Response({'error': str(e)}, status=400)
+    return Response({'description': text})

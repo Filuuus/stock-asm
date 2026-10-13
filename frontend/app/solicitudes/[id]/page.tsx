@@ -6,12 +6,11 @@ import { ChevronLeft, Copy, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
-import { productHref } from "@/components/catalog/ProductCard";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
 import { formatDay } from "@/lib/dates";
 import { QUOTE_STATUS, type QuoteStatus } from "@/lib/quote-status";
-import { cn, formatMoney } from "@/lib/utils";
+import { cn, formatMoney, productHref } from "@/lib/utils";
 
 interface Detail {
   id: number;

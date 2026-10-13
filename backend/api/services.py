@@ -8,7 +8,9 @@ from functools import lru_cache
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connections
+from django.utils.text import slugify
 from .models import AdmClasificacionesValores, AdmProductos
+from catalog.models import ProductDescription
 from catalog.services import get_images_by_codes
 from commissions.services import _classify_line
 
@@ -29,7 +31,8 @@ NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
 CODE_KEYS = {'CCODIGOPRODUCTO', 'code', 'gea_code', 'replacement'}
-TEXT_KEYS = {'CNOMBREPRODUCTO', 'desc', 'name'}
+TEXT_KEYS = {'CNOMBREPRODUCTO', 'desc', 'name', 'description'}
+RELATED_LIMIT = 8
 
 # The catalog's Bionat Línea: the whole brand is one category, split into a
 # few big groups by product type (the ERP's line and the commission split are
@@ -196,6 +199,8 @@ def get_inventory_catalog(is_worker, raw=False):
                 product['line'] = _bionat_type(product['CNOMBREPRODUCTO'])
             # The public id: the URL, cart and quotes use it instead of the code.
             product['key'] = str(product['CIDPRODUCTO'])
+            # Readable URL tail (/producto/86-pulsador-vacopuls-...), never with a code.
+            product['slug'] = slugify(CODE_IN_TEXT_RE.sub('', product['CNOMBREPRODUCTO'] or ''))[:60].strip('-')
             del product['CTIPOPRODUCTO']
             product['stock'] = stock.get(product['CIDPRODUCTO'], 0) or 0
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
@@ -359,12 +364,25 @@ def get_product_detail(key, is_worker):
         return None
     code = product['CCODIGOPRODUCTO']
     detail = _product_detail(product, code, catalog, by_code, is_worker)
+    description = ProductDescription.objects.filter(producto_codigo=code).values_list('text', flat=True).first()
+    detail.update(description=description, related=_related(product, catalog))
     return detail if is_worker else scrub(detail)
 
 
+def summary(p):
+    return {k: p[k] for k in ('key', 'slug', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price',
+                              'price_visible', 'in_stock', 'images')}
+
+
+def _related(product, catalog):
+    """Same category and line: in stock, best sellers and photographed first."""
+    same = [p for p in catalog if p['key'] != product['key']
+            and p['category'] == product['category'] and p['line'] == product['line']]
+    same.sort(key=lambda p: (not p['in_stock'], p['sold_rank'] or float('inf'), not p['images']))
+    return [summary(p) for p in same[:RELATED_LIMIT]]
+
+
 def _product_detail(product, code, catalog, by_code, is_worker):
-    def summary(p):
-        return {k: p[k] for k in ('key', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price', 'price_visible', 'in_stock', 'images')}
 
     gea = _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
@@ -428,7 +446,7 @@ def search_gea_parts(query, is_worker, limit=20):
     sold = {_plain_code(c) for c in by_code}
 
     def summary(p):
-        return {k: p[k] for k in ('key', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'images')}
+        return {k: p[k] for k in ('key', 'slug', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'images')}
 
     descs = {}
     for gea in _gea_products().values():
