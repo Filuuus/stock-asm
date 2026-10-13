@@ -72,6 +72,7 @@ class InventoryRepository:
                 'CCODIGOPRODUCTO',
                 'CNOMBREPRODUCTO',
                 'CPRECIO1',
+                'CIMPUESTO1',
                 'CIDVALORCLASIFICACION1',
                 'CIDVALORCLASIFICACION2',
                 'CTIPOPRODUCTO',
@@ -224,6 +225,9 @@ def _apply_role(data, is_worker):
         result.append({
             **product,
             'CPRECIO1': product['CPRECIO1'] if visible else None,
+            # What the customer pays: CPRECIO1 is before IVA, and the rate is the
+            # product's own (16% parts, 0% Bionat feed; matches every invoice).
+            'price': _with_iva(product['CPRECIO1'], product['CIMPUESTO1']) if visible else None,
             'price_visible': visible,
             'brand': brand,
             # Staff see units; the public only whether there is any.
@@ -233,6 +237,10 @@ def _apply_role(data, is_worker):
             'discontinued': {'replacement': note.get('replacement')} if note.get('not_orderable') else None,
         })
     return result
+
+
+def _with_iva(price, rate):
+    return round(price * (1 + (rate or 0) / 100), 2) if price else price
 
 
 def _catalog(is_worker):
@@ -354,7 +362,7 @@ def get_product_detail(key, is_worker):
 
 def _product_detail(product, code, catalog, by_code, is_worker):
     def summary(p):
-        return {k: p[k] for k in ('key', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price_visible', 'in_stock', 'images')}
+        return {k: p[k] for k in ('key', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price', 'price_visible', 'in_stock', 'images')}
 
     gea = _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)

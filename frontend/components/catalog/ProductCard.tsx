@@ -81,15 +81,15 @@ export default function ProductCard({ product }: { product: Product }) {
 export const productHref = (key: string) => `/producto/${encodeURIComponent(key)}`;
 
 export function Price({ product, className }: { product: ProductSummary; className?: string }) {
-  if (!product.price_visible || product.CPRECIO1 === null) {
+  if (!product.price_visible || product.price === null) {
     return <span className={cn("text-xs font-medium text-gray-400", className)}>Precio disponible para personal</span>;
   }
-  if (product.CPRECIO1 <= 0) {
+  if (product.price <= 0) {
     return <span className={cn("text-sm font-medium text-gray-400", className)}>Sin precio</span>;
   }
   return (
     <span className={cn("text-xl font-semibold text-gray-900 sm:text-2xl", className)}>
-      {formatMoney(product.CPRECIO1)}
+      {formatMoney(product.price)}
     </span>
   );
 }

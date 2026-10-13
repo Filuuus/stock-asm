@@ -10,16 +10,16 @@ from accounts.models import Profile
 from catalog.models import QuoteRequest
 
 CATALOG = [
-    {'key': '1', 'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA (7050-1935-000)', 'CPRECIO1': 100.0, 'stock': 5.0,
+    {'key': '1', 'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA (7050-1935-000)', 'price': 100.0, 'stock': 5.0,
      'in_stock': True, 'images': []},
-    {'key': '2', 'CCODIGOPRODUCTO': 'B', 'CNOMBREPRODUCTO': 'JUNTA', 'CPRECIO1': 0.0, 'stock': 0.0,
+    {'key': '2', 'CCODIGOPRODUCTO': 'B', 'CNOMBREPRODUCTO': 'JUNTA', 'price': 0.0, 'stock': 0.0,
      'in_stock': False, 'images': []},
 ]
 
 
 def catalog(is_worker):
     # The public never gets prices from the catalog.
-    return [{**p, 'CPRECIO1': p['CPRECIO1'] if is_worker else None} for p in CATALOG]
+    return [{**p, 'price': p['price'] if is_worker else None} for p in CATALOG]
 
 
 # In-memory cache: the form's rate limit must not count against the dev Redis.
@@ -56,12 +56,12 @@ class QuoteRequestTests(TestCase):
         self.client.force_login(self.manager)
         self.client.post(f'/api/solicitudes/{req.pk}/aprobar/', {'valid_days': 10}, content_type='application/json')
 
-        CATALOG[0]['CPRECIO1'] = 999.0  # a later price change doesn't touch the quote
+        CATALOG[0]['price'] = 999.0  # a later price change doesn't touch the quote
         try:
             self.client.logout()
             public = self.client.get(f'/api/solicitudes/publica/{token}/').json()
         finally:
-            CATALOG[0]['CPRECIO1'] = 100.0
+            CATALOG[0]['price'] = 100.0
         self.assertEqual(public['status'], 'APPROVED')
         self.assertEqual([i['unit_price'] for i in public['items']], [100.0, None])  # B: se cotiza aparte
         self.assertEqual(public['total'], 200.0)

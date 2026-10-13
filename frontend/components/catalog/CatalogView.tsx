@@ -106,10 +106,10 @@ export default function CatalogView({ products }: { products: Product[] }) {
       }
       if (sortMode === "price-asc" || sortMode === "price-desc") {
         // Hidden prices have no value to compare - they go after the shown ones.
-        if (a.CPRECIO1 === null || b.CPRECIO1 === null) {
-          return Number(a.CPRECIO1 === null) - Number(b.CPRECIO1 === null);
+        if (a.price === null || b.price === null) {
+          return Number(a.price === null) - Number(b.price === null);
         }
-        return (a.CPRECIO1 - b.CPRECIO1) * direction;
+        return (a.price - b.price) * direction;
       }
       return relevance(a) - relevance(b);
     });

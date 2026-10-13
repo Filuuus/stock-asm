@@ -174,7 +174,8 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
           <tfoot>
             <tr className="border-t border-gray-200">
               <td colSpan={5} className="px-4 py-3 text-right font-semibold text-gray-900">
-                Total: <span className="num">{formatMoney(req.total)}</span>
+                Total: <span className="num">{formatMoney(req.total)}</span>{" "}
+                <span className="text-xs font-normal text-gray-500">IVA incluido</span>
               </td>
             </tr>
           </tfoot>

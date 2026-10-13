@@ -12,7 +12,7 @@ import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/Catal
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS } from "@/components/catalog/CatalogFilters";
 import { Availability, Price, productHref } from "@/components/catalog/ProductCard";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
 import { ProductDetail, RelatedPart, ServiceRule } from "@/types/api";
 
@@ -419,6 +419,13 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           {product.CCODIGOPRODUCTO && <p className="mt-1 text-sm text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
+          {product.price !== null && product.price > 0 && (
+            <p className="mt-1 text-xs text-gray-500">
+              IVA incluido
+              {/* Staff also get the ERP's price before IVA. */}
+              {product.staff && product.CPRECIO1 !== null && ` · Sin IVA: ${formatMoney(product.CPRECIO1)}`}
+            </p>
+          )}
           <Availability product={product} className="mt-2 text-sm" />
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
           {product.staff && <StaffBox staff={product.staff} />}

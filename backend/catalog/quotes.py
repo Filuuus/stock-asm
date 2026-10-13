@@ -78,7 +78,7 @@ def _rows(req, by_code, live_prices):
     for item in req.items.all():
         p = by_code.get(item.producto_codigo, {})
         if live_prices:
-            price = p.get('CPRECIO1') or None
+            price = p.get('price') or None
         else:
             price = item.unit_price if req.status == QuoteRequest.STATUS_APPROVED else None
         price = Decimal(str(price)) if price else None
@@ -162,7 +162,8 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
         raise QuoteError('Vigencia no válida.')
     if not 1 <= valid_days <= 365:
         raise QuoteError('La vigencia debe ser de 1 a 365 días.')
-    prices = {p['CCODIGOPRODUCTO']: p['CPRECIO1'] for p in _catalog(True)}
+    # IVA included, like the catalog shows it.
+    prices = {p['CCODIGOPRODUCTO']: p['price'] for p in _catalog(True)}
     with transaction.atomic():
         for item in req.items.all():
             price = prices.get(item.producto_codigo)

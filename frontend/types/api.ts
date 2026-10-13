@@ -12,7 +12,8 @@ export interface Product {
   CNOMBREPRODUCTO: string;
   // null when the requester can't see this product's price (logged-out visitor
   // and a category whose prices are private) - see price_visible.
-  CPRECIO1: number | null;
+  CPRECIO1: number | null; // before IVA, as the ERP stores it
+  price: number | null; // what the customer pays: CPRECIO1 plus the product's IVA (null when hidden)
   brand: string | null;
   // Commission category code (R, R_CHEM, B, ...) - see CATEGORY_LABELS.
   category: string;
@@ -31,7 +32,7 @@ export interface Product {
 // What the product page gets for a related part we also sell.
 export type ProductSummary = Pick<
   Product,
-  "key" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price_visible" | "in_stock" | "images"
+  "key" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price" | "price_visible" | "in_stock" | "images"
 > & { stock?: number | null };
 
 export interface ServiceRule {

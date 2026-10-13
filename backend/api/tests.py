@@ -12,7 +12,7 @@ from .services import (InventoryRepository, _apply_role, _bionat_type, get_inven
 def producto(pid, code, stock_units, name='PEZONERA'):
     return {
         'CIDPRODUCTO': pid, 'CCODIGOPRODUCTO': code, 'CNOMBREPRODUCTO': name,
-        'CPRECIO1': 100.0, 'CIDVALORCLASIFICACION1': 1,
+        'CPRECIO1': 100.0, 'CIMPUESTO1': 16.0, 'CIDVALORCLASIFICACION1': 1,
         'CIDVALORCLASIFICACION2': 2, 'CTIPOPRODUCTO': 1,
     }, stock_units
 
@@ -46,8 +46,8 @@ class InventoryCatalogTests(SimpleTestCase):
         self.assertEqual((public[1]['CCODIGOPRODUCTO'], public[1]['key']), (None, '1'))
         self.assertEqual(public[1]['CNOMBREPRODUCTO'], 'VALVULA')
         self.assertEqual(public[1]['brand'], 'GEA')
-        # Refacciones in stock: the price is public.
-        self.assertEqual(public[1]['CPRECIO1'], 100.0)
+        # Refacciones in stock: the price is public, IVA included.
+        self.assertEqual((public[1]['CPRECIO1'], public[1]['price']), (100.0, 116.0))
 
     def test_discontinued_flag_is_staff_only(self):
         self.assertEqual(self.catalog(True)[1]['discontinued'], {'replacement': 'B'})
@@ -57,13 +57,14 @@ class InventoryCatalogTests(SimpleTestCase):
     def test_public_prices_by_category(self):
         self.assertIsNone(_apply_role([self.row('R_CHEM')], False)[0]['CPRECIO1'])
         self.assertIsNone(_apply_role([self.row('R_CHEM')], False)[0]['brand'])
-        self.assertEqual(_apply_role([self.row('B')], False)[0]['CPRECIO1'], 100.0)
+        # Bionat feed has no IVA.
+        self.assertEqual(_apply_role([self.row('B', 0.0)], False)[0]['price'], 100.0)
         self.assertEqual(_apply_role([self.row('R_CHEM')], True)[0]['CPRECIO1'], 100.0)
 
     @staticmethod
-    def row(category):
+    def row(category, iva=16.0):
         return {'CCODIGOPRODUCTO': 'A', 'category': category, 'brand': 'GEA FARM TECHNOLOGIES',
-                'CPRECIO1': 100.0, 'stock': 1.0}
+                'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': 1.0}
 
     def test_bionat_types(self):
         self.assertEqual(_bionat_type('CONCENTRADO MIPRO PREN 400'), 'Concentrados')
@@ -89,10 +90,10 @@ class ProductDetailTests(SimpleTestCase):
 
     def detail(self, is_worker):
         catalog = [
-            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0,
+            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
              'price_visible': True, 'in_stock': True, 'images': []},
             # Our code carries a regional letter; GEA's doesn't.
-            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None,
+            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
              'price_visible': False, 'in_stock': False, 'images': []},
         ]
         with patch('api.services._catalog', return_value=catalog), \
@@ -105,9 +106,9 @@ class ProductDetailTests(SimpleTestCase):
 
     def test_part_lists_the_assemblies_it_appears_in(self):
         catalog = [
-            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0,
+            {'key': '1', 'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
              'price_visible': True, 'in_stock': True, 'images': []},
-            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None,
+            {'key': '2', 'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
              'price_visible': False, 'in_stock': False, 'images': []},
         ]
         # The part has no GEA data of its own; it's found through the pulsator's list.

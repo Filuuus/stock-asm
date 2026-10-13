@@ -83,6 +83,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
       {approved && req.total !== null && (
         <p className="mt-4 text-right text-lg font-semibold text-gray-900">
           Total: <span className="num">{formatMoney(req.total)}</span>
+          <span className="block text-xs font-normal text-gray-500">IVA incluido</span>
         </p>
       )}
     </main>

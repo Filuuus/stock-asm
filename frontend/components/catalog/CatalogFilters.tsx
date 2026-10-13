@@ -78,7 +78,7 @@ export function normalize(text: string) {
 
 // A hidden price counts as priced, so neither this filter nor the sort
 // reveals which hidden prices are $0.
-export const hasPrice = (p: Product) => p.CPRECIO1 === null || p.CPRECIO1 > 0;
+export const hasPrice = (p: Product) => p.price === null || p.price > 0;
 
 // Line names are uppercase in the ERP; show them as a sentence.
 export const lineLabel = (line: string) => line.charAt(0) + line.slice(1).toLowerCase();
@@ -93,9 +93,9 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
   if (skip !== "withPrice" && f.withPrice && !hasPrice(p)) return false;
   if (skip !== "price" && (f.min || f.max)) {
     // A hidden price can't be checked against a range - leave it out.
-    if (p.CPRECIO1 === null) return false;
-    if (f.min && p.CPRECIO1 < parseFloat(f.min)) return false;
-    if (f.max && p.CPRECIO1 > parseFloat(f.max)) return false;
+    if (p.price === null) return false;
+    if (f.min && p.price < parseFloat(f.min)) return false;
+    if (f.max && p.price > parseFloat(f.max)) return false;
   }
   if (query && !normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO ?? ""}`).includes(query)) return false;
   return true;
@@ -105,7 +105,7 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
 // significant digits ("Hasta $450", "$450 a $2,300", "Más de $2,300").
 export function priceBreaks(products: Product[]): [number, number] | null {
   const prices = products
-    .map((p) => p.CPRECIO1)
+    .map((p) => p.price)
     .filter((v): v is number => v !== null && v > 0)
     .sort((a, b) => a - b);
   if (prices.length < 6) return null;
@@ -234,7 +234,7 @@ function PriceGroup({
 
   const count = (lo: number | null, hi: number | null) =>
     products.filter(
-      (p) => p.CPRECIO1 !== null && p.CPRECIO1 > 0 && (lo === null || p.CPRECIO1 >= lo) && (hi === null || p.CPRECIO1 <= hi)
+      (p) => p.price !== null && p.price > 0 && (lo === null || p.price >= lo) && (hi === null || p.price <= hi)
     ).length;
   const ranges = breaks
     ? [
