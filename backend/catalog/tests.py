@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from accounts.models import Profile
@@ -87,3 +88,43 @@ class QuoteRequestTests(TestCase):
         codes = [self.send().status_code for _ in range(11)]
         self.assertEqual(codes[:10], [201] * 10)
         self.assertEqual(codes[10], 429)
+
+
+@override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}})
+class PhotoUploadTests(TestCase):
+    databases = {'default'}
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.dir = Path(tempfile.mkdtemp())
+        patcher = patch('catalog.services.PRODUCTS_DIR', self.dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        catalog = patch('api.views._catalog', return_value=[{'key': '7', 'CCODIGOPRODUCTO': 'A'}])
+        catalog.start()
+        self.addCleanup(catalog.stop)
+
+    def photo(self):
+        import io
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new('RGB', (300, 600), 'red').save(buf, 'JPEG')
+        return SimpleUploadedFile('IMG_0001.jpg', buf.getvalue(), content_type='image/jpeg')
+
+    def test_staff_upload_becomes_a_square_webp_with_a_random_name(self):
+        from PIL import Image
+        from catalog.models import ProductImage
+        self.assertEqual(self.client.post('/api/inventory/7/fotos/', {'foto': self.photo()}).status_code, 403)
+        self.client.force_login(User.objects.create_user('vendedor', password='x'))
+        res = self.client.post('/api/inventory/7/fotos/', {'foto': self.photo()})
+        self.assertEqual(res.status_code, 201)
+        img = ProductImage.objects.get(producto_codigo='A')
+        self.assertRegex(img.file, r'^[0-9a-f]{16}\.webp$')
+        self.assertTrue(img.is_primary)
+        self.assertEqual(Image.open(self.dir / img.file).size, (600, 600))
+        bad = self.client.post('/api/inventory/7/fotos/', {'foto': SimpleUploadedFile('x.jpg', b'not an image')})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(self.client.delete(f'/api/inventory/7/fotos/{img.pk}/').status_code, 204)
+        self.assertFalse((self.dir / img.file).exists())

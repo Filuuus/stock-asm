@@ -1,4 +1,5 @@
 export interface ProductImage {
+  id: number;
   file: string;
   is_primary: boolean;
 }

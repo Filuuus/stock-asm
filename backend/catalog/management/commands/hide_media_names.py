@@ -11,13 +11,12 @@ import os
 import re
 import secrets
 
-from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from api.services import DRAWING_NAMES_FILE, DRAWINGS_DIR
 from catalog.models import ProductImage
+from catalog.services import PRODUCTS_DIR
 
-PRODUCTS_DIR = settings.BASE_DIR.parent / 'frontend' / 'public' / 'products'
 RANDOM_NAME_RE = re.compile(r'^[0-9a-f]{16}\.\w+$')
 
 
