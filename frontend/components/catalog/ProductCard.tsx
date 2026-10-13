@@ -97,9 +97,17 @@ export function Price({ product, className }: { product: ProductSummary; classNa
 export function Availability({ product, className }: { product: ProductSummary; className?: string }) {
   const stock = product.stock ?? null;
   return (
-    <p className={cn("text-xs font-medium", product.in_stock ? "text-green-700" : "text-gray-400", className)}>
+    <p
+      className={cn(
+        "text-xs font-medium",
+        product.in_stock ? "text-green-700" : product.on_order ? "text-amber-700" : "text-gray-400",
+        className,
+      )}
+    >
       {!product.in_stock
-        ? "Sin existencia"
+        ? product.on_order
+          ? "Sobre pedido"
+          : "Sin existencia"
         : stock === null
           ? "Disponible"
           : `Disponible: ${stock.toLocaleString("es-MX", { maximumFractionDigits: 2 })} ${stock === 1 ? "unidad" : "unidades"}`}

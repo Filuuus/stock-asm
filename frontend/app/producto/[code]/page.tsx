@@ -71,7 +71,11 @@ function jsonLd(product: ProductDetail, siteUrl: string) {
           "@type": "Offer",
           price: product.price,
           priceCurrency: "MXN",
-          availability: product.in_stock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+          availability: product.in_stock
+            ? "https://schema.org/InStock"
+            : product.on_order
+              ? "https://schema.org/BackOrder"
+              : "https://schema.org/OutOfStock",
           url: `${siteUrl}${productHref(product.key, product.slug)}`,
         }
       : undefined,

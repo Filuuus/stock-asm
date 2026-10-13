@@ -42,7 +42,9 @@ export default function PhotosView() {
       .filter((p) => !q || normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO ?? ""}`).includes(q))
       .sort(
         (a, b) =>
+          // What the public sees first: in stock, then "Sobre pedido".
           Number(b.in_stock) - Number(a.in_stock) ||
+          Number(b.on_order) - Number(a.on_order) ||
           (a.sold_rank ?? Infinity) - (b.sold_rank ?? Infinity) ||
           a.CNOMBREPRODUCTO.localeCompare(b.CNOMBREPRODUCTO),
       );

@@ -62,9 +62,19 @@ class InventoryCatalogTests(SimpleTestCase):
         self.assertEqual(_apply_role([self.row('R_CHEM')], True)[0]['CPRECIO1'], 100.0)
 
     @staticmethod
-    def row(category, iva=16.0):
+    def row(category, iva=16.0, stock=1.0, sold_rank=None):
         return {'CCODIGOPRODUCTO': 'A', 'category': category, 'brand': 'GEA FARM TECHNOLOGIES',
-                'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': 1.0}
+                'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': stock, 'sold_rank': sold_rank}
+
+    def test_out_of_stock_mats_fans_and_selling_bionat_are_public_on_order(self):
+        public = lambda row: _apply_role([row], False)
+        self.assertEqual(public(self.row('R', stock=0)), [])
+        self.assertEqual(public(self.row('B', stock=0)), [])  # no sales in 12 months
+        bionat = public(self.row('B', stock=0, sold_rank=7))[0]
+        self.assertEqual((bionat['on_order'], bionat['price']), (True, 116.0))
+        self.assertTrue(public(self.row('R_NW', stock=0))[0]['on_order'])
+        fan = public(self.row('R_FAN', stock=0))[0]
+        self.assertEqual((fan['on_order'], fan['price']), (True, None))
 
     def test_bionat_types(self):
         self.assertEqual(_bionat_type('CONCENTRADO MIPRO PREN 400'), 'Alimentos')
@@ -93,11 +103,11 @@ class ProductDetailTests(SimpleTestCase):
         catalog = [
             {'key': '1', 'slug': 'pulsador', 'category': 'R', 'line': None, 'sold_rank': 1,
              'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
-             'price_visible': True, 'in_stock': True, 'images': []},
+             'price_visible': True, 'in_stock': True, 'on_order': False, 'images': []},
             # Our code carries a regional letter; GEA's doesn't.
             {'key': '2', 'slug': 'pieza', 'category': 'R', 'line': None, 'sold_rank': None,
              'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
-             'price_visible': False, 'in_stock': False, 'images': []},
+             'price_visible': False, 'in_stock': False, 'on_order': False, 'images': []},
         ]
         with patch('api.services._catalog', return_value=catalog), \
                 patch('api.services.ProductDescription') as descriptions, \
@@ -114,10 +124,10 @@ class ProductDetailTests(SimpleTestCase):
         catalog = [
             {'key': '1', 'slug': 'pulsador', 'category': 'R', 'line': None, 'sold_rank': 1,
              'CCODIGOPRODUCTO': '7041-2700-550', 'CNOMBREPRODUCTO': 'PULSADOR', 'CPRECIO1': 1.0, 'price': 1.16,
-             'price_visible': True, 'in_stock': True, 'images': []},
+             'price_visible': True, 'in_stock': True, 'on_order': False, 'images': []},
             {'key': '2', 'slug': 'pieza', 'category': 'R', 'line': None, 'sold_rank': None,
              'CCODIGOPRODUCTO': '7021-2764-010W', 'CNOMBREPRODUCTO': 'PIEZA', 'CPRECIO1': None, 'price': None,
-             'price_visible': False, 'in_stock': False, 'images': []},
+             'price_visible': False, 'in_stock': False, 'on_order': False, 'images': []},
         ]
         # The part has no GEA data of its own; it's found through the pulsator's list.
         with patch('api.services._catalog', return_value=catalog), \

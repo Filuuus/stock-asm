@@ -25,6 +25,8 @@ export interface Product {
   // Units in ALMACEN GENERAL; null for the public, who only get in_stock.
   stock: number | null;
   in_stock: boolean;
+  // Out of stock but offered anyway ("Sobre pedido"): mats, fans, selling Bionat.
+  on_order: boolean;
   // 1 = best seller over the last 12 months; null = no sales.
   sold_rank: number | null;
   // Staff only: GEA no longer supplies it; null otherwise (and always for the public).
@@ -34,7 +36,7 @@ export interface Product {
 // What the product page gets for a related part we also sell.
 export type ProductSummary = Pick<
   Product,
-  "key" | "slug" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price" | "price_visible" | "in_stock" | "images"
+  "key" | "slug" | "CCODIGOPRODUCTO" | "CNOMBREPRODUCTO" | "CPRECIO1" | "price" | "price_visible" | "in_stock" | "on_order" | "images"
 > & { stock?: number | null };
 
 export interface ServiceRule {

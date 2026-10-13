@@ -89,7 +89,8 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
   if (skip !== "category" && f.category.size && !f.category.has(p.category)) return false;
   if (skip !== "line" && f.line.size && !(p.line && f.line.has(p.line))) return false;
   if (skip !== "brand" && f.brand.size && !(p.brand && f.brand.has(p.brand))) return false;
-  if (skip !== "withoutStock" && !f.withoutStock && !p.in_stock) return false;
+  // "Sobre pedido" products are offered, so they show by default.
+  if (skip !== "withoutStock" && !f.withoutStock && !p.in_stock && !p.on_order) return false;
   if (skip !== "withPrice" && f.withPrice && !hasPrice(p)) return false;
   if (skip !== "price" && (f.min || f.max)) {
     // A hidden price can't be checked against a range - leave it out.
@@ -364,7 +365,7 @@ export default function CatalogFilters({
       : []),
   ];
 
-  const outOfStockCount = pool("withoutStock").filter((p) => !p.in_stock).length;
+  const outOfStockCount = pool("withoutStock").filter((p) => !p.in_stock && !p.on_order).length;
   const withPriceCount = pool("withPrice").filter(hasPrice).length;
 
   return (

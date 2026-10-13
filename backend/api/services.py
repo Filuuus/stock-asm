@@ -27,6 +27,10 @@ PUBLIC_BRANDS = {
     'VES-ARTEX': 'VES-Artex',
 }
 NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
+# Out of stock but still public as "Sobre pedido" (management wants to push
+# them, 2026-10-13): mats and fans always, Bionat only if sold in the last 12
+# months (the rest is mostly discontinued).
+ON_ORDER_CATEGORIES = {'R_NW', 'R_FAN'}
 # GEA-style codes inside names ("VALVULA (7050-1935-000)", "JGO 4X7023-2721-060").
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
@@ -216,13 +220,15 @@ def get_inventory_catalog(is_worker, raw=False):
 
 def _apply_role(data, is_worker):
     """Per request, never cached: the cached catalog is shared by every role.
-    Staff see everything; the public only what's in stock, priced per
-    PUBLIC_PRICE_CATEGORIES. Codes are still here - _scrub removes them."""
+    Staff see everything; the public only what's in stock or on order
+    (ON_ORDER_CATEGORIES), priced per PUBLIC_PRICE_CATEGORIES. Codes are still here - _scrub removes them."""
     gea = _gea_products() if is_worker else {}
     result = []
     for product in data:
         in_stock = product['stock'] > 0
-        if not is_worker and not in_stock:
+        on_order = not in_stock and (product['category'] in ON_ORDER_CATEGORIES
+                                     or (product['category'] == 'B' and product['sold_rank'] is not None))
+        if not is_worker and not in_stock and not on_order:
             continue
         note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
         visible = is_worker or product['category'] in PUBLIC_PRICE_CATEGORIES
@@ -240,6 +246,7 @@ def _apply_role(data, is_worker):
             # Staff see units; the public only whether there is any.
             'stock': product['stock'] if is_worker else None,
             'in_stock': in_stock,
+            'on_order': on_order,
             # Staff only: GEA no longer supplies it (and what replaces it).
             'discontinued': {'replacement': note.get('replacement')} if note.get('not_orderable') else None,
         })
@@ -371,7 +378,7 @@ def get_product_detail(key, is_worker):
 
 def summary(p):
     return {k: p[k] for k in ('key', 'slug', 'CCODIGOPRODUCTO', 'CNOMBREPRODUCTO', 'CPRECIO1', 'price',
-                              'price_visible', 'in_stock', 'images')}
+                              'price_visible', 'in_stock', 'on_order', 'images')}
 
 
 def _related(product, catalog):
