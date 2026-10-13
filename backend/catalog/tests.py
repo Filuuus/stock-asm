@@ -10,9 +10,9 @@ from accounts.models import Profile
 from catalog.models import QuoteRequest
 
 CATALOG = [
-    {'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA', 'CPRECIO1': 100.0, 'stock': 5.0,
+    {'key': '1', 'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA (7050-1935-000)', 'CPRECIO1': 100.0, 'stock': 5.0,
      'in_stock': True, 'images': []},
-    {'CCODIGOPRODUCTO': 'B', 'CNOMBREPRODUCTO': 'JUNTA', 'CPRECIO1': 0.0, 'stock': 0.0,
+    {'key': '2', 'CCODIGOPRODUCTO': 'B', 'CNOMBREPRODUCTO': 'JUNTA', 'CPRECIO1': 0.0, 'stock': 0.0,
      'in_stock': False, 'images': []},
 ]
 
@@ -24,7 +24,7 @@ def catalog(is_worker):
 
 # In-memory cache: the form's rate limit must not count against the dev Redis.
 @override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}})
-@patch('catalog.quotes.get_inventory_catalog', side_effect=catalog)
+@patch('catalog.quotes._catalog', side_effect=catalog)
 class QuoteRequestTests(TestCase):
     databases = {'default'}
 
@@ -39,7 +39,7 @@ class QuoteRequestTests(TestCase):
     def send(self):
         return self.client.post('/api/solicitudes/', {
             'name': 'Cliente', 'phone': '33 1234 5678',
-            'items': [{'code': 'A', 'quantity': 2}, {'code': 'B', 'quantity': 1}],
+            'items': [{'key': '1', 'quantity': 2}, {'key': '2', 'quantity': 1}],
         }, content_type='application/json')
 
     def test_prices_only_after_approval_and_frozen(self, _):
@@ -47,6 +47,8 @@ class QuoteRequestTests(TestCase):
         public = self.client.get(f'/api/solicitudes/publica/{token}/').json()
         self.assertEqual([i['unit_price'] for i in public['items']], [None, None])
         self.assertIsNone(public['total'])
+        # No part numbers on the customer's link, not even inside a name.
+        self.assertEqual([(i['code'], i['name']) for i in public['items']], [(None, 'PEZONERA'), (None, 'JUNTA')])
 
         req = QuoteRequest.objects.get(token=token)
         self.client.force_login(self.seller)
@@ -74,10 +76,10 @@ class QuoteRequestTests(TestCase):
         self.assertEqual([(i.producto_codigo, i.quantity) for i in req.items.all()], [('A', Decimal('5.00'))])
 
     def test_rejects_unknown_products_and_missing_phone(self, _):
-        bad = self.client.post('/api/solicitudes/', {'name': 'X', 'phone': '33 1234 5678', 'items': [{'code': 'Z', 'quantity': 1}]},
+        bad = self.client.post('/api/solicitudes/', {'name': 'X', 'phone': '33 1234 5678', 'items': [{'key': '9', 'quantity': 1}]},
                                content_type='application/json')
         self.assertEqual(bad.status_code, 400)
-        self.assertEqual(self.client.post('/api/solicitudes/', {'name': 'X', 'items': [{'code': 'A', 'quantity': 1}]},
+        self.assertEqual(self.client.post('/api/solicitudes/', {'name': 'X', 'items': [{'key': '1', 'quantity': 1}]},
                                           content_type='application/json').status_code, 400)
         self.assertFalse(QuoteRequest.objects.exists())
 

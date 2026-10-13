@@ -6,13 +6,14 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 // sent; prices are never stored here - they stay private until management
 // approves the request.
 export interface CartItem {
-  code: string;
+  key: string; // the product's public key
   name: string;
   image: string | null; // file under /products/
   quantity: number;
 }
 
-const STORAGE_KEY = "cart-v1";
+// v2: items by product key instead of code (v1 carts are dropped).
+const STORAGE_KEY = "cart-v2";
 const EMPTY: CartItem[] = [];
 const listeners = new Set<() => void>();
 let cached: { raw: string | null; items: CartItem[] } = { raw: null, items: EMPTY };
@@ -57,8 +58,8 @@ interface CartContextValue {
   items: CartItem[];
   count: number;
   add: (item: Omit<CartItem, "quantity">, quantity?: number) => void;
-  setQuantity: (code: string, quantity: number) => void;
-  remove: (code: string) => void;
+  setQuantity: (key: string, quantity: number) => void;
+  remove: (key: string) => void;
   clear: () => void;
 }
 
@@ -76,13 +77,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
       add: (item, quantity = 1) => {
         const current = snapshot();
         write(
-          current.some((i) => i.code === item.code)
-            ? current.map((i) => (i.code === item.code ? { ...i, quantity: i.quantity + quantity } : i))
+          current.some((i) => i.key === item.key)
+            ? current.map((i) => (i.key === item.key ? { ...i, quantity: i.quantity + quantity } : i))
             : [...current, { ...item, quantity }],
         );
       },
-      setQuantity: (code, quantity) => write(snapshot().map((i) => (i.code === code ? { ...i, quantity } : i))),
-      remove: (code) => write(snapshot().filter((i) => i.code !== code)),
+      setQuantity: (key, quantity) => write(snapshot().map((i) => (i.key === key ? { ...i, quantity } : i))),
+      remove: (key) => write(snapshot().filter((i) => i.key !== key)),
       clear: () => write(EMPTY),
     }),
     [items],

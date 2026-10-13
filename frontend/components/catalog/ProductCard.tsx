@@ -24,7 +24,7 @@ export default function ProductCard({ product }: { product: Product }) {
       {/* Square box, photo cropped to fill it, so every card lines up. */}
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-50">
         <Link
-          href={productHref(product.CCODIGOPRODUCTO)}
+          href={productHref(product.key)}
           aria-label={product.CNOMBREPRODUCTO}
           tabIndex={-1}
           className="absolute inset-0 z-[1]"
@@ -58,11 +58,11 @@ export default function ProductCard({ product }: { product: Product }) {
       </div>
       <div className="mt-3 flex w-full flex-1 flex-col items-start">
         <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
-          <Link href={productHref(product.CCODIGOPRODUCTO)} className="hover:text-blue-700">
+          <Link href={productHref(product.key)} className="hover:text-blue-700">
             {product.CNOMBREPRODUCTO}
           </Link>
         </h3>
-        <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
+        {product.CCODIGOPRODUCTO && <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
         <Price product={product} className="mt-2" />
         <Availability product={product} className="mt-1" />
         {product.discontinued && (
@@ -78,7 +78,7 @@ export default function ProductCard({ product }: { product: Product }) {
   );
 }
 
-export const productHref = (code: string) => `/producto/${encodeURIComponent(code)}`;
+export const productHref = (key: string) => `/producto/${encodeURIComponent(key)}`;
 
 export function Price({ product, className }: { product: ProductSummary; className?: string }) {
   if (!product.price_visible || product.CPRECIO1 === null) {

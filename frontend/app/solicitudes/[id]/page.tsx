@@ -26,7 +26,7 @@ interface Detail {
   decided_by: string | null;
   valid_until: string | null;
   total: number;
-  items: { code: string; name: string; quantity: number; unit_price: number | null; subtotal: number | null; stock: number | null }[];
+  items: { key: string | null; code: string; name: string; quantity: number; unit_price: number | null; subtotal: number | null; stock: number | null }[];
 }
 
 const units = (n: number | null) => (n === null ? "-" : Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 }));
@@ -141,7 +141,11 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
             {req.items.map((i) => (
               <tr key={i.code} className="align-top">
                 <td className="px-4 py-3">
-                  <Link href={productHref(i.code)} className="font-medium text-gray-800 hover:text-blue-700">{i.name}</Link>
+                  {i.key ? (
+                    <Link href={productHref(i.key)} className="font-medium text-gray-800 hover:text-blue-700">{i.name}</Link>
+                  ) : (
+                    <span className="font-medium text-gray-800">{i.name}</span>
+                  )}
                   <p className="text-xs text-gray-400">SKU: {i.code}</p>
                 </td>
                 <td className="px-4 py-3">

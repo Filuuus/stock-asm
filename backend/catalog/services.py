@@ -1,4 +1,4 @@
-from .models import ProductImage, ProductPriceVisibility
+from .models import ProductImage
 
 
 def get_images_by_codes(codes):
@@ -10,6 +10,3 @@ def get_images_by_codes(codes):
         )
     return by_code
 
-
-def get_public_price_codes():
-    return set(ProductPriceVisibility.objects.filter(public=True).values_list("producto_codigo", flat=True))

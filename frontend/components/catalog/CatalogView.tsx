@@ -16,6 +16,7 @@ import CatalogFilters, {
   normalize,
   priceBreaks,
 } from "@/components/catalog/CatalogFilters";
+import { useAuth } from "@/hooks/use-auth";
 import { useSearchQuery } from "@/hooks/use-search-query";
 import { Product } from "@/types/api";
 
@@ -49,6 +50,7 @@ function session(action: (s: Storage) => void) {
 
 export default function CatalogView({ products }: { products: Product[] }) {
   const { query } = useSearchQuery();
+  const { user } = useAuth();
   // Start from the current URL - also when coming back to the catalog, where
   // Next reuses the page as first rendered (without these filters).
   const searchParams = useSearchParams();
@@ -90,7 +92,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
     // Relevance with a search: exact code, then name starting with it, then the rest.
     const relevance = (p: Product) => {
       if (!normalizedQuery) return 0;
-      if (normalize(p.CCODIGOPRODUCTO) === normalizedQuery) return 0;
+      if (p.CCODIGOPRODUCTO && normalize(p.CCODIGOPRODUCTO) === normalizedQuery) return 0;
       if (normalize(p.CNOMBREPRODUCTO).startsWith(normalizedQuery)) return 1;
       return 2;
     };
@@ -117,7 +119,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
 
   const activeFilters =
     filters.category.size + filters.line.size + filters.brand.size +
-    Number(filters.inStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
+    Number(filters.withoutStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
 
   const filterProps = {
     products,
@@ -212,7 +214,8 @@ export default function CatalogView({ products }: { products: Product[] }) {
           </label>
         </div>
 
-        <GeaPartResults query={query} />
+        {/* Staff only: a lookup by GEA part number. */}
+        {user && <GeaPartResults query={query} />}
 
         {filtered.length > 0 ? (
           <div

@@ -29,18 +29,21 @@ function PartCell({ part }: { part: RelatedPart }) {
     return (
       <div>
         <p className="text-gray-700">{part.desc}</p>
-        <p className="text-xs text-gray-400">{part.code} · No está en nuestro catálogo</p>
+        <p className="text-xs text-gray-400">
+          {/* The public gets no codes, nor the out-of-stock products we do sell. */}
+          {part.code ? `${part.code} · No está en nuestro catálogo` : "Pregunta por disponibilidad"}
+        </p>
       </div>
     );
   }
   return (
-    <Link href={productHref(ours.CCODIGOPRODUCTO)} className="group flex items-center gap-3">
+    <Link href={productHref(ours.key)} className="group flex items-center gap-3">
       <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-gray-50">
         <Image src={imageSrc(ours.images)} alt="" fill sizes="48px" className="object-cover" />
       </div>
       <div className="min-w-0">
         <p className="font-medium text-gray-800 group-hover:text-blue-700">{ours.CNOMBREPRODUCTO}</p>
-        <p className="text-xs text-gray-400">SKU: {ours.CCODIGOPRODUCTO}</p>
+        {ours.CCODIGOPRODUCTO && <p className="text-xs text-gray-400">SKU: {ours.CCODIGOPRODUCTO}</p>}
         <div className="flex flex-wrap items-baseline gap-x-3">
           <Price product={ours} className="!text-sm" />
           <Availability product={ours} />
@@ -58,8 +61,8 @@ function PartsList({ title, parts }: { title: string; parts: RelatedPart[] }) {
     <section className="mt-8">
       <h2 className="mb-3 text-lg font-semibold text-gray-900">{title}</h2>
       <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white text-sm">
-        {sorted.map((p) => (
-          <li key={p.code} className="px-4 py-3">
+        {sorted.map((p, i) => (
+          <li key={i} className="px-4 py-3">
             <PartCell part={p} />
           </li>
         ))}
@@ -249,7 +252,7 @@ function Service({ service }: { service: NonNullable<NonNullable<ProductDetail["
             {service.in_assemblies.map((a, i) => (
               <li key={`${a.code}-${i}`}>
                 {a.ours[0] ? (
-                  <Link href={productHref(a.ours[0].CCODIGOPRODUCTO)} className="text-gray-800 hover:text-blue-700">
+                  <Link href={productHref(a.ours[0].key)} className="text-gray-800 hover:text-blue-700">
                     {a.ours[0].CNOMBREPRODUCTO}
                   </Link>
                 ) : (
@@ -333,9 +336,9 @@ function AppearsIn({ product }: { product: ProductDetail }) {
       <h2 className="mb-3 text-lg font-semibold text-gray-900">Aparece en</h2>
       <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white text-sm">
         {product.appears_in.map(({ parent, pos, qty, has_drawing }) => (
-          <li key={parent.CCODIGOPRODUCTO} className="px-4 py-3">
+          <li key={parent.key} className="px-4 py-3">
             <Link
-              href={`${productHref(parent.CCODIGOPRODUCTO)}?pieza=${encodeURIComponent(product.CCODIGOPRODUCTO)}`}
+              href={`${productHref(parent.key)}?pieza=${encodeURIComponent(product.key)}`}
               className="group flex items-center gap-3"
             >
               <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-gray-50">
@@ -359,10 +362,11 @@ function AppearsIn({ product }: { product: ProductDetail }) {
 export default function ProductDetailView({ product, highlight }: { product: ProductDetail; highlight?: string }) {
   const router = useRouter();
   const gea = product.gea;
-  // Arriving from a part's "Aparece en": start with that part selected.
+  // Arriving from a part's "Aparece en" (our product's key) or the staff GEA
+  // part search (a GEA code): start with that part selected.
   const highlightPos =
     highlight &&
-    gea?.parts.find((p) => p.ours.some((o) => o.CCODIGOPRODUCTO === highlight) || highlight.startsWith(p.code))?.pos;
+    gea?.parts.find((p) => p.ours.some((o) => o.key === highlight) || (p.code && highlight.startsWith(p.code)))?.pos;
   const [active, setActive] = useState<string | null>(highlightPos || null);
   // Without a drawing, bring the part's row into view instead (the drawing scrolls itself).
   useEffect(() => {
@@ -412,7 +416,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
         <div>
           <p className="text-sm text-gray-500">{CATEGORY_LABELS[product.category] ?? product.category}</p>
           <h1 className="mt-1 text-2xl font-semibold text-gray-900">{product.CNOMBREPRODUCTO}</h1>
-          <p className="mt-1 text-sm text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>
+          {product.CCODIGOPRODUCTO && <p className="mt-1 text-sm text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
           <Availability product={product} className="mt-2 text-sm" />
@@ -430,7 +434,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
                     <>
                       Reemplazo:{" "}
                       {note.replacement_ours[0] ? (
-                        <Link href={productHref(note.replacement_ours[0].CCODIGOPRODUCTO)} className="font-medium underline">
+                        <Link href={productHref(note.replacement_ours[0].key)} className="font-medium underline">
                           {note.replacement_ours[0].CNOMBREPRODUCTO} ({replacement})
                         </Link>
                       ) : (

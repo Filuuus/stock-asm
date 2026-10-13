@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.utils import timezone
 
-from api.services import get_inventory_catalog
+from api.services import _catalog, scrub
 
 from .models import QuoteRequest, QuoteRequestItem
 
@@ -21,14 +21,14 @@ class QuoteError(ValueError):
     """A request that can't be accepted; the message is shown to the user."""
 
 
-def _clean_items(items, by_code):
+def _clean_items(items, by_code, field='code'):
     if not isinstance(items, list) or not items:
         raise QuoteError('La solicitud no tiene productos.')
     if len(items) > MAX_ITEMS:
         raise QuoteError(f'Máximo {MAX_ITEMS} productos por solicitud.')
     cleaned = {}
     for item in items:
-        code = str((item or {}).get('code', '')).strip()
+        code = str((item or {}).get(field, '')).strip()
         if code not in by_code:
             raise QuoteError(f'Producto no encontrado: {code or "(vacío)"}.')
         try:
@@ -48,8 +48,9 @@ def create_request(data):
         raise QuoteError('Nombre y teléfono son obligatorios.')
     if len(name) > 120 or len(phone) > 30 or sum(c.isdigit() for c in phone) < 10:
         raise QuoteError('Revisa el nombre y el teléfono (10 dígitos).')
-    by_code = {p['CCODIGOPRODUCTO'] for p in get_inventory_catalog(False)}
-    items = {c: q for c, q in _clean_items(data.get('items'), by_code).items() if q > 0}
+    # The cart sends the public product key; requests store the ERP code.
+    code_by_key = {p['key']: p['CCODIGOPRODUCTO'] for p in _catalog(True)}
+    items = {code_by_key[k]: q for k, q in _clean_items(data.get('items'), code_by_key, 'key').items() if q > 0}
     if not items:
         raise QuoteError('La solicitud no tiene productos.')
     with transaction.atomic():
@@ -82,6 +83,7 @@ def _rows(req, by_code, live_prices):
             price = item.unit_price if req.status == QuoteRequest.STATUS_APPROVED else None
         price = Decimal(str(price)) if price else None
         rows.append({
+            'key': p.get('key'),  # links to the product page
             'code': item.producto_codigo,
             'name': p.get('CNOMBREPRODUCTO', item.producto_codigo),
             'image': _image(p),
@@ -98,9 +100,10 @@ def _total(rows):
 
 
 def public_view(req):
-    """What the customer sees at /solicitud/<token>."""
-    by_code = {p['CCODIGOPRODUCTO']: p for p in get_inventory_catalog(False)}
-    rows = _rows(req, by_code, live_prices=False)
+    """What the customer sees at /solicitud/<token>: no live prices, no codes."""
+    # Every product, not just what's in stock now, so names still resolve.
+    by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
+    rows = scrub(_rows(req, by_code, live_prices=False))
     approved = req.status == QuoteRequest.STATUS_APPROVED
     return {
         'number': req.pk, 'status': req.status, 'created_at': req.created_at,
@@ -117,7 +120,7 @@ def staff_list():
 
 
 def staff_view(req):
-    by_code = {p['CCODIGOPRODUCTO']: p for p in get_inventory_catalog(True)}
+    by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
     # Approved requests show the frozen prices; open ones the live prices.
     rows = _rows(req, by_code, live_prices=req.status == QuoteRequest.STATUS_NEW)
     if req.status != QuoteRequest.STATUS_NEW:
@@ -159,7 +162,7 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
         raise QuoteError('Vigencia no válida.')
     if not 1 <= valid_days <= 365:
         raise QuoteError('La vigencia debe ser de 1 a 365 días.')
-    prices = {p['CCODIGOPRODUCTO']: p['CPRECIO1'] for p in get_inventory_catalog(True)}
+    prices = {p['CCODIGOPRODUCTO']: p['CPRECIO1'] for p in _catalog(True)}
     with transaction.atomic():
         for item in req.items.all():
             price = prices.get(item.producto_codigo)

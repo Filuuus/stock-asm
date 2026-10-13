@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { ProductImage } from "@/types/api";
 
 interface Props {
-  product: { CCODIGOPRODUCTO: string; CNOMBREPRODUCTO: string; images: ProductImage[] };
+  product: { key: string; CNOMBREPRODUCTO: string; images: ProductImage[] };
   withQuantity?: boolean; // the product page lets you pick how many
   className?: string;
 }
@@ -17,7 +17,7 @@ interface Props {
 export default function AddToCart({ product, withQuantity, className }: Props) {
   const { items, add } = useCart();
   const [quantity, setQuantity] = useState("1");
-  const inCart = items.find((i) => i.code === product.CCODIGOPRODUCTO);
+  const inCart = items.find((i) => i.key === product.key);
   const image = (product.images.find((i) => i.is_primary) ?? product.images[0])?.file ?? null;
   const qty = Number(quantity);
   const valid = Number.isFinite(qty) && qty > 0;
@@ -40,7 +40,7 @@ export default function AddToCart({ product, withQuantity, className }: Props) {
         type="button"
         disabled={!valid}
         onClick={() =>
-          add({ code: product.CCODIGOPRODUCTO, name: product.CNOMBREPRODUCTO, image }, withQuantity ? qty : 1)
+          add({ key: product.key, name: product.CNOMBREPRODUCTO, image }, withQuantity ? qty : 1)
         }
         className={cn(
           "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50",

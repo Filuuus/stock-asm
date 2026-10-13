@@ -30,13 +30,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!product) return {};
   return {
     title: `${product.CNOMBREPRODUCTO} | Agropecuaria Santa María`,
-    description: product.gea?.desc ?? `SKU ${product.CCODIGOPRODUCTO}`,
+    description: product.gea?.desc ?? product.CNOMBREPRODUCTO,
   };
 }
 
 export default async function Page({ params, searchParams }: Props) {
   const { code } = await params;
-  // ?pieza=<code> opens the drawing with that part selected (from "Aparece en").
+  // ?pieza=<product key or, for staff, GEA code> opens the drawing with that part selected (from "Aparece en").
   const { pieza } = await searchParams;
   const product = await getProduct(code);
   if (!product) notFound();
