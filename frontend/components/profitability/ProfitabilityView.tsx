@@ -2409,6 +2409,18 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
   const [lines, setLines] = useState<InvoiceLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [search, setSearch] = useState("");
+  const [onlyMarked, setOnlyMarked] = useState(false);
+  // Every word must appear in the folio, date (as shown), client or zone; accents and case don't matter.
+  const shown = useMemo(() => {
+    const plain = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const words = plain(search).split(/\s+/).filter(Boolean);
+    return (lines ?? []).filter((l) => {
+      if (onlyMarked && !l.excluded && !l.direct) return false;
+      const text = plain(`${l.folio} ${l.folio.replace(" ", "")} ${formatDay(l.date)} ${l.client} ${zoneLabel(l.zone)}`);
+      return words.every((w) => text.includes(w));
+    });
+  }, [lines, search, onlyMarked]);
 
   // Marks a line as left out, or as a direct delivery; a marked line is brought back either way.
   const toggle = async (l: InvoiceLine, direct = false) => {
@@ -2458,6 +2470,25 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
         </DialogHeader>
         {error && <p className="text-sm text-red-700">{error}</p>}
         {!lines && !error && <p className="text-sm text-gray-500">Cargando…</p>}
+        {lines && lines.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar folio, cliente, fecha o zona"
+              aria-label="Buscar en las facturas"
+              className="h-9 w-72"
+              autoFocus
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={onlyMarked} onChange={(e) => setOnlyMarked(e.target.checked)} />
+              Solo excluidas y entregas directas
+            </label>
+            <span className="text-sm text-gray-500">
+              {shown.length === lines.length ? `${lines.length} partidas` : `${shown.length} de ${lines.length} partidas`}
+            </span>
+          </div>
+        )}
         {lines && (
           <div className="overflow-auto">
             <Table>
@@ -2475,7 +2506,8 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
               </TableHeader>
               <TableBody>
                 {lines.length === 0 && <EmptyRow colSpan={8}>Sin facturas en el periodo.</EmptyRow>}
-                {lines.map((l) => (
+                {lines.length > 0 && shown.length === 0 && <EmptyRow colSpan={8}>Ninguna partida coincide.</EmptyRow>}
+                {shown.map((l) => (
                   <TableRow key={l.line_id} className={cn(l.excluded && "text-gray-400")}>
                     <TableCell className="whitespace-nowrap">
                       <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
