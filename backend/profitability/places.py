@@ -14,6 +14,12 @@ STOPWORDS = {
     'de', 'del', 'la', 'las', 'los', 'el', 'y', 'e', 'casa', 'rancho', 'establo', 'oficina', 'engorda', 'borregos',
     'sa', 'cv', 'sc', 'rl', 'spr', 'pr', 's', 'r', 'l', 'c', 'v', 'sociedad', 'cooperativa', 'jr',
 }
+# Handwritten short forms on route sheets and Maps labels ("Rosa Elizondo Glez", "Coop. La Espiga").
+ABBREVIATIONS = {
+    'hdez': 'hernandez', 'hdz': 'hernandez', 'glez': 'gonzalez', 'gtz': 'gutierrez', 'fco': 'francisco',
+    'jmz': 'jimenez', 'gpe': 'guadalupe', 'ma': 'maria', 'mtz': 'martinez', 'rmz': 'ramirez', 'coop': 'cooperativa',
+    'soc': 'sociedad', 'agrop': 'agropecuaria', 'sn': 'san', 'sta': 'santa',
+}
 # Titles Maps gives to dropped pins; the client's name is then in the note.
 PIN_TITLES = {'marcador', 'chincheta', 'pin colocado', 'unnamed road'}
 SEARCH_COORDS = re.compile(r'/maps/search/(-?\d+\.\d+),\s*(-?\d+\.\d+)')
@@ -34,7 +40,8 @@ DMS = re.compile(r'(\d+)°(\d+)\'([\d.]+)"([NS])\s+(\d+)°(\d+)\'([\d.]+)"([EW])
 @lru_cache(maxsize=None)
 def words(name):
     text = unicodedata.normalize('NFKD', name.lower()).encode('ascii', 'ignore').decode()
-    return tuple(t for t in re.findall(r'[a-z0-9]+', text) if t not in STOPWORDS and not t.isdigit())
+    expanded = (ABBREVIATIONS.get(t, t) for t in re.findall(r'[a-z0-9]+', text))
+    return tuple(t for t in expanded if t not in STOPWORDS and not t.isdigit())
 
 
 def _same(a, b):

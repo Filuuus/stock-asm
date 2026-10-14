@@ -259,6 +259,7 @@ class MatchClientTests(SimpleTestCase):
         self.assertEqual(match_clients('Rosa Elizondo Gonzales La Grulla', clients), [1])  # ranch name added
         self.assertEqual(match_clients('Rosa Elizondo La Loma', clients), [1])  # a distinctive word in common
         self.assertEqual(match_clients('Rosa Elizondo Gonz', clients), [1])  # label cut short
+        self.assertEqual(match_clients('Rosa Elizondo Glez', clients), [1])  # handwritten short form
         self.assertEqual(match_clients('José Luis Soto Norte', clients), [])  # only common words
 
     def test_a_place_for_a_surname_family_or_two_people(self):
