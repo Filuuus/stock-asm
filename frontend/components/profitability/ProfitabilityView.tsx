@@ -2498,7 +2498,7 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
                   <TableHead>Fecha</TableHead>
                   <TableHead>Cliente</TableHead>
                   <TableHead className={HIDE_BELOW_MD}>Zona</TableHead>
-                  <TableHead className="text-right">Unidades</TableHead>
+                  <TableHead className="text-right" title="Unidades">Ct.</TableHead>
                   <TableHead className="text-right">Venta</TableHead>
                   <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Utilidad bruta</TableHead>
                   <TableHead className="w-px" />
