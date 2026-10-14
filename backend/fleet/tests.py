@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
 
-from .models import VehicleDayKm
-from .services import LOCAL_TZ, close_month, store_km, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
+from .models import VehicleDayKm, VehicleStop
+from .services import LOCAL_TZ, close_month, notion_stops, store_km, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
 
 
 def point(odo, fecha='/Date(1759363200000)/', lat=2053123, lon=-10275000, ng=None):
@@ -105,3 +105,19 @@ class StoreKmTests(TestCase):
             ('111', '2026-10-02'): 30.25, ('222', '2026-10-02'): 0,
             ('111', '2026-10-03'): 30.25, ('222', '2026-10-03'): 0,
         })
+        self.assertEqual(VehicleStop.objects.filter(imei='111').count(), 2)  # one per day, re-run replaced
+
+
+class NotionStopsTests(SimpleTestCase):
+    def test_reads_trip_ends_as_stops_until_the_next_trip(self):
+        def callout(start, end, lat, lng):
+            return {'callout': {'rich_text': [
+                {'text': {'content': f'🟢 {start}  ➔  🔴 {end}\nDestino: '}},
+                {'text': {'content': 'Ver ubicación', 'link': {'url': f'https://www.google.com/maps?q={lat}%2C{lng}'}}},
+                {'text': {'content': '\n⏱️ 3 km recorridos en 8 min'}}]}}
+        stops = notion_stops(date(2026, 10, 2), [callout('08:52 AM', '09:10 AM', 20.5, -102.7),
+                                                   callout('01:05 PM', '01:30 PM', 20.6, -102.8), {'divider': {}}])
+        self.assertEqual([(s['arrive'].hour, s['arrive'].minute) for s in stops], [(9, 10), (13, 30)])
+        self.assertEqual(stops[0]['leave'], datetime(2026, 10, 2, 13, 5, tzinfo=LOCAL_TZ))
+        self.assertIsNone(stops[1]['leave'])
+        self.assertEqual((stops[1]['lat'], stops[1]['lng']), (20.6, -102.8))

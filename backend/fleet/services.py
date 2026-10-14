@@ -1,7 +1,7 @@
 """Fleet GPS log: pulls each vehicle's trips from Zeek GPS and writes them to
 Notion (a daily log database plus one card per vehicle holding its odometer).
-Separately, store_km keeps each unit's daily km in the local database, since
-Notion's daily entries get archived and Zeek keeps no long history.
+Separately, store_km keeps each unit's daily km and stops in the local database, since
+Notion's daily entries get archived and Zeek keeps only about six days.
 
 Nothing here touches the ERP. All credentials and ids come from settings
 (backend/.env), since the repo is public."""
@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
 
-from .models import VehicleDayKm
+from .models import VehicleDayKm, VehicleStop
 
 # Zeek reports in fixed UTC-6 (Mexico has had no DST since 2022).
 LOCAL_TZ = timezone(timedelta(hours=-6))
@@ -188,10 +188,26 @@ def sync_day(day, log):
         log(f'[{name}] {km} km, odómetro {odometer} km.')
 
 
+def trip_stops(trips):
+    """Each trip's end point, as a stop that lasts until the next trip starts."""
+    stops = []
+    for i, trip in enumerate(trips):
+        end = trip['listaUbicaciones'][-1]
+        nxt = trips[i + 1]['listaUbicaciones'][0] if i + 1 < len(trips) else None
+        stops.append({'arrive': zeek_time(end['Fecha']), 'leave': zeek_time(nxt['Fecha']) if nxt else None,
+                      'lat': zeek_coord(end['Latitud']), 'lng': zeek_coord(end['Longitud'])})
+    return stops
+
+
+def save_stops(imei, day, stops, source):
+    VehicleStop.objects.filter(imei=imei, day=day).delete()
+    VehicleStop.objects.bulk_create(VehicleStop(imei=imei, day=day, source=source, **s) for s in stops)
+
+
 def store_km(first_day, last_day, log):
-    """Saves every unit's km for each day in the range, 0 when it didn't move. Overwrites
-    existing rows, so re-running is safe; a unit Zeek fails to answer for is skipped and
-    left without a row for that day, so the gap is visible."""
+    """Saves every unit's km and stops for each day in the range, 0 km when it didn't move.
+    Overwrites existing rows, so re-running is safe; a unit Zeek fails to answer for is skipped
+    and left without a row for that day, so the gap is visible."""
     day = first_day
     while day <= last_day:
         start = datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
@@ -204,8 +220,53 @@ def store_km(first_day, last_day, log):
                 continue
             km = day_km(trips) if trips else 0
             VehicleDayKm.objects.update_or_create(imei=imei, day=day, defaults={'km': km})
-            log(f'[unidad {n}] {day}: {km} km')
+            save_stops(imei, day, trip_stops(trips), 'zeek')
+            log(f'[unidad {n}] {day}: {km} km, {len(trips)} paradas')
         day += timedelta(days=1)
+
+
+NOTION_TRIP = re.compile(r'(\d{1,2}:\d{2} [AP]M)\s*➔\s*🔴\s*(\d{1,2}:\d{2} [AP]M)')
+NOTION_COORDS = re.compile(r'q=(-?[\d.]+)(?:%2C|,)(-?[\d.]+)')
+
+
+def notion_stops(day, blocks):
+    """The stops of one daily log page, from its trip callouts (see summarize_day)."""
+    trips = []
+    for block in blocks:
+        rich = block.get('callout', {}).get('rich_text', [])
+        times = NOTION_TRIP.search(''.join(t['text']['content'] for t in rich))
+        coords = next((NOTION_COORDS.search(t['text']['link']['url']) for t in rich if t['text'].get('link')), None)
+        if times and coords:
+            at = lambda hhmm: datetime.combine(day, datetime.strptime(hhmm, '%I:%M %p').time(), LOCAL_TZ)
+            trips.append((at(times[1]), at(times[2]), float(coords[1]), float(coords[2])))
+    return [{'arrive': end, 'leave': trips[i + 1][0] if i + 1 < len(trips) else None, 'lat': lat, 'lng': lng}
+            for i, (_, end, lat, lng) in enumerate(trips)]
+
+
+def rescue_notion_stops(log):
+    """Stops for the days still in Notion's daily log but no longer in Zeek. Days already stored
+    from Zeek are left alone. Only works until the month is closed, which archives the pages."""
+    # by name, any case: a card renamed since ('Isuzu Bodega' -> 'Isuzu bodega') keeps its old log pages
+    imeis = {page_title(notion('GET', f'pages/{card}')).lower(): imei for imei, card in settings.ZEEK_FLEET.items()}
+    pages = notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
+        {'property': 'Fecha', 'date': {'is_not_empty': True}},
+        {'property': 'Vehículo', 'title': {'does_not_contain': MONTHLY_TITLE_PREFIX.strip(' -')}},
+    ]})
+    for page in pages:
+        name, day = page_title(page), datetime.fromisoformat(page['properties']['Fecha']['date']['start']).date()
+        imei = imeis.get(name.lower())
+        if not imei or VehicleStop.objects.filter(imei=imei, day=day, source='zeek').exists():
+            continue
+        blocks, cursor = [], None
+        while True:
+            data = notion('GET', f"blocks/{page['id']}/children?page_size=100" + (f'&start_cursor={cursor}' if cursor else ''))
+            blocks += data['results']
+            if not data.get('has_more'):
+                break
+            cursor = data['next_cursor']
+        stops = notion_stops(day, blocks)
+        save_stops(imei, day, stops, 'notion')
+        log(f'[{name}] {day}: {len(stops)} paradas desde Notion')
 
 
 # --- Monthly close ------------------------------------------------------------------------

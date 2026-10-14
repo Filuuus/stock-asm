@@ -68,9 +68,10 @@ venv/bin/python manage.py close_fleet_month                    # previous month
 venv/bin/python manage.py close_fleet_month --year 2026 --month 9
 venv/bin/python manage.py store_fleet_km                       # yesterday's km per unit into the local DB
 venv/bin/python manage.py store_fleet_km --from 2026-10-02 --to 2026-10-09
+venv/bin/python manage.py store_fleet_km --from-notion         # rescue stops of days Zeek no longer has
 ```
 
-`store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move; a unit Zeek fails to answer for gets no row, so gaps show. Re-running overwrites. Zeek has no data before 2026-10-02, so this table is the only long-term km record.
+`store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move, and its stops (each trip's end, until the next trip starts) in `VehicleStop`; a unit Zeek fails to answer for gets no row, so gaps show. Re-running overwrites. **Zeek keeps only about the last six days**, so these tables are the only long-term record: run it at least every few days. For days Zeek has already dropped, `--from-notion` reads the stops from the daily log pages instead (only until `close_fleet_month` archives them), leaving days already stored from Zeek alone.
 
 Schedule `sync_fleet_log` every morning to log the previous day, and `close_fleet_month` on the 1st of each month. For example, with cron:
 
@@ -85,5 +86,5 @@ Days are calendar days in Mexico's fixed UTC-6. Mexico has had no daylight savin
 ## Code
 
 - `services.py`: the Zeek and Notion calls and the summary logic.
-- `management/commands/`: the two commands.
+- `management/commands/`: the three commands.
 - `tests.py`: covers coordinate and time parsing, the daily and monthly summaries, and the monthly close's archive order. It uses made-up data and never calls Zeek or Notion.
