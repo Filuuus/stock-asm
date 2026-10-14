@@ -303,6 +303,12 @@ export default function ProfitabilityView() {
   const [weightsOpen, setWeightsOpen] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
   const [invoicesOf, setInvoicesOf] = useState<string | null>(null); // product id whose invoices are listed
+  // From a list inside another dialog: close it first (two open dialogs fight over clicks).
+  const openInvoices = (productId: string) => {
+    setWeightsOpen(false);
+    setExcludedOpen(false);
+    setInvoicesOf(productId);
+  };
   const [setupOpen, setSetupOpen] = useState(false);
   const [excludeError, setExcludeError] = useState<string | null>(null);
   // What-if: products imagined not sold (per viewer, not saved), and the server's recomputation without them.
@@ -1871,9 +1877,12 @@ export default function ProfitabilityView() {
               {data.excluded.map((id) => (
                 <li key={id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="truncate">{labelOf("product", String(id))}</span>
-                  <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
-                    Volver a incluir
-                  </Button>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <InvoicesButton label={labelOf("product", String(id))} onClick={() => openInvoices(String(id))} />
+                    <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
+                      Volver a incluir
+                    </Button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -1896,17 +1905,25 @@ export default function ProfitabilityView() {
                       {l.direct && !l.reason && " · Entrega directa"}
                     </span>
                   </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setLineExcluded(l, false)
-                        .then(() => setReload((n) => n + 1))
-                        .catch((err) => setExcludeError(err.message))
-                    }
-                  >
-                    Volver a incluir
-                  </Button>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {l.product_id > 0 && (
+                      <InvoicesButton
+                        label={labelOf("product", String(l.product_id))}
+                        onClick={() => openInvoices(String(l.product_id))}
+                      />
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setLineExcluded(l, false)
+                          .then(() => setReload((n) => n + 1))
+                          .catch((err) => setExcludeError(err.message))
+                      }
+                    >
+                      {l.direct ? "Quitar entrega directa" : "Volver a incluir"}
+                    </Button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -2025,6 +2042,7 @@ export default function ProfitabilityView() {
           data={data}
           facts={filtered}
           onSaved={() => setReload((n) => n + 1)}
+          onInvoices={openInvoices}
         />
       )}
     </main>
@@ -2360,6 +2378,16 @@ interface InvoiceLine {
   direct: boolean;
 }
 
+// Opens a product's invoice history.
+function InvoicesButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-gray-500" aria-label={`Facturas de ${label}`}
+      title="Facturas" onClick={onClick}>
+      <FileText className="h-4 w-4" />
+    </Button>
+  );
+}
+
 // Leaves one product on one invoice out of Rentabilidad, or brings it back.
 async function setLineExcluded(line: { line_id: number }, excluded: boolean, extra = {}) {
   const res = await apiFetch("/api/profitability/excluded-lines/", {
@@ -2424,14 +2452,14 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="pr-6">{title}</DialogTitle>
         </DialogHeader>
         {error && <p className="text-sm text-red-700">{error}</p>}
         {!lines && !error && <p className="text-sm text-gray-500">Cargando…</p>}
         {lines && (
-          <div className="overflow-y-auto">
+          <div className="overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2448,30 +2476,35 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
               <TableBody>
                 {lines.length === 0 && <EmptyRow colSpan={8}>Sin facturas en el periodo.</EmptyRow>}
                 {lines.map((l) => (
-                  <TableRow key={l.line_id} className={cn((l.excluded || l.direct) && "text-gray-400")}>
+                  <TableRow key={l.line_id} className={cn(l.excluded && "text-gray-400")}>
                     <TableCell className="whitespace-nowrap">
                       <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
                       {l.return && <span className="ml-1 text-xs text-gray-500">(devolución)</span>}
-                      {l.direct && <span className="ml-1 text-xs text-gray-500">(entrega directa)</span>}
+                      {l.direct && (
+                        <span className="mt-0.5 block w-fit rounded bg-sky-100 px-1.5 text-xs text-sky-800">
+                          Entrega directa
+                        </span>
+                      )}
+                      {l.excluded && <span className="mt-0.5 block text-xs">Excluida</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(l.date)}</TableCell>
-                    <TableCell className="max-w-56 truncate">
+                    <TableCell className="max-w-40 truncate lg:max-w-56">
                       <ClientLink clientId={l.client_id} label={l.client} />
                     </TableCell>
-                    <TableCell className={HIDE_BELOW_MD}>{zoneLabel(l.zone)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.units.toLocaleString("es-MX")}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(l.net)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_MD)}>{zoneLabel(l.zone)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{l.units.toLocaleString("es-MX")}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatMoney(l.net)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
                       {formatMoney(l.net - l.cost)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0 text-right">
                       {!l.excluded && !l.direct && !l.return && (
-                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l, true)}>
-                          Entrega directa
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" title="Entrega directa del proveedor: sin peso ni gasto de ruta" onClick={() => toggle(l, true)}>
+                          Directa
                         </Button>
                       )}
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l)}>
-                        {l.excluded || l.direct ? "Volver a incluir" : "Excluir"}
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => toggle(l)}>
+                        {l.direct ? "Quitar directa" : l.excluded ? "Volver a incluir" : "Excluir"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -2498,12 +2531,14 @@ function WeightsDialog({
   data,
   facts,
   onSaved,
+  onInvoices,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   data: Profitability;
   facts: Fact[];
   onSaved: () => void;
+  onInvoices: (productId: string) => void;
 }) {
   const [onlyEstimated, setOnlyEstimated] = useState(true);
   const [search, setSearch] = useState("");
@@ -2582,7 +2617,12 @@ function WeightsDialog({
                       <div className="text-xs text-gray-500">{p.code}</div>
                     </TableCell>
                     <TableCell className={HIDE_BELOW_SM}>{SOURCE_LABELS[p.source]}</TableCell>
-                    <TableCell className="text-right tabular-nums">{p.units.toLocaleString("es-MX")}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className="inline-flex items-center gap-1">
+                        {p.units.toLocaleString("es-MX")}
+                        <InvoicesButton label={p.name} onClick={() => onInvoices(p.id)} />
+                      </span>
+                    </TableCell>
                     <TableCell className="text-right">
                       <form
                         className="inline-flex items-center gap-1"
