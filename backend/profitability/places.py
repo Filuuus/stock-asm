@@ -3,7 +3,9 @@ import csv
 import json
 import re
 import unicodedata
+from collections import Counter
 from difflib import SequenceMatcher
+from math import cos, radians
 from pathlib import Path
 
 # Words that describe a place rather than name it ("Casa de ...", "Rancho ...", company suffixes).
@@ -14,28 +16,68 @@ STOPWORDS = {
 # Titles Maps gives to dropped pins; the client's name is then in the note.
 PIN_TITLES = {'marcador', 'chincheta', 'pin colocado', 'unnamed road'}
 SEARCH_COORDS = re.compile(r'/maps/search/(-?\d+\.\d+),\s*(-?\d+\.\d+)')
+# A family farm can be several clients; more names than this means the name is too common to tell.
+MAX_FAMILY = 3
 DMS = re.compile(r'(\d+)°(\d+)\'([\d.]+)"([NS])\s+(\d+)°(\d+)\'([\d.]+)"([EW])')
 
 
-def tokens(name):
+def words(name):
     text = unicodedata.normalize('NFKD', name.lower()).encode('ascii', 'ignore').decode()
-    return {t for t in re.findall(r'[a-z0-9]+', text) if t not in STOPWORDS and not t.isdigit()}
+    return [t for t in re.findall(r'[a-z0-9]+', text) if t not in STOPWORDS and not t.isdigit()]
+
+
+def tokens(name):
+    return set(words(name))
 
 
 def _same(a, b):
-    # A typo is one letter off (Briceño/Briseño); two surnames that differ by more are different people.
-    return a == b or (min(len(a), len(b)) >= 5 and abs(len(a) - len(b)) <= 1 and SequenceMatcher(None, a, b).ratio() >= 0.85)
+    # A typo is one letter off (Briceño/Briseño, Cortez/Cortés); two surnames that differ by more are different people.
+    short = min(len(a), len(b))
+    return a == b or (short >= 5 and abs(len(a) - len(b)) <= 1
+                      and SequenceMatcher(None, a, b).ratio() >= (0.8 if short >= 6 else 0.85))
 
 
-def match_client(name, clients):
-    """The one client whose name holds every word of `name` (allowing small typos), or None when no
-    client or more than one does. `clients`: (id, name) pairs. Needs two words, so a bare first name
-    or surname never matches."""
-    want = tokens(name)
-    if len(want) < 2:
-        return None
-    hits = [cid for cid, client in clients if all(any(_same(w, c) for c in tokens(client)) for w in want)]
-    return hits[0] if len(hits) == 1 else None
+def _holds(client, want):
+    """Whether the client's words hold every wanted word, a repeated one as often (Mora Mora)."""
+    left = list(client)
+    for w in want:
+        hit = next((c for c in left if _same(w, c)), None)
+        if hit is None:
+            return False
+        left.remove(hit)
+    return True
+
+
+def match_clients(name, clients, zone=None, client_zones=None):
+    """The clients a place is: those whose name holds every word of `name` (allowing small typos).
+    `clients`: (id, name) pairs; `client_zones`: clients invoiced lately -> the zone whose salesperson
+    invoices them, None for office and service sales, which can be anywhere; `zone`: the zone whose
+    territory the place is in. When several clients hold the words, those invoiced lately and not by the
+    other zone win (a duplicate ERP record without sales loses to the real one), then the ones with exactly
+    the name's words; up to MAX_FAMILY stay, since family farms are several clients. A single word must be
+    5+ letters and belong to one such client only, so a bare first name or surname never matches."""
+    want = words(name)
+    if not want or (len(want) == 1 and len(want[0]) < 5):
+        return []
+    hits = [(cid, client) for cid, client in clients if _holds(words(client), want)]
+    if len(hits) > 1 or len(want) == 1:
+        client_zones = client_zones or {}
+        preferred = [h for h in hits if h[0] in client_zones and (not zone or client_zones[h[0]] in (zone, None))]
+        if preferred or len(want) == 1:
+            hits = preferred
+    if len(want) == 1 and len(hits) != 1:
+        return []
+    exact = [h for h in hits if len(words(h[1])) == len(want)]
+    hits = exact or hits
+    return [cid for cid, _ in hits] if len(hits) <= MAX_FAMILY else []
+
+
+def territory(lat, lng, labeled, k=5):
+    """The zone most of the k places nearest to (lat, lng) are in; `labeled`: (lat, lng, zone). ZONA1
+    and ZONA2 never share territory (management, 2026-10-14), so neighbours tell whose a place is."""
+    scale = cos(radians(lat))
+    near = sorted(labeled, key=lambda p: (p[0] - lat) ** 2 + ((p[1] - lng) * scale) ** 2)[:k]
+    return Counter(p[2] for p in near).most_common(1)[0][0] if near else None
 
 
 def _coords(url, title):

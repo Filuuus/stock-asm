@@ -208,16 +208,54 @@ class MatchClientTests(SimpleTestCase):
                (4, 'ANDRES BRISEÑO OCHOA')]
 
     def test_matches_when_one_client_holds_every_word(self):
-        from .places import match_client
-        self.assertEqual(match_client('Pedro Ramón Tello Núñez', self.CLIENTS), 1)
-        self.assertEqual(match_client('Lecheros Unidos Las Palmas', self.CLIENTS), 3)
-        self.assertEqual(match_client('Casa Andrés Briceño Ochoa', self.CLIENTS), 4)  # small typo
+        from .places import match_clients
+        self.assertEqual(match_clients('Pedro Ramón Tello Núñez', self.CLIENTS), [1])
+        self.assertEqual(match_clients('Lecheros Unidos Las Palmas', self.CLIENTS), [3])
+        self.assertEqual(match_clients('Casa Andrés Briceño Ochoa', self.CLIENTS), [4])  # small typo
+        self.assertEqual(match_clients('Rubén Cortez Lira', [(7, 'RUBEN CORTES LIRA')]), [7])
 
-    def test_ambiguous_or_too_short_names_stay_unmatched(self):
-        from .places import match_client
-        self.assertIsNone(match_client('Pedro Ramón Tello', self.CLIENTS))  # two clients
-        self.assertIsNone(match_client('Pedro', self.CLIENTS))
-        self.assertIsNone(match_client('Andrés Vázquez', [(9, 'ANDRES VELAZQUEZ LUNA')]))
+    def test_repeated_words_and_exact_names(self):
+        from .places import match_clients
+        clients = [(1, 'TOMAS MORA ALVAREZ'), (2, 'TOMAS MORA MORA'),
+                   (3, 'LUZ RIOS VELA'), (4, 'JOSE LUZ RIOS VELA')]
+        self.assertEqual(match_clients('Tomás Mora Mora', clients), [2])
+        self.assertEqual(match_clients('Luz Ríos Vela', clients), [3])
+
+    def test_too_short_or_common_names_stay_unmatched(self):
+        from .places import match_clients
+        self.assertEqual(match_clients('Pedro', self.CLIENTS), [])
+        self.assertEqual(match_clients('Andrés Vázquez', [(9, 'ANDRES VELAZQUEZ LUNA')]), [])
+        self.assertEqual(match_clients('Juan López', [(n, f'JUAN LOPEZ {s}') for n, s in enumerate(['RUIZ', 'MORA', 'LIRA', 'SOTO'])]), [])
+
+    def test_several_clients_settle_by_the_zone_that_invoices_them(self):
+        from .places import match_clients
+        self.assertEqual(match_clients('Pedro Ramón Tello', self.CLIENTS), [1, 2])  # a family farm
+        zones = {1: 'ZONA1', 2: 'ZONA2'}
+        self.assertEqual(match_clients('Pedro Ramón Tello', self.CLIENTS, 'ZONA2', zones), [2])
+        self.assertEqual(match_clients('Pedro Ramón Tello', self.CLIENTS, None, {1: 'ZONA1'}), [1])  # 2 never bought
+        self.assertEqual(match_clients('Pedro Ramón Tello', self.CLIENTS, 'ZONA1', {}), [1, 2])  # nobody bought
+
+    def test_one_distinctive_word_needs_a_client_invoiced_there(self):
+        from .places import match_clients
+        clients = [(5, 'LACTOMAX SC DE RL DE CV'), (6, 'ANA LIRA')]
+        self.assertEqual(match_clients('Lactomax', clients, 'ZONA1', {5: 'ZONA1'}), [5])
+        self.assertEqual(match_clients('Lactomax', clients, 'ZONA2', {5: 'ZONA1'}), [])
+        self.assertEqual(match_clients('Lactomax', clients), [])
+        self.assertEqual(match_clients('Lactomax', clients, 'ZONA2', {5: None}), [5])  # an office client
+        self.assertEqual(match_clients('México 80', [(1, 'LACTEOS DE MEXICO'), (2, 'FV MEXICO')], None, {1: None, 2: None}), [])
+
+    def test_a_duplicate_record_without_sales_loses(self):
+        from .places import match_clients
+        clients = [(8, 'IVAN OSCAR ZUNIGA'), (9, 'IVAN OSCAR ZUNIGA')]
+        self.assertEqual(match_clients('Iván Óscar Zúñiga', clients, 'ZONA1', {9: None}), [9])
+
+    def test_territory_is_the_zone_of_the_nearest_places(self):
+        from .places import territory
+        labeled = [(20.80, -102.40, 'ZONA1'), (20.81, -102.41, 'ZONA1'), (20.79, -102.40, 'ZONA1'),
+                   (21.20, -102.30, 'ZONA2'), (21.21, -102.31, 'ZONA2')]
+        self.assertEqual(territory(20.82, -102.42, labeled, k=3), 'ZONA1')
+        self.assertEqual(territory(21.19, -102.30, labeled, k=3), 'ZONA2')
+        self.assertIsNone(territory(21.0, -102.0, []))
 
     def test_reads_pin_coordinates_and_names_from_the_note(self):
         import tempfile
