@@ -43,11 +43,11 @@ class Command(BaseCommand):
                 SavedPlace.objects.update_or_create(url=place['url'], defaults=place)
 
         places = list(SavedPlace.objects.all())
-        auto = [p for p in places if p.matched_by != 'manual']  # never overwrite a match someone set by hand
+        auto = [p for p in places if p.matched_by in ('', 'auto')]  # never overwrite a match set by hand or by a route
         for p in auto:  # first pass: names that point to one client put their zone on the map
             p.client_ids = match_clients(p.name, clients)
         labeled = [(p.lat, p.lng, client_zones[p.client_ids[0]]) for p in places
-                   if p.lat is not None and len(p.client_ids) == 1 and client_zones.get(p.client_ids[0])]
+                   if p.lat is not None and not p.approximate and len(p.client_ids) == 1 and client_zones.get(p.client_ids[0])]
         for p in auto:
             zone = territory(p.lat, p.lng, labeled) if p.lat is not None else None
             p.client_ids = match_clients(p.name, clients, zone, client_zones)

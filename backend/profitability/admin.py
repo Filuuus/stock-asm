@@ -34,9 +34,9 @@ admin.site.register(ExcludedSaleLine)
 @admin.register(SavedPlace)
 class SavedPlaceAdmin(admin.ModelAdmin):
     """Fix a place's clients by hand (ERP client ids, e.g. [12, 40]); import_maps_takeout keeps manual matches."""
-    list_display = ('name', 'list_name', 'client_ids', 'matched_by', 'lat', 'lng')
+    list_display = ('name', 'list_name', 'client_ids', 'matched_by', 'approximate', 'lat', 'lng')
     list_editable = ('client_ids',)
-    list_filter = ('matched_by', 'list_name')
+    list_filter = ('matched_by', 'approximate', 'list_name')
     search_fields = ('name',)
 
     def save_model(self, request, obj, form, change):

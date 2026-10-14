@@ -114,7 +114,9 @@ class SavedPlace(models.Model):
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
     client_ids = models.JSONField(default=list, blank=True)  # admClientes.CIDCLIENTEPROVEEDOR
-    matched_by = models.CharField(max_length=10, blank=True)  # 'auto' (name match) or 'manual'
+    # 'auto' (name match), 'manual', or 'route' (a salesperson's route log: a GPS stop, or the client's town)
+    matched_by = models.CharField(max_length=10, blank=True)
+    approximate = models.BooleanField(default=False)  # only the town, not the farm: no use for matching GPS stops
 
     def __str__(self):
         return self.name
