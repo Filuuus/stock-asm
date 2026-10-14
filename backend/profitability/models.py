@@ -106,15 +106,17 @@ class VehicleMonthlyCost(models.Model):
 
 
 class SavedPlace(models.Model):
-    """A place saved in Google Maps by the sales team (import_maps_takeout), and the ERP client it is,
-    when known. Names stay in the local database only: the repo is public."""
+    """A place saved in Google Maps by the sales team (import_maps_takeout), and the ERP clients it is,
+    when known (a family farm can be several). Names stay in the local database only: the repo is public."""
     url = models.CharField(max_length=500, unique=True)  # the place's Maps link; labeled places get a geo: key
     name = models.CharField(max_length=200)  # the list note when there is one (pins are named in it), else the title
     list_name = models.CharField(max_length=100)
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
-    client_id = models.IntegerField(null=True, blank=True)  # admClientes.CIDCLIENTEPROVEEDOR
-    matched_by = models.CharField(max_length=10, blank=True)  # 'auto' (name match) or 'manual'
+    client_ids = models.JSONField(default=list, blank=True)  # admClientes.CIDCLIENTEPROVEEDOR
+    # 'auto' (name match), 'manual', or 'route' (a salesperson's route log: a GPS stop, or the client's town)
+    matched_by = models.CharField(max_length=10, blank=True)
+    approximate = models.BooleanField(default=False)  # only the town, not the farm: no use for matching GPS stops
 
     def __str__(self):
         return self.name
