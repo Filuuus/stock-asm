@@ -31,10 +31,10 @@ import type { Zone } from "@/types/commissions";
 
 // [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg,
 //  full commission, paid commission, supplier discount, route cost split by kg, route cost split by piece,
-//  import cost]
+//  import cost, units the supplier delivered directly (in units, not in kg)]
 type Fact = [
   string, string, number, number | null, number, number, number, number, number, number, number, number, number,
-  number,
+  number, number,
 ];
 type WeightSource = "manual" | "nombre" | "GEA" | "unidad" | "estimado" | "servicio";
 
@@ -57,13 +57,23 @@ interface ExcludedLine {
   date: string;
   client_id: number;
   reason: string;
-} // pool -> component -> amount
+  direct: boolean; // a direct delivery: still a sale, without weight or route cost
+}
+
+interface CountedSupplierNote {
+  reference: string;
+  date: string;
+  amount: number;
+  reason: string;
+}
 
 interface Profitability {
   facts: Fact[];
   excluded: number[]; // product ids left out altogether, with their returns and credit notes
   unreliable_cost: number[]; // goods whose ERP cost is 0 or a guess: their margin isn't real
-  excluded_lines: ExcludedLine[]; // single invoice lines left out (gifts and such), dated in the period
+  excluded_lines: ExcludedLine[]; // single invoice lines left out (gifts and such) or delivered directly
+  counted_supplier_notes: CountedSupplierNote[]; // supplier notes counted as sales even when the rest are left out
+  counted_note_products: number[]; // the products they land on
   products: Record<string, Product>;
   clients: Record<string, string>;
   route_costs: Record<string, Pools>; // month -> pools
@@ -600,9 +610,15 @@ export default function ProfitabilityView() {
   // What the selection carries: a PDF leaves out the costs of the rest of the business (import costs, the
   // service crew) when none of it applies to what's shown.
   const selectionImports = filtered.some((f) => f[13] > 0);
+  const leftOutLines = (data?.excluded_lines ?? []).filter((l) => !l.direct);
+  const directLines = (data?.excluded_lines ?? []).filter((l) => l.direct);
+  const directShown = directLines.filter((l) => filtered.some((f) => f[3] === l.product_id)).length;
+  const countedNotes = data && filtered.some((f) => f[3] !== null && data.counted_note_products.includes(f[3]))
+    ? data.counted_supplier_notes
+    : [];
   // "regalo: 20, error de captura: 1" for the method notes.
   const excludedReasons = Object.entries(
-    (data?.excluded_lines ?? []).reduce<Record<string, number>>((acc, l) => {
+    leftOutLines.reduce<Record<string, number>>((acc, l) => {
       const r = (l.reason || "sin motivo").toLowerCase();
       acc[r] = (acc[r] ?? 0) + 1;
       return acc;
@@ -1320,8 +1336,10 @@ export default function ProfitabilityView() {
                 </>
               )}
               {unallocated >= 1 && `${formatMoney(unallocated)} de gastos de ruta sin repartir. `}
-              {data.excluded_lines.length > 0 &&
-                `${data.excluded_lines.length === 1 ? "1 partida excluida" : `${data.excluded_lines.length} partidas excluidas`}. `}
+              {leftOutLines.length > 0 &&
+                `${leftOutLines.length === 1 ? "1 partida excluida" : `${leftOutLines.length} partidas excluidas`}. `}
+              {directShown > 0 &&
+                `${directShown === 1 ? "1 partida entregada" : `${directShown} partidas entregadas`} directo por el proveedor, sin peso ni gasto de ruta. `}
               {unreliableShown > 0 &&
                 `${unreliableShown === 1 ? "1 producto" : `${unreliableShown} productos`} sin costo confiable en el ERP: su margen no es real. `}
               {notesLink}
@@ -1586,11 +1604,18 @@ export default function ProfitabilityView() {
                 {data.excluded.length > 0 &&
                   ` ${data.excluded.length === 1 ? "Una venta única se deja fuera" : `${data.excluded.length} ventas únicas se dejan fuera`} para no distorsionar los resultados.`}
               </li>
-              {data.excluded_lines.length > 0 && (
+              {leftOutLines.length > 0 && (
                 <li>
-                  Se dejan fuera {data.excluded_lines.length === 1 ? "una partida" : `${data.excluded_lines.length} partidas`}{" "}
+                  Se dejan fuera {leftOutLines.length === 1 ? "una partida" : `${leftOutLines.length} partidas`}{" "}
                   de facturas del periodo ({excludedReasons}): no son ventas normales y su costo no se carga a ningún
                   producto.
+                </li>
+              )}
+              {directShown > 0 && (
+                <li>
+                  {directShown === 1 ? "Una partida la entregó" : `${directShown} partidas las entregó`} el proveedor
+                  directamente al cliente: cuentan como venta, con su costo y comisión, pero no suman peso ni cargan
+                  gastos de ruta.
                 </li>
               )}
               <li>
@@ -1634,7 +1659,13 @@ export default function ProfitabilityView() {
                   mes contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
                 </li>
               ) : (
-                <li>{SUPPLIER_NOTES_EXCLUDED}</li>
+                <li>
+                  {SUPPLIER_NOTES_EXCLUDED}
+                  {countedNotes.length > 0 &&
+                    ` La excepción son ${countedNotes.length === 1 ? "una nota" : `${countedNotes.length} notas`} por ${formatMoney(
+                      countedNotes.reduce((s, n) => s + n.amount, 0),
+                    )} que reponen notas de crédito dadas a un cliente por un lote con problemas de calidad: se suman a la venta de esos productos, cada una en su mes.`}
+                </li>
               )}
               <li>
                 {/* Same total as the printed cost table: without the service crew when the selection sells no services. */}
@@ -1860,6 +1891,7 @@ export default function ProfitabilityView() {
                     <span className="block truncate text-xs text-gray-500">
                       {l.folio} · {formatDay(l.date)} · {data.clients[l.client_id] ?? `Cliente ${l.client_id}`}
                       {l.reason && ` · ${l.reason}`}
+                      {l.direct && !l.reason && " · Entrega directa"}
                     </span>
                   </span>
                   <Button
@@ -2323,6 +2355,7 @@ interface InvoiceLine {
   cost: number;
   line_id: number;
   excluded: boolean;
+  direct: boolean;
 }
 
 // Leaves one product on one invoice out of Rentabilidad, or brings it back.
@@ -2347,11 +2380,18 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
 
-  const toggle = async (l: InvoiceLine) => {
-    const reason = l.excluded ? "" : window.prompt("Motivo para dejar fuera esta partida:", "Regalo");
+  // Marks a line as left out, or as a direct delivery; a marked line is brought back either way.
+  const toggle = async (l: InvoiceLine, direct = false) => {
+    const marked = l.excluded || l.direct;
+    const reason = marked
+      ? ""
+      : direct
+        ? "Entrega directa del proveedor"
+        : window.prompt("Motivo para dejar fuera esta partida:", "Regalo");
     if (reason === null) return;
     try {
-      await setLineExcluded({ line_id: l.line_id }, !l.excluded, {
+      await setLineExcluded({ line_id: l.line_id }, !marked, {
+        direct,
         document_id: l.invoice_id,
         product_id: productId,
         folio: l.folio,
@@ -2406,10 +2446,11 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
               <TableBody>
                 {lines.length === 0 && <EmptyRow colSpan={8}>Sin facturas en el periodo.</EmptyRow>}
                 {lines.map((l) => (
-                  <TableRow key={l.line_id} className={cn(l.excluded && "text-gray-400")}>
+                  <TableRow key={l.line_id} className={cn((l.excluded || l.direct) && "text-gray-400")}>
                     <TableCell className="whitespace-nowrap">
                       <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
                       {l.return && <span className="ml-1 text-xs text-gray-500">(devolución)</span>}
+                      {l.direct && <span className="ml-1 text-xs text-gray-500">(entrega directa)</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(l.date)}</TableCell>
                     <TableCell className="max-w-56 truncate">
@@ -2422,8 +2463,13 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
                       {formatMoney(l.net - l.cost)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0 text-right">
+                      {!l.excluded && !l.direct && !l.return && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l, true)}>
+                          Entrega directa
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l)}>
-                        {l.excluded ? "Volver a incluir" : "Excluir"}
+                        {l.excluded || l.direct ? "Volver a incluir" : "Excluir"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -2432,7 +2478,8 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
             </Table>
             <p className="mt-2 text-xs text-gray-500">
               Las notas de crédito que se repartieron sobre este producto no aparecen aquí; se ven al abrir cada factura.
-              Una partida excluida deja de contar en todas las cifras; la lista está en Configuración › Exclusiones.
+              Una partida excluida deja de contar en todas las cifras; una entrega directa del proveedor sigue contando
+              como venta, pero sin peso ni gastos de ruta. La lista está en Configuración › Exclusiones.
             </p>
           </div>
         )}
