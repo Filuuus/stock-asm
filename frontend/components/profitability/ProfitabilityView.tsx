@@ -1887,7 +1887,9 @@ export default function ProfitabilityView() {
               {data.excluded_lines.map((l) => (
                 <li key={l.line_id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="min-w-0">
-                    <span className="block truncate">{labelOf("product", String(l.product_id))}</span>
+                    <span className="block truncate">
+                      {l.product_id ? labelOf("product", String(l.product_id)) : "Nota de crédito"}
+                    </span>
                     <span className="block truncate text-xs text-gray-500">
                       {l.folio} · {formatDay(l.date)} · {data.clients[l.client_id] ?? `Cliente ${l.client_id}`}
                       {l.reason && ` · ${l.reason}`}

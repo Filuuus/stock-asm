@@ -14,7 +14,8 @@ class ProductWeight(models.Model):
 
 class ExcludedSaleLine(models.Model):
     """One invoice or return line left out of Rentabilidad: gifts invoiced at $0 or a few
-    cents, and other lines the review decides shouldn't count (management, 2026-10-14). Folio, date
+    cents, and other lines the review decides shouldn't count (management, 2026-10-14). A credit
+    note's single line (producto_id 0) leaves the whole note out: promotion gifts given as notes. Folio, date
     and client are copied from the ERP for the list; the client's name is resolved live."""
     movement_id = models.IntegerField(unique=True)  # admMovimientos.CIDMOVIMIENTO: one line (a product can
     # appear twice on an invoice, once as a gift and once paid)

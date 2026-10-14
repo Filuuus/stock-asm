@@ -667,6 +667,9 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     sales, unreliable_cost = aggregate_sales(data['sale_lines'], data['dollar_purchases'], data['purchased'],
                                              excluded_lines, direct_lines)
     invoice_lines = [line[1:] for line in data['invoice_lines'] if line[0] not in excluded_lines]
+    # A credit note is left out by its one "(Ninguno)" line; the whole note goes (Buen Fin gifts given as notes).
+    excluded_docs = {e.document_id for e in line_exclusions if not e.direct_delivery}
+    notes = [n for n in data['notes'] if n[0] not in excluded_docs]
 
     units, amounts = defaultdict(float), defaultdict(float)
     for doc_type, _, _, _, _, product, u, net, _, _ in sales:
@@ -709,7 +712,7 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     excluded = set(ExcludedProduct.objects.values_list('producto_id', flat=True))
     counted_notes = list(CountedSupplierNote.objects.filter(date__gte=date_from, date__lt=date_to))
     counted_rows = counted_note_rows(counted_notes)
-    facts = build_facts(sales, allocate_credit_notes(data['notes'], invoice_lines) + counted_rows,
+    facts = build_facts(sales, allocate_credit_notes(notes, invoice_lines) + counted_rows,
                         commission_rows, zone_of, kg_of, rate_of)
     facts = [f for f in facts if f[3] not in excluded and f[3] not in drop]
     imports = data['imports']
