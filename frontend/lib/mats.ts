@@ -10,3 +10,7 @@ export function matsForArea(length: number, width: number) {
   const lay = (a: number, b: number) => Math.ceil(a / MAT_WIDTH_M - 1e-9) * Math.ceil(b / MAT_LENGTH_M - 1e-9);
   return Math.min(lay(length, width), lay(width, length));
 }
+
+// Full-size cow mats, the ones the calculator counts in (calf, horse and 1-2 ft pieces are left out).
+export const isFullMat = (p: { category: string; CNOMBREPRODUCTO: string }) =>
+  p.category === "R_NW" && /4 X 6|MAXGRIP/i.test(p.CNOMBREPRODUCTO);

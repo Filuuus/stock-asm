@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Maximize2, Minus, Plus } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
+import MatCalculator from "@/components/catalog/MatCalculator";
 import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
@@ -15,7 +16,7 @@ import ProductCard, { Availability, Price } from "@/components/catalog/ProductCa
 import { apiFetch } from "@/lib/api";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
-import { ProductDetail, ProductImage, RelatedPart, ServiceRule } from "@/types/api";
+import { Product, ProductDetail, ProductImage, RelatedPart, ServiceRule } from "@/types/api";
 
 const imageSrc = (images: { file: string; is_primary: boolean }[]) => {
   const img = images.find((i) => i.is_primary) ?? images[0];
@@ -479,7 +480,16 @@ function Description({ product }: { product: ProductDetail }) {
   );
 }
 
-export default function ProductDetailView({ product, highlight }: { product: ProductDetail; highlight?: string }) {
+// mat: set on full-size mat pages, with the nails to count alongside.
+export default function ProductDetailView({
+  product,
+  highlight,
+  mat,
+}: {
+  product: ProductDetail;
+  highlight?: string;
+  mat?: { nail: Product | null };
+}) {
   const router = useRouter();
   const gea = product.gea;
   // Arriving from a part's "Aparece en" (our product's key) or the staff GEA
@@ -539,6 +549,7 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
           )}
           <Availability product={product} className="mt-2 text-sm" />
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
+          {mat && <MatCalculator mat={product} nail={mat.nail} />}
           {product.staff && <StaffBox staff={product.staff} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}

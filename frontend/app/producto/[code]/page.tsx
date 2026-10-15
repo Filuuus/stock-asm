@@ -4,8 +4,9 @@ import { cookies } from "next/headers";
 import { notFound, permanentRedirect } from "next/navigation";
 import ProductDetailView from "@/components/catalog/ProductDetail";
 import { productHref } from "@/lib/utils";
+import { isFullMat } from "@/lib/mats";
 import { API_URL } from "@/lib/api";
-import { ProductDetail } from "@/types/api";
+import { Product, ProductDetail } from "@/types/api";
 
 type Props = {
   params: Promise<{ code: string }>; // "<key>-<slug>", or just the key
@@ -82,6 +83,17 @@ function jsonLd(product: ProductDetail, siteUrl: string) {
   };
 }
 
+// The nails sold with mats, for the mat calculator (public catalog, cached hourly).
+async function getNail(): Promise<Product | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/inventory/`, { next: { revalidate: 3600 } });
+    const products: Product[] = res.ok ? await res.json() : [];
+    return products.find((p) => p.category === "R_NW" && /CLAVO ESPECIAL/i.test(p.CNOMBREPRODUCTO) && p.in_stock && p.price) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function Page({ params, searchParams }: Props) {
   const { code } = await params;
   // ?pieza=<product key or, for staff, GEA code> opens the drawing with that part selected.
@@ -95,6 +107,7 @@ export default async function Page({ params, searchParams }: Props) {
     permanentRedirect(pieza ? `${canonical}?pieza=${encodeURIComponent(pieza)}` : canonical);
   }
 
+  const mat = isFullMat(product) && product.price ? { nail: await getNail() } : undefined;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   return (
     <>
@@ -104,7 +117,7 @@ export default async function Page({ params, searchParams }: Props) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd(product, siteUrl)).replace(/</g, "\\u003c") }}
       />
       {/* Keyed so moving between products or parts starts with a fresh selection. */}
-      <ProductDetailView key={`${code}-${pieza ?? ""}`} product={product} highlight={pieza} />
+      <ProductDetailView key={`${code}-${pieza ?? ""}`} product={product} highlight={pieza} mat={mat} />
     </>
   );
 }
