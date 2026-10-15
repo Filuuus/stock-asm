@@ -9,7 +9,7 @@ import { Product } from "@/types/api";
 
 // The business's own Google Maps listing: searching the address lands on a neighbouring shop.
 const MAPS_URL = "https://maps.google.com/?cid=5997330366104013167";
-const ADDRESS = "Blvd. Anacleto González Flores Nte. 135, Col. Españita, Tepatitlán de Morelos, Jal., C.P. 47630";
+const ADDRESS = "Av. Guadalajara 135-A, Col. Españita, Tepatitlán de Morelos, Jal., C.P. 47630";
 // Office phones as published on the company's previous site (its email there is not ours to use).
 const PHONES = ["378 782 27 68", "378 782 32 18"];
 const SOCIAL = [
