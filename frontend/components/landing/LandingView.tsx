@@ -190,6 +190,16 @@ export default function LandingView({ products, coverage }: { products: Product[
               );
             })}
           </div>
+          <Link
+            href="/calculadora-tapetes"
+            className="mt-4 flex items-center justify-between gap-4 rounded-xl bg-emerald-50 p-4 text-emerald-900 hover:bg-emerald-100"
+          >
+            <span>
+              <span className="font-semibold">¿Cuántos tapetes necesita?</span> Calcule tapetes, clavos y precio para
+              su establo.
+            </span>
+            <ChevronRight className="h-6 w-6 flex-shrink-0" />
+          </Link>
         </div>
       </section>
 
