@@ -8,9 +8,8 @@ import { Product } from "@/types/api";
 // The order follows the social-media proposal: promise, route service, solutions, how to quote.
 
 const ADDRESS = "Av. Guadalajara 135-A, Col. Españita, Tepatitlán de Morelos, Jal., C.P. 47630";
-// Office contact as published on the company's previous site (agrostma.com.mx).
+// Office phones as published on the company's previous site (its email there is not ours to use).
 const PHONES = ["378 782 27 68", "378 782 32 18"];
-const EMAIL = "contacto@agrostma.com.mx";
 const SOCIAL = [
   { label: "Facebook", href: "https://www.facebook.com/agropecuaria.santamariasadecv.9" },
   { label: "Instagram", href: "https://www.instagram.com/agrostmaria/" },
@@ -237,9 +236,6 @@ export default function LandingView({ products, coverage }: { products: Product[
                   {phone}
                 </a>
               ))}
-              <a href={`mailto:${EMAIL}`} className={LINK}>
-                {EMAIL}
-              </a>
             </p>
             <p className="mt-1 flex gap-4 text-sm">
               {SOCIAL.map((s) => (
