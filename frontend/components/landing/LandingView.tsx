@@ -8,6 +8,14 @@ import { Product } from "@/types/api";
 // The order follows the social-media proposal: promise, route service, solutions, how to quote.
 
 const ADDRESS = "Av. Guadalajara 135-A, Col. Españita, Tepatitlán de Morelos, Jal., C.P. 47630";
+// Office contact as published on the company's previous site (agrostma.com.mx).
+const PHONES = ["378 782 27 68", "378 782 32 18"];
+const EMAIL = "contacto@agrostma.com.mx";
+const SOCIAL = [
+  { label: "Facebook", href: "https://www.facebook.com/agropecuaria.santamariasadecv.9" },
+  { label: "Instagram", href: "https://www.instagram.com/agrostmaria/" },
+];
+const LINK = "text-emerald-400 hover:underline";
 
 // Each one opens the catalog filtered to its category; the id is the anchor ads can link to.
 const SOLUTIONS = [
@@ -182,10 +190,27 @@ export default function LandingView({ products, coverage }: { products: Product[
               href={`https://www.google.com/maps/search/?${new URLSearchParams({ api: "1", query: ADDRESS })}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-block text-sm text-emerald-400 hover:underline"
+              className={`mt-1 inline-block text-sm ${LINK}`}
             >
               Cómo llegar
             </a>
+            <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {PHONES.map((phone) => (
+                <a key={phone} href={`tel:+52${phone.replace(/\s/g, "")}`} className={LINK}>
+                  {phone}
+                </a>
+              ))}
+              <a href={`mailto:${EMAIL}`} className={LINK}>
+                {EMAIL}
+              </a>
+            </p>
+            <p className="mt-1 flex gap-4 text-sm">
+              {SOCIAL.map((s) => (
+                <a key={s.label} href={s.href} target="_blank" rel="noopener noreferrer" className={LINK}>
+                  {s.label}
+                </a>
+              ))}
+            </p>
           </div>
           <Link href="/catalogo" className={`${BUTTON} flex-shrink-0 bg-emerald-500 text-white hover:bg-emerald-400`}>
             Empezar mi cotización
