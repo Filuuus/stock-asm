@@ -4,7 +4,7 @@
 
 export type Coverage = { step: number; cells: [number, number][] };
 
-const OFFICE = { name: "Tepatitlán", lat: 20.817, lng: -102.763 };
+const OFFICE = { name: "Tepatitlán", lat: 20.8211, lng: -102.7513 }; // the office, per its Maps listing
 const TOWNS = [
   { name: "Arandas", lat: 20.706, lng: -102.346 },
   { name: "San Juan de los Lagos", lat: 21.247, lng: -102.331 },

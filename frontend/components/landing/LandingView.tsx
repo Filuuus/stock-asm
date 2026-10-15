@@ -7,6 +7,8 @@ import { Product } from "@/types/api";
 // Draft copy (2026-10-15): written from what the business does today, pending management's review.
 // The order follows the social-media proposal: promise, route service, solutions, how to quote.
 
+// The business's own Google Maps listing: searching the address lands on a neighbouring shop.
+const MAPS_URL = "https://maps.google.com/?cid=5997330366104013167";
 const ADDRESS = "Av. Guadalajara 135-A, Col. Españita, Tepatitlán de Morelos, Jal., C.P. 47630";
 // Office phones as published on the company's previous site (its email there is not ours to use).
 const PHONES = ["378 782 27 68", "378 782 32 18"];
@@ -248,7 +250,7 @@ export default function LandingView({ products, coverage }: { products: Product[
             <p className="font-semibold">Visítenos en Tepatitlán</p>
             <p className="mt-1 text-sm text-slate-300">{ADDRESS}</p>
             <a
-              href={`https://www.google.com/maps/search/?${new URLSearchParams({ api: "1", query: ADDRESS })}`}
+              href={MAPS_URL}
               target="_blank"
               rel="noopener noreferrer"
               className={`mt-1 inline-block text-sm ${LINK}`}
