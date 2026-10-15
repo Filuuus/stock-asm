@@ -76,6 +76,13 @@ const BRANDS = [
   { name: "Animat · North West Rubber", since: "Distribuidor exclusivo directo desde 2024" },
 ];
 
+// Photos from the company's previous site (agrostma.com.mx), web-sized, metadata stripped.
+const PHOTOS = [
+  { src: "/landing/mat-install.webp", alt: "Instalación de tapetes en una sala de ordeño" },
+  { src: "/landing/barn.webp", alt: "Establo con ganado lechero" },
+  { src: "/landing/clusters.webp", alt: "Unidades de ordeño en una sala" },
+];
+
 const STEPS = [
   { title: "Elija sus productos", text: "Vea precios y existencia en el catálogo y agréguelos a su solicitud." },
   { title: "Envíe su solicitud", text: "Solo su nombre y teléfono. No tiene costo ni compromiso." },
@@ -102,8 +109,10 @@ function summarize(products: Product[], category: string, word: string) {
 export default function LandingView({ products, coverage }: { products: Product[]; coverage: Coverage | null }) {
   return (
     <main className="w-full">
-      <section className="bg-slate-900 text-white">
-        <div className="mx-auto max-w-5xl px-4 py-14 sm:px-6 sm:py-20 text-center">
+      <section className="relative overflow-hidden bg-slate-900 text-white">
+        <Image src="/landing/parlor.webp" alt="" fill priority sizes="100vw" className="object-cover" />
+        <div className="absolute inset-0 bg-slate-900/70" />
+        <div className="relative mx-auto max-w-5xl px-4 py-14 sm:px-6 sm:py-24 text-center">
           <h1 className="text-3xl font-bold leading-tight sm:text-5xl">
             Todo para su establo, y se lo llevamos hasta su rancho
           </h1>
@@ -191,6 +200,22 @@ export default function LandingView({ products, coverage }: { products: Product[
             })}
           </div>
         </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-4 pt-14 sm:px-6">
+        <h2 className="text-2xl font-bold text-slate-900 sm:text-3xl">Nuestro trabajo</h2>
+        <ul className="mt-6 grid gap-4 sm:grid-cols-3">
+          {PHOTOS.map((photo) => (
+            <li key={photo.src}>
+              <figure>
+                <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-gray-100">
+                  <Image src={photo.src} alt={photo.alt} fill sizes="(min-width: 640px) 33vw, 100vw" className="object-cover" />
+                </div>
+                <figcaption className="mt-2 text-sm text-slate-600">{photo.alt}</figcaption>
+              </figure>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="mx-auto max-w-5xl px-4 pt-14 sm:px-6">
