@@ -63,6 +63,20 @@ const ROUTE_FACTS = [
   { icon: PackageCheck, text: "Refacciones en existencia en Tepatitlán" },
 ];
 
+// From the company's history page on the previous site (agrostma.com.mx/nosotros); pending management's OK.
+const TRUST = [
+  { value: "Desde 1994", label: "con equipo de ordeño Westfalia-Surge, hoy GEA" },
+  { value: "+3,500", label: "productores que pasaron del ordeño a mano al mecánico con nosotros" },
+  { value: "1.er lugar", label: "nacional en ventas de consumibles y refacciones GEA (2008)" },
+];
+
+const BRANDS = [
+  { name: "GEA", since: "Desde 1994, cuando era Westfalia-Surge" },
+  { name: "Bionat-Sano", since: "Distribuidor en Los Altos desde 2011" },
+  { name: "VES-Artex", since: "Ventilación para establos desde 2022" },
+  { name: "Animat · North West Rubber", since: "Distribuidor exclusivo directo desde 2024" },
+];
+
 const STEPS = [
   { title: "Elija sus productos", text: "Vea precios y existencia en el catálogo y agréguelos a su solicitud." },
   { title: "Envíe su solicitud", text: "Solo su nombre y teléfono. No tiene costo ni compromiso." },
@@ -108,6 +122,17 @@ export default function LandingView({ products, coverage }: { products: Product[
             </a>
           </div>
         </div>
+      </section>
+
+      <section className="border-b border-gray-200 bg-white">
+        <dl className="mx-auto grid max-w-5xl gap-6 px-4 py-8 text-center sm:grid-cols-3 sm:px-6">
+          {TRUST.map((t) => (
+            <div key={t.value}>
+              <dt className="text-2xl font-bold text-emerald-700 sm:text-3xl">{t.value}</dt>
+              <dd className="mt-1 text-sm text-slate-600">{t.label}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
 
       {coverage && coverage.cells.length > 0 && (
@@ -167,6 +192,18 @@ export default function LandingView({ products, coverage }: { products: Product[
             })}
           </div>
         </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-4 pt-14 sm:px-6">
+        <h2 className="text-2xl font-bold text-slate-900 sm:text-3xl">Marcas que distribuimos</h2>
+        <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {BRANDS.map((b) => (
+            <li key={b.name} className="rounded-xl border border-gray-200 bg-white p-5">
+              <p className="text-lg font-bold text-slate-900">{b.name}</p>
+              <p className="mt-1 text-sm text-slate-600">{b.since}</p>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section id="cotizar" className="mx-auto max-w-5xl scroll-mt-4 px-4 py-14 sm:px-6">
