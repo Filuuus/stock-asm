@@ -24,7 +24,7 @@ export default function HeaderNav() {
   const { count } = useCart();
 
   const links = [
-    { href: "/", label: "Catálogo", show: true },
+    { href: "/catalogo", label: "Catálogo", show: true },
     { href: "/solicitudes", label: "Solicitudes", show: !!user },
     { href: "/fotos", label: "Fotos", show: !!user },
     { href: "/comisiones", label: "Comisiones", show: true },

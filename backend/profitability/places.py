@@ -6,7 +6,7 @@ import unicodedata
 from collections import Counter
 from functools import lru_cache
 from difflib import SequenceMatcher
-from math import cos, radians
+from math import cos, floor, radians
 from pathlib import Path
 
 # Words that describe a place rather than name it ("Casa de ...", "Rancho ...", company suffixes).
@@ -136,6 +136,12 @@ def _match(name, clients, zone, client_zones):
     if len(want) == 1 and len(hits) > 1:
         return []  # a bare word several clients share ("México")
     return [cid for cid, _ in hits] if len(hits) <= MAX_FAMILY else []
+
+
+def coverage_cells(points, step=0.1):
+    """South-west corners of the grid cells (about 11 km at 0.1°) holding a place: shows where the
+    routes reach without pointing at any ranch."""
+    return sorted({(round(floor(lat / step) * step, 4), round(floor(lng / step) * step, 4)) for lat, lng in points})
 
 
 def territory(lat, lng, labeled, k=5):

@@ -363,10 +363,10 @@ function AppearsIn({ product }: { product: ProductDetail }) {
 // Catálogo › Bionat › Sustitutos de leche, each a link to the filtered catalog.
 function Breadcrumb({ product }: { product: ProductDetail }) {
   const category = new URLSearchParams({ categoria: product.category });
-  const crumbs = [{ href: `/?${category}`, label: CATEGORY_LABELS[product.category] ?? product.category }];
+  const crumbs = [{ href: `/catalogo?${category}`, label: CATEGORY_LABELS[product.category] ?? product.category }];
   if (product.line) {
     category.append("linea", product.line);
-    crumbs.push({ href: `/?${category}`, label: lineLabel(product.line) });
+    crumbs.push({ href: `/catalogo?${category}`, label: lineLabel(product.line) });
   }
   return (
     <nav aria-label="Ruta" className="mb-4 -mt-2 flex flex-wrap items-center gap-1 text-sm text-gray-500">
@@ -502,13 +502,13 @@ export default function ProductDetailView({ product, highlight }: { product: Pro
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
       <Link
-        href="/"
+        href="/catalogo"
         scroll={false}
         onClick={(e) => {
           // Back to the same filtered list and scroll position the user left.
-          let url = "/";
+          let url = "/catalogo";
           try {
-            url = sessionStorage.getItem(CATALOG_URL_KEY) || "/";
+            url = sessionStorage.getItem(CATALOG_URL_KEY) || "/catalogo";
             sessionStorage.setItem(CATALOG_RESTORE_KEY, "1");
           } catch {
             // storage blocked: plain link to the catalog

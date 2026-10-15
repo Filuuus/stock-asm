@@ -9,6 +9,7 @@ from .services import (
     allocate_credit_notes, allocate_route_costs, allocate_supplier_discounts, build_facts, imported_products,
     is_advance_application, product_info, route_costs,
 )
+from .places import coverage_cells
 from .weights import DEFAULT_KG, estimate_kg
 
 
@@ -336,3 +337,12 @@ class DollarCostTests(SimpleTestCase):
         lines[1] = (2, *lines[1][1:])  # its own line id
         rows, _ = aggregate_sales(lines, {}, {100, 101}, excluded_lines={1})
         self.assertEqual([r[5] for r in rows], [101])
+
+
+class CoverageCellsTests(SimpleTestCase):
+    def test_nearby_places_share_a_cell_and_negative_longitudes_floor_west(self):
+        cells = coverage_cells([(20.81, -102.76), (20.85, -102.71), (21.35, -101.94)])
+        self.assertEqual(cells, [(20.8, -102.8), (21.3, -102.0)])
+
+    def test_no_places_no_cells(self):
+        self.assertEqual(coverage_cells([]), [])

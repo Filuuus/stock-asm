@@ -18,7 +18,7 @@ export default function LoginPage() {
 
   // Already signed in: nothing to do here, go to the catalog.
   useEffect(() => {
-    if (!loading && user) router.replace("/");
+    if (!loading && user) router.replace("/catalogo");
   }, [loading, user, router]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -28,7 +28,7 @@ export default function LoginPage() {
     const result = await login(username, password);
     setSubmitting(false);
     if (result.ok) {
-      router.push("/");
+      router.push("/catalogo");
     } else {
       setError(result.error);
     }

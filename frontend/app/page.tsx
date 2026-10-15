@@ -1,28 +1,28 @@
-import { cookies } from "next/headers";
-import CatalogView from "@/components/catalog/CatalogView";
+import type { Metadata } from "next";
+import LandingView from "@/components/landing/LandingView";
+import { Coverage } from "@/components/landing/CoverageMap";
 import { API_URL } from "@/lib/api";
 import { Product } from "@/types/api";
 
-async function getInventory(): Promise<Product[]> {
+export const metadata: Metadata = {
+  description:
+    "Equipo de ordeño GEA, higiene, tapetes, nutrición Bionat y ventilación en Los Altos de Jalisco, con servicio en ruta.",
+};
+
+// The public view (no cookie): the home page shows what any visitor would see. Rebuilt at most hourly.
+async function getJson<T>(path: string): Promise<T | null> {
   try {
-    // Forward the browser's session cookie so the backend knows who's
-    // asking and can decide which prices are visible (see api/services.py
-    // get_inventory_catalog) - without this, server-side rendering would
-    // always see an anonymous request even for a logged-in worker.
-    const cookieStore = await cookies();
-    const res = await fetch(`${API_URL}/api/inventory/`, {
-      headers: { Cookie: cookieStore.toString() },
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    return res.json();
+    const res = await fetch(`${API_URL}${path}`, { next: { revalidate: 3600 } });
+    return res.ok ? res.json() : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
 export default async function Page() {
-  const products = await getInventory();
-
-  return <CatalogView products={products} />;
+  const [products, coverage] = await Promise.all([
+    getJson<Product[]>("/api/inventory/"),
+    getJson<Coverage>("/api/profitability/coverage/"),
+  ]);
+  return <LandingView products={products ?? []} coverage={coverage} />;
 }
