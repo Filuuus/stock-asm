@@ -1,11 +1,13 @@
 from datetime import date
 
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from accounts.permissions import IsManagement
 
-from .models import ExcludedProduct, ExcludedSaleLine, ProductWeight
+from .models import ExcludedProduct, ExcludedSaleLine, ProductWeight, SavedPlace
+from .places import coverage_cells
 from .services import calculate_profitability, product_invoices
 from .setup import route_setup, save_route_setup
 
@@ -118,3 +120,15 @@ def setup(request):
         except (ValueError, KeyError, TypeError) as e:
             return Response({'error': str(e) or 'Datos inválidos.'}, status=400)
     return Response(route_setup())
+
+
+COVERAGE_STEP = 0.1
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def coverage(request):
+    """Public: the grid cells where we have clients, for the home page map."""
+    places = SavedPlace.objects.exclude(lat=None).values_list('lat', 'lng', 'client_ids')
+    cells = coverage_cells(((lat, lng) for lat, lng, ids in places if ids), COVERAGE_STEP)
+    return Response({'step': COVERAGE_STEP, 'cells': cells})

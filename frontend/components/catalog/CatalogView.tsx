@@ -64,7 +64,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
   useEffect(() => {
     const params = filtersToParams(filters);
     if (sortMode !== "relevance") params.set("orden", sortMode);
-    const url = params.size ? `/?${params}` : "/";
+    const url = params.size ? `/catalogo?${params}` : "/catalogo";
     if (url !== window.location.pathname + window.location.search) window.history.replaceState(null, "", url);
     session((s) => s.setItem(CATALOG_URL_KEY, url));
   }, [filters, sortMode]);

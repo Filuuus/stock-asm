@@ -7,7 +7,7 @@ import { useSearchQuery } from "@/hooks/use-search-query";
 export default function SearchBar() {
   const { query, setQuery } = useSearchQuery();
   // Only the catalog reads this query.
-  if (usePathname() !== "/") return null;
+  if (usePathname() !== "/catalogo") return null;
 
   return (
     <div className="flex items-center bg-white rounded-lg px-3 py-1.5 w-full sm:w-auto sm:flex-1 sm:min-w-48 max-w-md order-last sm:order-none text-slate-500">

@@ -61,7 +61,7 @@ export default function CartPage() {
         <h1 className="text-2xl font-semibold text-gray-900">Mi solicitud</h1>
         <div className="mt-6 rounded-lg border border-dashed border-gray-300 bg-white py-10 text-center">
           <p className="text-sm text-gray-500">Tu solicitud está vacía.</p>
-          <Link href="/" className="mt-2 inline-block text-sm text-blue-600 hover:underline">
+          <Link href="/catalogo" className="mt-2 inline-block text-sm text-blue-600 hover:underline">
             Ir al catálogo
           </Link>
         </div>
