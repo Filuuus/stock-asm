@@ -435,8 +435,18 @@ function VariantPicker({ product }: { product: ProductDetail }) {
             {attr}: <span className="font-normal">{current[attr]}</span>
           </p>
           <div className="mt-1.5 flex flex-wrap gap-2">
-            {/* The family's order; after the first option, values that fit the current choice come first. */}
-            {[...new Set([...(i ? product.variants.filter((v) => sameOtherwise(v, attr)) : []), ...product.variants].map((v) => v.options[attr]))].map((value) => {
+            {/* The family's order. Later options only offer what the first one's choice (the animal,
+                on PebbleTop) comes in, values that fit the rest of the current choice first. */}
+            {[
+              ...new Set(
+                (i
+                  ? [...product.variants.filter((v) => sameOtherwise(v, attr)), ...product.variants].filter(
+                      (v) => v.options[attrs[0]] === current[attrs[0]],
+                    )
+                  : product.variants
+                ).map((v) => v.options[attr]),
+              ),
+            ].map((value) => {
               const withValue = product.variants.filter((v) => v.options[attr] === value);
               const exact = withValue.find((v) => sameOtherwise(v, attr));
               const target = exact ?? withValue[0];

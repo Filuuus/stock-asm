@@ -181,11 +181,16 @@ class GeaPartSearchTests(SimpleTestCase):
 class MatVariantTests(SimpleTestCase):
     def test_reads_width_interlock_and_hand_from_the_name(self):
         self.assertEqual(mat_variant('TAPETE O ALFOMBRA GOMA EN CLAVAMIENTO 4 X 6 I2 F10 D')['options'],
-                         {'Ancho': '4 pies', 'Interlock': '1 lado largo y 1 corto (derecha)'})
+                         {'Animal': 'Vacas', 'Ancho': '4 pies', 'Interlock': '1 lado largo y 1 corto (derecha)'})
         self.assertEqual(mat_variant('EN CLAVAMIENTO 1 X 6 I2 F2')['options']['Ancho'], '1 pie')
         self.assertEqual(mat_variant('TAPETE O ALFOMBRA EN CLAVAMIENTO 4 X 6 I0 F0')['options']['Interlock'], 'Sin interlock')
         self.assertEqual(mat_variant('TAPETE O ALFOMBRA MAXGRIP 3/4 SIN INTERLOCK')['options'], {'Interlock': 'Sin interlock'})
-        self.assertIsNone(mat_variant('TAPETE GOMA BECERRAS GRA463/4 DIAGONAL'))
+        # Calf and horse mats join PebbleTop; F20 is all four sides of a 4x6, no F is no interlock.
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS 3/4GRA464F20 DIAGONAL')['options'],
+                         {'Animal': 'Becerras', 'Ancho': '4 pies', 'Interlock': 'En los 4 lados'})
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS GRA463/4 DIAGONAL')['options']['Interlock'], 'Sin interlock')
+        self.assertEqual(mat_variant('TAPETE GOMA PARA CABALLO  A64F20')['options']['Animal'], 'Caballos')
+        self.assertIsNone(mat_variant('TAPETE GOMA ESTANDAR ANR461/2'))
 
     def test_one_version_per_option_set_preferring_this_one_then_stock(self):
         def mat(key, in_stock, rank=None):

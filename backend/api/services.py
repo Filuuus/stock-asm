@@ -77,18 +77,32 @@ INTERLOCK_EDGES = {
 }
 
 
+# Calf (transition line, under 500 lb) and horse mats are PebbleTop too (user, 2026-10-16).
+# Their names carry the 4x6 size as "46"/"64" and the interlocking feet as F<n> (F20 = all
+# four sides of a 4x6); a calf mat without F has none.
+PEBBLETOP_ANIMALS = [('BECERRA', 'Becerras', 1), ('CABALLO', 'Caballos', 2)]
+
+
+def _pebbletop(animal, width, feet, hand, order):
+    interlock = 'Sin interlock' if not feet else INTERLOCK_EDGES.get((width, feet), f'F{feet}')
+    if hand:
+        interlock += ' (derecha)' if hand == 'D' else ' (izquierda)'
+    # sort: cows, calves, horses; narrow to wide; most interlock first.
+    return {'family': 'PebbleTop',
+            'options': {'Animal': animal, 'Ancho': f'{width} pie' + 's' * (width > 1), 'Interlock': interlock},
+            'sort': [order, width, -feet, hand or '']}
+
+
 def mat_variant(name):
-    """{'family', 'options'} for a mat that comes in several versions, else None."""
+    """{'family', 'options', 'sort'} for a mat that comes in several versions, else None."""
     name = (name or '').upper()
     m = PEBBLETOP_RE.search(name)
     if m:
-        width, sides, feet, hand = int(m[1]), int(m[2]), int(m[3]), m[4]
-        interlock = 'Sin interlock' if sides == 0 else INTERLOCK_EDGES.get((width, feet), f'I{sides} F{feet}')
-        if hand:
-            interlock += ' (derecha)' if hand == 'D' else ' (izquierda)'
-        # sort: narrow to wide, then most interlock first.
-        return {'family': 'PebbleTop', 'options': {'Ancho': f'{width} pie' + 's' * (width > 1), 'Interlock': interlock},
-                'sort': [width, -feet, hand or '']}
+        return _pebbletop('Vacas', int(m[1]), int(m[3]) if int(m[2]) else 0, m[4], 0)
+    for marker, animal, order in PEBBLETOP_ANIMALS:
+        if marker in name:
+            feet = re.search(r'F(\d+)', name)
+            return _pebbletop(animal, 4, int(feet[1]) if feet else 0, None, order)
     if 'MAXGRIP' in name:
         bare = 'SIN INTERLOCK' in name
         return {'family': 'MaxGrip', 'options': {'Interlock': 'Sin interlock' if bare else 'En los 4 lados'},
