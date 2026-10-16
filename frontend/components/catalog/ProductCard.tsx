@@ -17,13 +17,21 @@ export default function ProductCard({
   versions?: Product[];
 }) {
   const family = versions && versions.length > 1 ? product.variant?.family : undefined;
-  // A family card opens its best-selling version in stock.
-  const lead = family
-    ? [...versions!].sort((a, b) => Number(!a.in_stock) - Number(!b.in_stock) || (a.sold_rank ?? Infinity) - (b.sold_rank ?? Infinity))[0]
-    : product;
-  // Same options can exist twice in the ERP (one in stock, one on order); the page shows one.
-  const optionCount = new Set((versions ?? []).map((v) => JSON.stringify(v.variant?.options))).size;
-  const prices = (versions ?? []).filter((v) => v.price_visible && v.price).map((v) => v.price as number);
+  // The versions the product pages offer: one per set of options (the ERP can hold the same
+  // options twice), in stock first, then the best seller - as api.services._variants picks.
+  const shown = new Map<string, Product>();
+  for (const v of [...(versions ?? [])].sort(
+    (a, b) =>
+      Number(!a.in_stock) - Number(!b.in_stock) ||
+      (a.sold_rank ?? Infinity) - (b.sold_rank ?? Infinity) ||
+      Number(a.key) - Number(b.key),
+  )) {
+    const options = JSON.stringify(v.variant?.options);
+    if (!shown.has(options)) shown.set(options, v);
+  }
+  // A family card opens its best-selling version in stock; "Desde" is the lowest price those pages show.
+  const lead = family ? [...shown.values()][0] : product;
+  const prices = [...shown.values()].filter((v) => v.price_visible && v.price).map((v) => v.price as number);
   const images = product.images;
   const initialIndex = Math.max(
     images.findIndex((img) => img.is_primary),
@@ -80,7 +88,7 @@ export default function ProductCard({
         </h3>
         {family ? (
           <>
-            <p className="mt-1 text-xs text-gray-500">{optionCount} opciones</p>
+            <p className="mt-1 text-xs text-gray-500">{shown.size} opciones</p>
             {prices.length > 0 && (
               <p className="mt-2 text-sm text-gray-500">
                 Desde <span className="text-xl font-semibold text-gray-900 sm:text-2xl">{formatMoney(Math.min(...prices))}</span>

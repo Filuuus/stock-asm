@@ -99,6 +99,9 @@ export default function CatalogView({ products }: { products: Product[] }) {
     const direction = sortMode === "price-desc" ? -1 : 1;
     // Every sort puts $0 products after the priced ones; ties keep the ERP order.
     result = [...result].sort((a, b) => {
+      // Photographed products lead, unless the visitor asked to sort by price.
+      const pictured = Number(!a.images.length) - Number(!b.images.length);
+      if (pictured && sortMode !== "price-asc" && sortMode !== "price-desc") return pictured;
       const priced = Number(!hasPrice(a)) - Number(!hasPrice(b));
       if (priced) return priced;
       if (sortMode === "best-sellers") {
