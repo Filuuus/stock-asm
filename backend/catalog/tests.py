@@ -76,6 +76,16 @@ class QuoteRequestTests(TestCase):
                         content_type='application/json')
         self.assertEqual([(i.producto_codigo, i.quantity) for i in req.items.all()], [('A', Decimal('5.00'))])
 
+    def test_pending_count_for_the_menu_badge(self, _):
+        first = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.send()
+        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').status_code, 403)
+        self.client.force_login(self.seller)
+        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').json(), {'nuevas': 2})
+        self.client.force_login(self.manager)
+        self.client.post(f'/api/solicitudes/{first.pk}/rechazar/')
+        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').json(), {'nuevas': 1})
+
     def test_rejects_unknown_products_and_missing_phone(self, _):
         bad = self.client.post('/api/solicitudes/', {'name': 'X', 'phone': '33 1234 5678', 'items': [{'key': '9', 'quantity': 1}]},
                                content_type='application/json')
