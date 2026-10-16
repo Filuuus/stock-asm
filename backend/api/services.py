@@ -77,7 +77,7 @@ INTERLOCK_EDGES = {
 }
 
 
-# Calf (transition line, under 500 lb) and horse mats are PebbleTop too (user, 2026-10-16).
+# Calf (transition line, under 500 lb) and horse mats are PebbleTop too, 4x6 ft (user, 2026-10-16).
 # Their names carry the 4x6 size as "46"/"64" and the interlocking feet as F<n> (F20 = all
 # four sides of a 4x6); a calf mat without F has none.
 PEBBLETOP_ANIMALS = [('BECERRA', 'Becerras', 1), ('CABALLO', 'Caballos', 2)]
