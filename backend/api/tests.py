@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .services import (InventoryRepository, _apply_role, _bionat_type, get_inventory_catalog, get_product_detail,
-                       search_gea_parts)
+from .services import (InventoryRepository, _apply_role, _bionat_type, _variants, get_inventory_catalog,
+                       get_product_detail, mat_variant, search_gea_parts)
 
 
 def producto(pid, code, stock_units, name='PEZONERA'):
@@ -65,6 +65,11 @@ class InventoryCatalogTests(SimpleTestCase):
     def row(category, iva=16.0, stock=1.0, sold_rank=None):
         return {'CCODIGOPRODUCTO': 'A', 'category': category, 'brand': 'GEA FARM TECHNOLOGIES',
                 'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': stock, 'sold_rank': sold_rank}
+
+    def test_duplicate_mats_hidden_from_public_only(self):
+        dup = {**self.row('R_NW'), 'CIDPRODUCTO': 2569}
+        self.assertEqual(_apply_role([dup], False), [])
+        self.assertEqual(len(_apply_role([dup], True)), 1)
 
     def test_out_of_stock_mats_fans_and_selling_bionat_are_public_on_order(self):
         public = lambda row: _apply_role([row], False)
@@ -176,3 +181,29 @@ class GeaPartSearchTests(SimpleTestCase):
         self.assertEqual(self.search('vastago'), [('7041-2717-010', ['0020'])])
         # Sold parts (even with our regional letter) are left to the normal catalog search.
         self.assertEqual(self.search('disco'), [])
+
+
+class MatVariantTests(SimpleTestCase):
+    def test_reads_width_interlock_and_hand_from_the_name(self):
+        self.assertEqual(mat_variant('TAPETE O ALFOMBRA GOMA EN CLAVAMIENTO 4 X 6 I2 F10 D')['options'],
+                         {'Animal': 'Vacas', 'Ancho': '4 pies', 'Interlock': '1 lado largo y 1 corto (derecha)'})
+        self.assertEqual(mat_variant('EN CLAVAMIENTO 1 X 6 I2 F2')['options']['Ancho'], '1 pie')
+        self.assertEqual(mat_variant('TAPETE O ALFOMBRA EN CLAVAMIENTO 4 X 6 I0 F0')['options']['Interlock'], 'Sin interlock')
+        self.assertEqual(mat_variant('TAPETE O ALFOMBRA MAXGRIP 3/4 SIN INTERLOCK')['options'], {'Interlock': 'Sin interlock'})
+        # Calf and horse mats join PebbleTop; F20 is all four sides of a 4x6, no F is no interlock.
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS 3/4GRA464F20 DIAGONAL')['options'],
+                         {'Animal': 'Becerras', 'Ancho': '4 pies', 'Interlock': 'En los 4 lados'})
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS GRA463/4 DIAGONAL')['options']['Interlock'], 'Sin interlock')
+        self.assertEqual(mat_variant('TAPETE GOMA PARA CABALLO  A64F20')['options']['Animal'], 'Caballos')
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS 3/4 GRA162F2')['options'],
+                         {'Animal': 'Becerras', 'Ancho': '1 pie', 'Interlock': '2 lados cortos'})
+        self.assertIsNone(mat_variant('TAPETE GOMA ESTANDAR ANR461/2'))
+
+    def test_one_version_per_option_set_preferring_this_one_then_stock(self):
+        def mat(key, in_stock, rank=None):
+            return {'key': key, 'slug': 's', 'price': 1.0, 'in_stock': in_stock, 'on_order': not in_stock,
+                    'sold_rank': rank, 'variant': mat_variant('EN CLAVAMIENTO 2 X 6 I2 F4')}
+        catalog = [mat('10', False), mat('11', True, 5), {'key': '12', 'variant': None}]
+        self.assertEqual([v['key'] for v in _variants(catalog[0], catalog)], ['10'])  # its own page keeps itself
+        self.assertEqual([v['key'] for v in _variants({'key': '9', 'variant': catalog[0]['variant']}, catalog)], ['11'])
+        self.assertEqual(_variants({'key': '12', 'variant': None}, catalog), [])

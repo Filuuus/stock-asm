@@ -31,6 +31,9 @@ NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
 # them, 2026-10-13): mats and fans always, Bionat only if sold in the last 12
 # months (the rest is mostly discontinued).
 ON_ORDER_CATEGORIES = {'R_NW', 'R_FAN'}
+# Mats bought only from a distributor (2018-2022), brand unconfirmed, each a duplicate of a
+# mat we stock: hidden from the public (user, 2026-10-16).
+HIDDEN_FROM_PUBLIC = {2566, 2568, 2569}
 # GEA-style codes inside names ("VALVULA (7050-1935-000)", "JGO 4X7023-2721-060").
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
@@ -65,6 +68,51 @@ BIONAT_TYPES = [
 def _bionat_type(name):
     name = (name or '').upper()
     return next((t for marker, t in BIONAT_TYPES if marker in name), 'Aditivos')
+
+# Mats sold in many versions show as one product per family, with options on its page.
+# Names read per the user (2026-10-15): "<width> X 6" in feet, I<sides with interlock>,
+# F<feet of interlocking edge>, D/I = right/left (GEA's descriptions say (R)/(L)).
+PEBBLETOP_RE = re.compile(r'EN CLAVAMIENTO (\d) X 6 I(\d) F(\d+)(?: ([DI]))?')
+INTERLOCK_EDGES = {
+    (4, 20): 'En los 4 lados', (4, 16): '2 lados largos y 1 corto', (4, 14): '2 lados cortos y 1 largo',
+    (4, 12): '2 lados largos', (4, 10): '1 lado largo y 1 corto', (4, 8): '2 lados cortos',
+    (2, 4): '2 lados cortos', (1, 2): '2 lados cortos',
+}
+
+
+# Calf (transition line, under 500 lb) and horse mats are PebbleTop too, 4x6 ft (user, 2026-10-16).
+# Their names carry the 4x6 size as "46"/"64" and the interlocking feet as F<n> (F20 = all
+# four sides of a 4x6); a calf mat without F has none.
+PEBBLETOP_ANIMALS = [('BECERRA', 'Becerras', 1), ('CABALLO', 'Caballos', 2)]
+
+
+def _pebbletop(animal, width, feet, hand, order):
+    interlock = 'Sin interlock' if not feet else INTERLOCK_EDGES.get((width, feet), f'F{feet}')
+    if hand:
+        interlock += ' (derecha)' if hand == 'D' else ' (izquierda)'
+    # sort: cows, calves, horses; narrow to wide; most interlock first.
+    return {'family': 'PebbleTop',
+            'options': {'Animal': animal, 'Ancho': f'{width} pie' + 's' * (width > 1), 'Interlock': interlock},
+            'sort': [order, width, -feet, hand or '']}
+
+
+def mat_variant(name):
+    """{'family', 'options', 'sort'} for a mat that comes in several versions, else None."""
+    name = (name or '').upper()
+    m = PEBBLETOP_RE.search(name)
+    if m:
+        return _pebbletop('Vacas', int(m[1]), int(m[3]) if int(m[2]) else 0, m[4], 0)
+    for marker, animal, order in PEBBLETOP_ANIMALS:
+        if marker in name and 'TAPETE' in name:
+            feet = re.search(r'F(\d+)', name)
+            width = re.search(r'GRA\s*([124])6', name)  # calf mats: GRA46 = 4x6, GRA16 = 1x6
+            return _pebbletop(animal, int(width[1]) if width else 4, int(feet[1]) if feet else 0, None, order)
+    if 'MAXGRIP' in name:
+        bare = 'SIN INTERLOCK' in name
+        return {'family': 'MaxGrip', 'options': {'Interlock': 'Sin interlock' if bare else 'En los 4 lados'},
+                'sort': [int(bare)]}
+    return None
+
 
 # Values that mean "no supplier assigned" rather than a real brand.
 NO_BRAND_VALUES = {'(Ninguna)', '(Ninguno)'}
@@ -208,6 +256,12 @@ def get_inventory_catalog(is_worker, raw=False):
             del product['CTIPOPRODUCTO']
             product['stock'] = stock.get(product['CIDPRODUCTO'], 0) or 0
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
+            # By name, not category: the ERP files some mats under general parts (R).
+            product['variant'] = mat_variant(product['CNOMBREPRODUCTO'])
+            # Every mat is Animat / North West Rubber, also the ones once bought through GEA under
+            # GEA part numbers (ERP purchases, checked 2026-10-16).
+            if product['variant'] or (product['category'] == 'R_NW' and 'TAPETE' in product['CNOMBREPRODUCTO']):
+                product['brand'] = 'NORTH WEST RUBBER'
 
         images_by_code = get_images_by_codes([p['CCODIGOPRODUCTO'] for p in data])
         for product in data:
@@ -228,7 +282,7 @@ def _apply_role(data, is_worker):
         in_stock = product['stock'] > 0
         on_order = not in_stock and (product['category'] in ON_ORDER_CATEGORIES
                                      or (product['category'] == 'B' and product['sold_rank'] is not None))
-        if not is_worker and not in_stock and not on_order:
+        if not is_worker and ((not in_stock and not on_order) or product.get('CIDPRODUCTO') in HIDDEN_FROM_PUBLIC):
             continue
         note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
         visible = is_worker or product['category'] in PUBLIC_PRICE_CATEGORIES
@@ -372,7 +426,7 @@ def get_product_detail(key, is_worker):
     code = product['CCODIGOPRODUCTO']
     detail = _product_detail(product, code, catalog, by_code, is_worker)
     description = ProductDescription.objects.filter(producto_codigo=code).values_list('text', flat=True).first()
-    detail.update(description=description, related=_related(product, catalog))
+    detail.update(description=description, related=_related(product, catalog), variants=_variants(product, catalog))
     return detail if is_worker else scrub(detail)
 
 
@@ -389,9 +443,25 @@ def _related(product, catalog):
     return [summary(p) for p in same[:RELATED_LIMIT]]
 
 
+def _variants(product, catalog):
+    """The versions of the product's family the role can see, one per set of options: this
+    product for its own, else in stock first, then the best seller. Empty if it has no family."""
+    family = (product.get('variant') or {}).get('family')
+    if not family:
+        return []
+    chosen = {}
+    rank = lambda p: (p['key'] != product['key'], not p['in_stock'], p['sold_rank'] or float('inf'), int(p['key']))
+    for p in sorted((p for p in catalog if (p.get('variant') or {}).get('family') == family), key=rank):
+        chosen.setdefault(tuple(p['variant']['options'].items()), p)
+    return [{'key': p['key'], 'slug': p['slug'], 'options': p['variant']['options'], 'price': p['price'],
+             'in_stock': p['in_stock'], 'on_order': p['on_order']}
+            for p in sorted(chosen.values(), key=lambda p: p['variant']['sort'])]
+
+
 def _product_detail(product, code, catalog, by_code, is_worker):
 
-    gea = _gea_products().get(code)
+    # Mats: GEA's English one-liner adds nothing to our own description (GEA only resold them).
+    gea = None if product.get('variant') else _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
     # Staff only, read live (never cached: it's per product and per role).
     staff = InventoryRepository.fetch_product_activity(code) if is_worker else None

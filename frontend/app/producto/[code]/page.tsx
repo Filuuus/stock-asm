@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { notFound, permanentRedirect } from "next/navigation";
 import ProductDetailView from "@/components/catalog/ProductDetail";
 import { productHref } from "@/lib/utils";
-import { isFullMat } from "@/lib/mats";
+import { matSpec } from "@/lib/mats";
 import { API_URL } from "@/lib/api";
 import { Product, ProductDetail } from "@/types/api";
 
@@ -107,7 +107,8 @@ export default async function Page({ params, searchParams }: Props) {
     permanentRedirect(pieza ? `${canonical}?pieza=${encodeURIComponent(pieza)}` : canonical);
   }
 
-  const mat = isFullMat(product) && product.price ? { nail: await getNail() } : undefined;
+  const spec = matSpec(product);
+  const mat = spec ? { spec, nail: spec.nails ? await getNail() : null } : undefined;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   return (
     <>

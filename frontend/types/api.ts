@@ -29,6 +29,8 @@ export interface Product {
   on_order: boolean;
   // 1 = best seller over the last 12 months; null = no sales.
   sold_rank: number | null;
+  // Mats sold in several versions: one catalog card per family, options on the product page.
+  variant: { family: string; options: Record<string, string> } | null;
   // Staff only: GEA no longer supplies it; null otherwise (and always for the public).
   discontinued?: { replacement: string | null } | null;
 }
@@ -54,8 +56,19 @@ export interface RelatedPart {
 }
 
 // Product page: the catalog fields plus what GEA's dealer portal says about it.
+// One version of a mat family, as the product page's option buttons need it.
+export interface VariantOption {
+  key: string;
+  slug: string;
+  options: Record<string, string>; // e.g. { Ancho: "4 pies", Interlock: "En los 4 lados" }
+  price: number | null;
+  in_stock: boolean;
+  on_order: boolean;
+}
+
 export interface ProductDetail extends Product {
   description: string | null; // written by staff (or pre-filled from the manufacturer)
+  variants: VariantOption[]; // the family's versions, this one included; empty without a family
   related: ProductSummary[]; // same category and line
   // Staff only (null for the public): live from the ERP.
   staff: {

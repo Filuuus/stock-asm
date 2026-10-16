@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import MatCalculator from "@/components/catalog/MatCalculator";
+import { MatSpec } from "@/lib/mats";
 import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
@@ -16,7 +17,7 @@ import ProductCard, { Availability, Price } from "@/components/catalog/ProductCa
 import { apiFetch } from "@/lib/api";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
-import { Product, ProductDetail, ProductImage, RelatedPart, ServiceRule } from "@/types/api";
+import { Product, ProductDetail, ProductImage, RelatedPart, ServiceRule, VariantOption } from "@/types/api";
 
 const imageSrc = (images: { file: string; is_primary: boolean }[]) => {
   const img = images.find((i) => i.is_primary) ?? images[0];
@@ -419,6 +420,65 @@ function Gallery({ images, alt }: { images: ProductImage[]; alt: string }) {
   );
 }
 
+// A mat family's versions as option buttons; each opens that version's own page (its price,
+// stock and cart entry). A value missing for the current choice still links, changing the rest too.
+function VariantPicker({ product }: { product: ProductDetail }) {
+  const current = product.variant?.options;
+  if (!current || product.variants.length < 2) return null;
+  const attrs = Object.keys(current);
+  const sameOtherwise = (v: VariantOption, attr: string) => attrs.every((a) => a === attr || v.options[a] === current[a]);
+
+  return (
+    <div className="mt-4 space-y-3">
+      {attrs.map((attr, i) => (
+        <div key={attr}>
+          <p className="text-sm font-medium text-gray-700">
+            {attr}: <span className="font-normal">{current[attr]}</span>
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {/* The family's order. Later options only offer what the first one's choice (the animal,
+                on PebbleTop) comes in, values that fit the rest of the current choice first. */}
+            {[
+              ...new Set(
+                (i
+                  ? [...product.variants.filter((v) => sameOtherwise(v, attr)), ...product.variants].filter(
+                      (v) => v.options[attrs[0]] === current[attrs[0]],
+                    )
+                  : product.variants
+                ).map((v) => v.options[attr]),
+              ),
+            ].map((value) => {
+              const withValue = product.variants.filter((v) => v.options[attr] === value);
+              const exact = withValue.find((v) => sameOtherwise(v, attr));
+              const target = exact ?? withValue[0];
+              const active = value === current[attr];
+              return (
+                <Link
+                  key={value}
+                  href={productHref(target.key, target.slug)}
+                  scroll={false}
+                  aria-current={active || undefined}
+                  title={exact ? undefined : "Cambia también las otras opciones"}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-sm",
+                    active
+                      ? "border-blue-600 bg-blue-50 font-medium text-blue-700"
+                      : exact
+                        ? "border-gray-300 text-gray-700 hover:border-gray-500"
+                        : "border-dashed border-gray-300 text-gray-400 hover:border-gray-500",
+                  )}
+                >
+                  {value}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // The product's description; staff can write or edit it right here.
 function Description({ product }: { product: ProductDetail }) {
   const [text, setText] = useState(product.description ?? "");
@@ -488,7 +548,7 @@ export default function ProductDetailView({
 }: {
   product: ProductDetail;
   highlight?: string;
-  mat?: { nail: Product | null };
+  mat?: { spec: MatSpec; nail: Product | null };
 }) {
   const router = useRouter();
   const gea = product.gea;
@@ -538,6 +598,7 @@ export default function ProductDetailView({
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">{product.CNOMBREPRODUCTO}</h1>
           {product.CCODIGOPRODUCTO && <p className="mt-1 text-sm text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
+          <VariantPicker product={product} />
           {gea && <p className="mt-4 text-gray-700">{gea.desc}</p>}
           <Price product={product} className="mt-4 block !text-3xl" />
           {product.price !== null && product.price > 0 && (
@@ -549,7 +610,7 @@ export default function ProductDetailView({
           )}
           <Availability product={product} className="mt-2 text-sm" />
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
-          {mat && <MatCalculator mat={product} nail={mat.nail} />}
+          {mat && <MatCalculator mat={product} spec={mat.spec} nail={mat.nail} />}
           {product.staff && <StaffBox staff={product.staff} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}
