@@ -190,6 +190,8 @@ class MatVariantTests(SimpleTestCase):
                          {'Animal': 'Becerras', 'Ancho': '4 pies', 'Interlock': 'En los 4 lados'})
         self.assertEqual(mat_variant('TAPETE GOMA BECERRAS GRA463/4 DIAGONAL')['options']['Interlock'], 'Sin interlock')
         self.assertEqual(mat_variant('TAPETE GOMA PARA CABALLO  A64F20')['options']['Animal'], 'Caballos')
+        self.assertEqual(mat_variant('TAPETE GOMA BECERRAS 3/4 GRA162F2')['options'],
+                         {'Animal': 'Becerras', 'Ancho': '1 pie', 'Interlock': '2 lados cortos'})
         self.assertIsNone(mat_variant('TAPETE GOMA ESTANDAR ANR461/2'))
 
     def test_one_version_per_option_set_preferring_this_one_then_stock(self):

@@ -100,9 +100,10 @@ def mat_variant(name):
     if m:
         return _pebbletop('Vacas', int(m[1]), int(m[3]) if int(m[2]) else 0, m[4], 0)
     for marker, animal, order in PEBBLETOP_ANIMALS:
-        if marker in name:
+        if marker in name and 'TAPETE' in name:
             feet = re.search(r'F(\d+)', name)
-            return _pebbletop(animal, 4, int(feet[1]) if feet else 0, None, order)
+            width = re.search(r'GRA\s*([124])6', name)  # calf mats: GRA46 = 4x6, GRA16 = 1x6
+            return _pebbletop(animal, int(width[1]) if width else 4, int(feet[1]) if feet else 0, None, order)
     if 'MAXGRIP' in name:
         bare = 'SIN INTERLOCK' in name
         return {'family': 'MaxGrip', 'options': {'Interlock': 'Sin interlock' if bare else 'En los 4 lados'},
@@ -252,7 +253,8 @@ def get_inventory_catalog(is_worker, raw=False):
             del product['CTIPOPRODUCTO']
             product['stock'] = stock.get(product['CIDPRODUCTO'], 0) or 0
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
-            product['variant'] = mat_variant(product['CNOMBREPRODUCTO']) if product['category'] == 'R_NW' else None
+            # By name, not category: the ERP files some mats under general parts (R).
+            product['variant'] = mat_variant(product['CNOMBREPRODUCTO'])
 
         images_by_code = get_images_by_codes([p['CCODIGOPRODUCTO'] for p in data])
         for product in data:
