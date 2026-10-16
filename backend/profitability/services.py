@@ -76,10 +76,10 @@ from commissions.services import (
 
 from fleet.models import VehicleDayKm
 
-from .models import ExcludedProduct, ExcludedSaleLine, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
+from .models import CountedSupplierNote, ExcludedProduct, ExcludedSaleLine, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, VehicleMonthlyCost
 from .weights import estimate_kg, load_gea
 
-CACHE_KEY = 'profitability_v7_{}_{}'  # bump the version when the cached shape changes
+CACHE_KEY = 'profitability_v8_{}_{}'  # bump the version when the cached shape changes
 CACHE_SECONDS = 600
 NO_BRAND = 'Sin marca'
 SERVICE_PRODUCT_TYPE = 3
@@ -178,11 +178,12 @@ def correct_dollar_cost(units, net, cost, day, purchases):
     return cost
 
 
-def aggregate_sales(lines, dollar_purchases, purchased, excluded_lines=frozenset()):
+def aggregate_sales(lines, dollar_purchases, purchased, excluded_lines=frozenset(), direct_lines=frozenset()):
     """Corrects each line's cost and sums lines per (doc type, year, month, agent, client, product):
-    units, net, cost - the shape build_facts takes. Lines whose id is in `excluded_lines` are left out. Also returns the goods without a usable cost: a sale line at cost 0, or never
-    purchased and over 80% gross margin (their cost is a guess)."""
-    groups = defaultdict(lambda: [0.0, 0.0, 0.0])
+    units, net, cost, units delivered directly by the supplier (`direct_lines`) - the shape build_facts
+    takes. Lines whose id is in `excluded_lines` are left out. Also returns the goods without a usable
+    cost: a sale line at cost 0, or never purchased and over 80% gross margin (their cost is a guess)."""
+    groups = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
     zero_cost, totals = set(), defaultdict(lambda: [0.0, 0.0])
     for line_id, doc_type, day, agent, client, product, product_type, units, net, cost in lines:
         if line_id in excluded_lines:
@@ -199,25 +200,30 @@ def aggregate_sales(lines, dollar_purchases, purchased, excluded_lines=frozenset
         g[0] += units
         g[1] += net
         g[2] += cost
+        if line_id in direct_lines:
+            g[3] += units
     guessed = {p for p, (net, cost) in totals.items() if p not in purchased and net > 0 and (net - cost) / net > 0.8}
     rows = [[*key, *values] for key, values in groups.items()]
     return rows, sorted(zero_cost | guessed)
 
 
-def fetch_credit_notes(date_from, date_to):
+def fetch_credit_notes(date_from, date_to, note_ids=None):
     """Credit notes in the period with each application to a Factura: (note id, year, month,
     agent, client, net before IVA, total with IVA, invoice id or None, applied with IVA); the
     lines of those invoices: (line id, invoice id, agent, client, product, net); and the ids of the notes
-    that apply an advance (see is_advance_application)."""
+    that apply an advance (see is_advance_application). With `note_ids`, those notes whatever their date."""
+    if note_ids:
+        when, when_params = f"n.CIDDOCUMENTO IN ({', '.join(['%s'] * len(note_ids))})", list(note_ids)
+    else:
+        when, when_params = 'n.CFECHA >= %s AND n.CFECHA < %s', [date_from, date_to]
     notes_sql = f"""
         FROM admDocumentos n
         LEFT JOIN admAsocCargosAbonos a ON a.CIDDOCUMENTOABONO = n.CIDDOCUMENTO
             AND EXISTS (SELECT 1 FROM admDocumentos ca
                         WHERE ca.CIDDOCUMENTO = a.CIDDOCUMENTOCARGO AND ca.CIDDOCUMENTODE = %s)
-        WHERE n.CIDDOCUMENTODE = %s AND n.CCANCELADO = 0 AND n.CIDAGENTE {ZONE_FILTER}
-          AND n.CFECHA >= %s AND n.CFECHA < %s
+        WHERE n.CIDDOCUMENTODE = %s AND n.CCANCELADO = 0 AND n.CIDAGENTE {ZONE_FILTER} AND {when}
     """
-    params = [FACTURA_DOC_TYPE, NOTA_CREDITO_DOC_TYPE, *ZONE_IDS, date_from, date_to]
+    params = [FACTURA_DOC_TYPE, NOTA_CREDITO_DOC_TYPE, *ZONE_IDS, *when_params]
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""SELECT n.CIDDOCUMENTO, YEAR(n.CFECHA), MONTH(n.CFECHA), n.CIDAGENTE, n.CIDCLIENTEPROVEEDOR,
@@ -297,21 +303,32 @@ def fetch_paid_commissions(date_from, date_to):
 
 
 def fetch_supplier_discounts(date_from, date_to):
-    """{'YYYY-MM': amount} credited to SUPPLIER_DISCOUNT_ACCOUNT per posting month (1-12; 13/14 are
-    year-end adjustments)."""
+    """[('YYYY-MM', ledger reference, amount)] credited to SUPPLIER_DISCOUNT_ACCOUNT per posting month
+    (1-12; 13/14 are year-end adjustments) and reference ("NC-NC1983": one supplier credit note)."""
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT m.Ejercicio, m.Periodo, SUM(CASE WHEN m.TipoMovto = 1 THEN m.Importe ELSE -m.Importe END)
+            SELECT m.Ejercicio, m.Periodo, m.Referencia,
+                   SUM(CASE WHEN m.TipoMovto = 1 THEN m.Importe ELSE -m.Importe END)
             FROM {LEDGER_DATABASE}.dbo.MovimientosPoliza m
             JOIN {LEDGER_DATABASE}.dbo.Cuentas cu ON cu.Id = m.IdCuenta
             WHERE cu.Codigo = %s AND m.Periodo BETWEEN 1 AND 12
               AND m.Ejercicio * 100 + m.Periodo >= %s AND m.Ejercicio * 100 + m.Periodo < %s
-            GROUP BY m.Ejercicio, m.Periodo
+            GROUP BY m.Ejercicio, m.Periodo, m.Referencia
             """,
             [SUPPLIER_DISCOUNT_ACCOUNT, date_from.year * 100 + date_from.month, date_to.year * 100 + date_to.month],
         )
-        return {f'{y}-{m:02d}': float(amount) for y, m, amount in cursor.fetchall()}
+        return [(f'{y}-{m:02d}', ref or '', float(amount)) for y, m, ref, amount in cursor.fetchall()]
+
+
+def supplier_discounts_by_month(rows, counted_references=frozenset()):
+    """{'YYYY-MM': amount} from fetch_supplier_discounts' rows, without the notes that already count as
+    sales (CountedSupplierNote, matched on the end of the ledger reference: "NC-NC1983" -> "NC1983")."""
+    out = defaultdict(float)
+    for month, ref, amount in rows:
+        if ref.split('-')[-1] not in counted_references:
+            out[month] += amount
+    return dict(out)
 
 
 def _month_key(date_from, date_to):
@@ -493,6 +510,21 @@ def allocate_credit_notes(notes, invoice_lines):
     return out
 
 
+def counted_note_rows(counted_notes):
+    """Credit rows (year, month, agent, client, product, net) that give each CountedSupplierNote back to the
+    products its customer credit notes were spread over, pro rata, in the supplier note's month. Read
+    from the ERP each time (a few notes, whatever their period)."""
+    rows = []
+    for note in counted_notes:
+        notes, invoice_lines, _ = fetch_credit_notes(None, None, note.note_ids())
+        spread = allocate_credit_notes(notes, [line[1:] for line in invoice_lines])
+        total = sum(net for *_, net in spread)
+        if total:
+            rows += [(note.date.year, note.date.month, agent, client, product, float(note.amount) * net / total)
+                     for _, _, agent, client, product, net in spread]
+    return rows
+
+
 def product_info(products, brand_names, prices, overrides, gea):
     """{product id: {code, name, brand, category, kg, source}}. kg is per sale unit; services
     weigh nothing. `prices` (net per unit sold) guard the name and GEA weights against packs."""
@@ -519,10 +551,11 @@ def product_info(products, brand_names, prices, overrides, gea):
 def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
     """Sums sales, returns, allocated credit notes and paid commissions per (month, zone, client,
     product). Rows: [month 'YYYY-MM', zone, client, product, units, net, cost, kg, full commission,
-    paid commission, supplier discount, route cost by kg, route cost by piece, import cost (the last
-    four 0 here, see allocate_supplier_discounts, allocate_route_costs and calculate_profitability)]."""
-    facts = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
-    for doc_type, year, month, agent, client, product, units, net, cost in sales:
+    paid commission, supplier discount, route cost by kg, route cost by piece, import cost (those
+    four 0 here, see allocate_supplier_discounts, allocate_route_costs and calculate_profitability),
+    units delivered directly by the supplier (no kg, no pieces for the route costs)]."""
+    facts = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    for doc_type, year, month, agent, client, product, units, net, cost, direct in sales:
         sign = -1 if doc_type == DEVOLUCION_DOC_TYPE else 1
         zone = zone_of(agent, client)
         f = facts[(f'{year}-{month:02d}', zone, client, product)]
@@ -530,14 +563,15 @@ def build_facts(sales, credit_rows, commission_rows, zone_of, kg_of, rate_of):
         f[1] += sign * float(net)
         f[2] += sign * float(cost)
         f[3] += sign * float(net) * rate_of(zone, client, product)
+        f[5] += sign * float(direct)
     for year, month, agent, client, product, net in credit_rows:
         facts[(f'{year}-{month:02d}', zone_of(agent, client), client, product)][1] += net
     for month, zone, client, product, amount in commission_rows:
         facts[(month, zone, client, product)][4] += amount
     return [
-        [*key, round(units, 3), round(net, 2), round(cost, 2), round(units * kg_of(key[3]), 2),
-         round(full, 2), round(paid, 2), 0.0, 0.0, 0.0, 0.0]
-        for key, (units, net, cost, full, paid) in facts.items()
+        [*key, round(units, 3), round(net, 2), round(cost, 2), round((units - direct) * kg_of(key[3]), 2),
+         round(full, 2), round(paid, 2), 0.0, 0.0, 0.0, 0.0, round(direct, 3)]
+        for key, (units, net, cost, full, paid, direct) in facts.items()
     ]
 
 
@@ -596,7 +630,7 @@ def allocate_route_costs(facts, costs, is_service, by='kg'):
     def goods(f):
         if by == 'kg':
             return f[7]
-        return f[4] if f[3] is not None and not is_service(f[3]) else 0.0
+        return f[4] - f[14] if f[3] is not None and not is_service(f[3]) else 0.0
 
     def weight(f, pool):
         if pool == 'SERVICIOS':
@@ -628,13 +662,17 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     leave with a product - and are spread over what's left."""
     data = fetch_erp(date_from, date_to, refresh)
     line_exclusions = list(ExcludedSaleLine.objects.filter(date__gte=date_from, date__lt=date_to))
-    excluded_lines = {e.movement_id for e in line_exclusions}
+    excluded_lines = {e.movement_id for e in line_exclusions if not e.direct_delivery}
+    direct_lines = {e.movement_id for e in line_exclusions if e.direct_delivery}
     sales, unreliable_cost = aggregate_sales(data['sale_lines'], data['dollar_purchases'], data['purchased'],
-                                             excluded_lines)
+                                             excluded_lines, direct_lines)
     invoice_lines = [line[1:] for line in data['invoice_lines'] if line[0] not in excluded_lines]
+    # A credit note is left out by its one "(Ninguno)" line; the whole note goes (Buen Fin gifts given as notes).
+    excluded_docs = {e.document_id for e in line_exclusions if not e.direct_delivery}
+    notes = [n for n in data['notes'] if n[0] not in excluded_docs]
 
     units, amounts = defaultdict(float), defaultdict(float)
-    for doc_type, _, _, _, _, product, u, net, _ in sales:
+    for doc_type, _, _, _, _, product, u, net, _, _ in sales:
         if doc_type == FACTURA_DOC_TYPE:
             units[product] += float(u)
             amounts[product] += float(net)
@@ -672,7 +710,9 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
                        for m, zone, client, code, amount in data['commissions']]
 
     excluded = set(ExcludedProduct.objects.values_list('producto_id', flat=True))
-    facts = build_facts(sales, allocate_credit_notes(data['notes'], invoice_lines),
+    counted_notes = list(CountedSupplierNote.objects.filter(date__gte=date_from, date__lt=date_to))
+    counted_rows = counted_note_rows(counted_notes)
+    facts = build_facts(sales, allocate_credit_notes(notes, invoice_lines) + counted_rows,
                         commission_rows, zone_of, kg_of, rate_of)
     facts = [f for f in facts if f[3] not in excluded and f[3] not in drop]
     imports = data['imports']
@@ -682,7 +722,8 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
     for f in facts:
         if f[3] in imported_ids:
             f[13] = round(f[6] * import_rate, 2)
-    allocate_supplier_discounts(facts, data['supplier_discounts'],
+    allocate_supplier_discounts(facts, supplier_discounts_by_month(data['supplier_discounts'],
+                                                                   {n.reference for n in counted_notes}),
                                 lambda pid: pid in products and products[pid]['brand'] == BIONAT_SUPPLIER_NAME)
 
     months = []
@@ -718,8 +759,12 @@ def calculate_profitability(date_from, date_to, refresh=False, drop=frozenset())
         'unreliable_cost': [p for p in unreliable_cost if p not in excluded],
         'excluded_lines': [{'line_id': e.movement_id, 'document_id': e.document_id, 'product_id': e.producto_id,
                             'folio': e.folio,
-                            'date': e.date.isoformat(), 'client_id': e.client_id, 'reason': e.reason}
+                            'date': e.date.isoformat(), 'client_id': e.client_id, 'reason': e.reason,
+                            'direct': e.direct_delivery}
                            for e in sorted(line_exclusions, key=lambda e: (e.date, e.folio))],
+        'counted_supplier_notes': [{'reference': n.reference, 'date': n.date.isoformat(), 'amount': float(n.amount),
+                                    'reason': n.reason} for n in counted_notes],
+        'counted_note_products': sorted({r[4] for r in counted_rows if r[4] is not None}),
         'dropped': sorted(drop),
         'imports': {'cost': round(imports['cost'], 2), 'purchases': round(imports['purchases'], 2),
                     'rate': round(import_rate, 4)},
@@ -758,7 +803,7 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
         lines = cursor.fetchall()
     # Same cost correction as the facts; one row per line, so a gift next to a paid line can be left out alone.
     purchases = fetch_dollar_purchases()[0].get(product_id)
-    excluded = set(ExcludedSaleLine.objects.filter(producto_id=product_id).values_list('movement_id', flat=True))
+    marked = dict(ExcludedSaleLine.objects.filter(producto_id=product_id).values_list('movement_id', 'direct_delivery'))
     rows = []
     for doc_id, doc_type, concept, folio, day, agent, client, units, net, cost, product_type, line_id in lines:
         units, net, cost = float(units), float(net), float(cost)
@@ -789,6 +834,7 @@ def product_invoices(date_from, date_to, product_id, client_id=None, zone=None):
             'net': round(sign * float(net), 2),
             'cost': round(sign * float(cost), 2),
             'line_id': line_id,
-            'excluded': line_id in excluded,
+            'excluded': line_id in marked and not marked[line_id],
+            'direct': marked.get(line_id, False),
         })
     return out

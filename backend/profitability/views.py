@@ -87,7 +87,8 @@ def set_exclusion(request):
 @permission_classes([IsManagement])
 def set_line_exclusion(request):
     """{"line_id": 9, "document_id": 1, "product_id": 2, "excluded": true, "folio": "B 123",
-    "date": "2026-01-31", "client_id": 3, "reason": "Regalo"}; with excluded false only line_id is needed."""
+    "date": "2026-01-31", "client_id": 3, "reason": "Regalo", "direct": false}; with excluded false only
+    line_id is needed. "direct": true marks a direct delivery instead (a sale without weight or route cost)."""
     try:
         line_id = int(request.data['line_id'])
         if request.data.get('excluded'):
@@ -97,7 +98,7 @@ def set_line_exclusion(request):
                     'document_id': int(request.data['document_id']), 'producto_id': int(request.data['product_id']),
                     'folio': str(request.data['folio'])[:20], 'date': date.fromisoformat(request.data['date']),
                     'client_id': int(request.data['client_id']), 'reason': str(request.data.get('reason', ''))[:60],
-                    'created_by': request.user,
+                    'direct_delivery': bool(request.data.get('direct')), 'created_by': request.user,
                 },
             )
         else:

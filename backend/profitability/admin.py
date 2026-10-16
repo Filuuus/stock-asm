@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ExcludedProduct, ExcludedSaleLine, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, SavedPlace
+from .models import CountedSupplierNote, ExcludedProduct, ExcludedSaleLine, PoolEmployee, PoolMonthlyCost, PoolVehicle, ProductWeight, SavedPlace
 
 
 @admin.register(PoolEmployee)
@@ -29,6 +29,7 @@ class PoolMonthlyCostAdmin(admin.ModelAdmin):
 admin.site.register(ProductWeight)
 admin.site.register(ExcludedProduct)
 admin.site.register(ExcludedSaleLine)
+admin.site.register(CountedSupplierNote)
 
 
 @admin.register(SavedPlace)

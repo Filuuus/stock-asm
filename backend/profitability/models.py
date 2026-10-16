@@ -14,7 +14,8 @@ class ProductWeight(models.Model):
 
 class ExcludedSaleLine(models.Model):
     """One invoice or return line left out of Rentabilidad: gifts invoiced at $0 or a few
-    cents, and other lines the review decides shouldn't count (management, 2026-10-14). Folio, date
+    cents, and other lines the review decides shouldn't count (management, 2026-10-14). A credit
+    note's single line (producto_id 0) leaves the whole note out: promotion gifts given as notes. Folio, date
     and client are copied from the ERP for the list; the client's name is resolved live."""
     movement_id = models.IntegerField(unique=True)  # admMovimientos.CIDMOVIMIENTO: one line (a product can
     # appear twice on an invoice, once as a gift and once paid)
@@ -24,8 +25,27 @@ class ExcludedSaleLine(models.Model):
     date = models.DateField()
     client_id = models.IntegerField()
     reason = models.CharField(max_length=60, blank=True)
+    # A direct delivery: the supplier took it to the client, so the line stays a sale (net, cost, commission)
+    # but weighs nothing and carries no route cost (management, 2026-10-14).
+    direct_delivery = models.BooleanField(default=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class CountedSupplierNote(models.Model):
+    """A supplier credit note that counts even when supplier notes are left out: it pays back specific
+    customer credit notes (management, 2026-10-14: Bionat's monthly "apoyo" notes covering the credit
+    notes a client got over a bad batch). It lands on the products of those customer notes, pro rata,
+    in its own month."""
+    reference = models.CharField(max_length=20, unique=True)  # the supplier's serie + folio, e.g. "NC2050"
+    date = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)  # before IVA
+    credit_note_ids = models.CharField(max_length=200)  # admDocumentos.CIDDOCUMENTO of the customer notes, "1,2,3"
+    reason = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def note_ids(self):
+        return [int(i) for i in self.credit_note_ids.split(',') if i.strip()]
 
 
 class ExcludedProduct(models.Model):

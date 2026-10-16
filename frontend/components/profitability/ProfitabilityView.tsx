@@ -31,10 +31,10 @@ import type { Zone } from "@/types/commissions";
 
 // [month "YYYY-MM", zone, client id, product id (null = credit note never applied), units, net, cost, kg,
 //  full commission, paid commission, supplier discount, route cost split by kg, route cost split by piece,
-//  import cost]
+//  import cost, units the supplier delivered directly (in units, not in kg)]
 type Fact = [
   string, string, number, number | null, number, number, number, number, number, number, number, number, number,
-  number,
+  number, number,
 ];
 type WeightSource = "manual" | "nombre" | "GEA" | "unidad" | "estimado" | "servicio";
 
@@ -57,13 +57,23 @@ interface ExcludedLine {
   date: string;
   client_id: number;
   reason: string;
-} // pool -> component -> amount
+  direct: boolean; // a direct delivery: still a sale, without weight or route cost
+}
+
+interface CountedSupplierNote {
+  reference: string;
+  date: string;
+  amount: number;
+  reason: string;
+}
 
 interface Profitability {
   facts: Fact[];
   excluded: number[]; // product ids left out altogether, with their returns and credit notes
   unreliable_cost: number[]; // goods whose ERP cost is 0 or a guess: their margin isn't real
-  excluded_lines: ExcludedLine[]; // single invoice lines left out (gifts and such), dated in the period
+  excluded_lines: ExcludedLine[]; // single invoice lines left out (gifts and such) or delivered directly
+  counted_supplier_notes: CountedSupplierNote[]; // supplier notes counted as sales even when the rest are left out
+  counted_note_products: number[]; // the products they land on
   products: Record<string, Product>;
   clients: Record<string, string>;
   route_costs: Record<string, Pools>; // month -> pools
@@ -293,6 +303,12 @@ export default function ProfitabilityView() {
   const [weightsOpen, setWeightsOpen] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
   const [invoicesOf, setInvoicesOf] = useState<string | null>(null); // product id whose invoices are listed
+  // From a list inside another dialog: close it first (two open dialogs fight over clicks).
+  const openInvoices = (productId: string) => {
+    setWeightsOpen(false);
+    setExcludedOpen(false);
+    setInvoicesOf(productId);
+  };
   const [setupOpen, setSetupOpen] = useState(false);
   const [excludeError, setExcludeError] = useState<string | null>(null);
   // What-if: products imagined not sold (per viewer, not saved), and the server's recomputation without them.
@@ -600,9 +616,15 @@ export default function ProfitabilityView() {
   // What the selection carries: a PDF leaves out the costs of the rest of the business (import costs, the
   // service crew) when none of it applies to what's shown.
   const selectionImports = filtered.some((f) => f[13] > 0);
+  const leftOutLines = (data?.excluded_lines ?? []).filter((l) => !l.direct);
+  const directLines = (data?.excluded_lines ?? []).filter((l) => l.direct);
+  const directShown = directLines.filter((l) => filtered.some((f) => f[3] === l.product_id)).length;
+  const countedNotes = data && filtered.some((f) => f[3] !== null && data.counted_note_products.includes(f[3]))
+    ? data.counted_supplier_notes
+    : [];
   // "regalo: 20, error de captura: 1" for the method notes.
   const excludedReasons = Object.entries(
-    (data?.excluded_lines ?? []).reduce<Record<string, number>>((acc, l) => {
+    leftOutLines.reduce<Record<string, number>>((acc, l) => {
       const r = (l.reason || "sin motivo").toLowerCase();
       acc[r] = (acc[r] ?? 0) + 1;
       return acc;
@@ -1320,8 +1342,10 @@ export default function ProfitabilityView() {
                 </>
               )}
               {unallocated >= 1 && `${formatMoney(unallocated)} de gastos de ruta sin repartir. `}
-              {data.excluded_lines.length > 0 &&
-                `${data.excluded_lines.length === 1 ? "1 partida excluida" : `${data.excluded_lines.length} partidas excluidas`}. `}
+              {leftOutLines.length > 0 &&
+                `${leftOutLines.length === 1 ? "1 partida excluida" : `${leftOutLines.length} partidas excluidas`}. `}
+              {directShown > 0 &&
+                `${directShown === 1 ? "1 partida entregada" : `${directShown} partidas entregadas`} directo por el proveedor, sin peso ni gasto de ruta. `}
               {unreliableShown > 0 &&
                 `${unreliableShown === 1 ? "1 producto" : `${unreliableShown} productos`} sin costo confiable en el ERP: su margen no es real. `}
               {notesLink}
@@ -1586,11 +1610,18 @@ export default function ProfitabilityView() {
                 {data.excluded.length > 0 &&
                   ` ${data.excluded.length === 1 ? "Una venta única se deja fuera" : `${data.excluded.length} ventas únicas se dejan fuera`} para no distorsionar los resultados.`}
               </li>
-              {data.excluded_lines.length > 0 && (
+              {leftOutLines.length > 0 && (
                 <li>
-                  Se dejan fuera {data.excluded_lines.length === 1 ? "una partida" : `${data.excluded_lines.length} partidas`}{" "}
+                  Se dejan fuera {leftOutLines.length === 1 ? "una partida" : `${leftOutLines.length} partidas`}{" "}
                   de facturas del periodo ({excludedReasons}): no son ventas normales y su costo no se carga a ningún
                   producto.
+                </li>
+              )}
+              {directShown > 0 && (
+                <li>
+                  {directShown === 1 ? "Una partida la entregó" : `${directShown} partidas las entregó`} el proveedor
+                  directamente al cliente: cuentan como venta, con su costo y comisión, pero no suman peso ni cargan
+                  gastos de ruta.
                 </li>
               )}
               <li>
@@ -1634,7 +1665,13 @@ export default function ProfitabilityView() {
                   mes contable, repartidos sobre el costo de lo vendido de Bionat ese mes.
                 </li>
               ) : (
-                <li>{SUPPLIER_NOTES_EXCLUDED}</li>
+                <li>
+                  {SUPPLIER_NOTES_EXCLUDED}
+                  {countedNotes.length > 0 &&
+                    ` La excepción son ${countedNotes.length === 1 ? "una nota" : `${countedNotes.length} notas`} por ${formatMoney(
+                      countedNotes.reduce((s, n) => s + n.amount, 0),
+                    )} que reponen notas de crédito dadas a un cliente por un lote con problemas de calidad: se suman a la venta de esos productos, cada una en su mes.`}
+                </li>
               )}
               <li>
                 {/* Same total as the printed cost table: without the service crew when the selection sells no services. */}
@@ -1840,9 +1877,12 @@ export default function ProfitabilityView() {
               {data.excluded.map((id) => (
                 <li key={id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="truncate">{labelOf("product", String(id))}</span>
-                  <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
-                    Volver a incluir
-                  </Button>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <InvoicesButton label={labelOf("product", String(id))} onClick={() => openInvoices(String(id))} />
+                    <Button size="sm" variant="outline" onClick={() => setExcluded(String(id), false)}>
+                      Volver a incluir
+                    </Button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -1856,23 +1896,34 @@ export default function ProfitabilityView() {
               {data.excluded_lines.map((l) => (
                 <li key={l.line_id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="min-w-0">
-                    <span className="block truncate">{labelOf("product", String(l.product_id))}</span>
+                    <span className="block truncate">
+                      {l.product_id ? labelOf("product", String(l.product_id)) : "Nota de crédito"}
+                    </span>
                     <span className="block truncate text-xs text-gray-500">
                       {l.folio} · {formatDay(l.date)} · {data.clients[l.client_id] ?? `Cliente ${l.client_id}`}
                       {l.reason && ` · ${l.reason}`}
+                      {l.direct && !l.reason && " · Entrega directa"}
                     </span>
                   </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setLineExcluded(l, false)
-                        .then(() => setReload((n) => n + 1))
-                        .catch((err) => setExcludeError(err.message))
-                    }
-                  >
-                    Volver a incluir
-                  </Button>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {l.product_id > 0 && (
+                      <InvoicesButton
+                        label={labelOf("product", String(l.product_id))}
+                        onClick={() => openInvoices(String(l.product_id))}
+                      />
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setLineExcluded(l, false)
+                          .then(() => setReload((n) => n + 1))
+                          .catch((err) => setExcludeError(err.message))
+                      }
+                    >
+                      {l.direct ? "Quitar entrega directa" : "Volver a incluir"}
+                    </Button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -1991,6 +2042,7 @@ export default function ProfitabilityView() {
           data={data}
           facts={filtered}
           onSaved={() => setReload((n) => n + 1)}
+          onInvoices={openInvoices}
         />
       )}
     </main>
@@ -2323,6 +2375,17 @@ interface InvoiceLine {
   cost: number;
   line_id: number;
   excluded: boolean;
+  direct: boolean;
+}
+
+// Opens a product's invoice history.
+function InvoicesButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-gray-500" aria-label={`Facturas de ${label}`}
+      title="Facturas" onClick={onClick}>
+      <FileText className="h-4 w-4" />
+    </Button>
+  );
 }
 
 // Leaves one product on one invoice out of Rentabilidad, or brings it back.
@@ -2346,12 +2409,31 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
   const [lines, setLines] = useState<InvoiceLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [search, setSearch] = useState("");
+  const [onlyMarked, setOnlyMarked] = useState(false);
+  // Every word must appear in the folio, date (as shown), client or zone; accents and case don't matter.
+  const shown = useMemo(() => {
+    const plain = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const words = plain(search).split(/\s+/).filter(Boolean);
+    return (lines ?? []).filter((l) => {
+      if (onlyMarked && !l.excluded && !l.direct) return false;
+      const text = plain(`${l.folio} ${l.folio.replace(" ", "")} ${formatDay(l.date)} ${l.client} ${zoneLabel(l.zone)}`);
+      return words.every((w) => text.includes(w));
+    });
+  }, [lines, search, onlyMarked]);
 
-  const toggle = async (l: InvoiceLine) => {
-    const reason = l.excluded ? "" : window.prompt("Motivo para dejar fuera esta partida:", "Regalo");
+  // Marks a line as left out, or as a direct delivery; a marked line is brought back either way.
+  const toggle = async (l: InvoiceLine, direct = false) => {
+    const marked = l.excluded || l.direct;
+    const reason = marked
+      ? ""
+      : direct
+        ? "Entrega directa del proveedor"
+        : window.prompt("Motivo para dejar fuera esta partida:", "Regalo");
     if (reason === null) return;
     try {
-      await setLineExcluded({ line_id: l.line_id }, !l.excluded, {
+      await setLineExcluded({ line_id: l.line_id }, !marked, {
+        direct,
         document_id: l.invoice_id,
         product_id: productId,
         folio: l.folio,
@@ -2382,14 +2464,33 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="pr-6">{title}</DialogTitle>
         </DialogHeader>
         {error && <p className="text-sm text-red-700">{error}</p>}
         {!lines && !error && <p className="text-sm text-gray-500">Cargando…</p>}
+        {lines && lines.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar folio, cliente, fecha o zona"
+              aria-label="Buscar en las facturas"
+              className="h-9 w-72"
+              autoFocus
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={onlyMarked} onChange={(e) => setOnlyMarked(e.target.checked)} />
+              Solo excluidas y entregas directas
+            </label>
+            <span className="text-sm text-gray-500">
+              {shown.length === lines.length ? `${lines.length} partidas` : `${shown.length} de ${lines.length} partidas`}
+            </span>
+          </div>
+        )}
         {lines && (
-          <div className="overflow-y-auto">
+          <div className="overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2397,7 +2498,7 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
                   <TableHead>Fecha</TableHead>
                   <TableHead>Cliente</TableHead>
                   <TableHead className={HIDE_BELOW_MD}>Zona</TableHead>
-                  <TableHead className="text-right">Unidades</TableHead>
+                  <TableHead className="text-right" title="Unidades">Ct.</TableHead>
                   <TableHead className="text-right">Venta</TableHead>
                   <TableHead className={cn("text-right", HIDE_BELOW_SM)}>Utilidad bruta</TableHead>
                   <TableHead className="w-px" />
@@ -2405,25 +2506,37 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
               </TableHeader>
               <TableBody>
                 {lines.length === 0 && <EmptyRow colSpan={8}>Sin facturas en el periodo.</EmptyRow>}
-                {lines.map((l) => (
+                {lines.length > 0 && shown.length === 0 && <EmptyRow colSpan={8}>Ninguna partida coincide.</EmptyRow>}
+                {shown.map((l) => (
                   <TableRow key={l.line_id} className={cn(l.excluded && "text-gray-400")}>
                     <TableCell className="whitespace-nowrap">
                       <InvoiceLink invoiceId={l.invoice_id} label={l.folio} />
                       {l.return && <span className="ml-1 text-xs text-gray-500">(devolución)</span>}
+                      {l.direct && (
+                        <span className="mt-0.5 block w-fit rounded bg-sky-100 px-1.5 text-xs text-sky-800">
+                          Entrega directa
+                        </span>
+                      )}
+                      {l.excluded && <span className="mt-0.5 block text-xs">Excluida</span>}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{formatDay(l.date)}</TableCell>
-                    <TableCell className="max-w-56 truncate">
+                    <TableCell className="max-w-40 truncate lg:max-w-56">
                       <ClientLink clientId={l.client_id} label={l.client} />
                     </TableCell>
-                    <TableCell className={HIDE_BELOW_MD}>{zoneLabel(l.zone)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.units.toLocaleString("es-MX")}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(l.net)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
+                    <TableCell className={cn("whitespace-nowrap", HIDE_BELOW_MD)}>{zoneLabel(l.zone)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{l.units.toLocaleString("es-MX")}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatMoney(l.net)}</TableCell>
+                    <TableCell className={cn("whitespace-nowrap text-right tabular-nums", HIDE_BELOW_SM, l.net - l.cost < 0 && "text-red-700")}>
                       {formatMoney(l.net - l.cost)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0 text-right">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => toggle(l)}>
-                        {l.excluded ? "Volver a incluir" : "Excluir"}
+                      {!l.excluded && !l.direct && !l.return && (
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" title="Entrega directa del proveedor: sin peso ni gasto de ruta" onClick={() => toggle(l, true)}>
+                          Directa
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => toggle(l)}>
+                        {l.direct ? "Quitar directa" : l.excluded ? "Volver a incluir" : "Excluir"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -2432,7 +2545,8 @@ function ProductInvoicesDialog({ title, productId, query, onClose, onChanged }: 
             </Table>
             <p className="mt-2 text-xs text-gray-500">
               Las notas de crédito que se repartieron sobre este producto no aparecen aquí; se ven al abrir cada factura.
-              Una partida excluida deja de contar en todas las cifras; la lista está en Configuración › Exclusiones.
+              Una partida excluida deja de contar en todas las cifras; una entrega directa del proveedor sigue contando
+              como venta, pero sin peso ni gastos de ruta. La lista está en Configuración › Exclusiones.
             </p>
           </div>
         )}
@@ -2449,12 +2563,14 @@ function WeightsDialog({
   data,
   facts,
   onSaved,
+  onInvoices,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   data: Profitability;
   facts: Fact[];
   onSaved: () => void;
+  onInvoices: (productId: string) => void;
 }) {
   const [onlyEstimated, setOnlyEstimated] = useState(true);
   const [search, setSearch] = useState("");
@@ -2533,7 +2649,12 @@ function WeightsDialog({
                       <div className="text-xs text-gray-500">{p.code}</div>
                     </TableCell>
                     <TableCell className={HIDE_BELOW_SM}>{SOURCE_LABELS[p.source]}</TableCell>
-                    <TableCell className="text-right tabular-nums">{p.units.toLocaleString("es-MX")}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className="inline-flex items-center gap-1">
+                        {p.units.toLocaleString("es-MX")}
+                        <InvoicesButton label={p.name} onClick={() => onInvoices(p.id)} />
+                      </span>
+                    </TableCell>
                     <TableCell className="text-right">
                       <form
                         className="inline-flex items-center gap-1"

@@ -48,16 +48,16 @@ class AllocateCreditNotesTests(SimpleTestCase):
 class BuildFactsTests(SimpleTestCase):
     def test_nets_returns_credits_and_commissions_into_one_row(self):
         sales = [
-            [4, 2026, 3, 1, 7, 100, 10, 1000.0, 800.0],
-            [5, 2026, 3, 1, 7, 100, 2, 200.0, 160.0],  # return: takes its commission back too
+            [4, 2026, 3, 1, 7, 100, 10, 1000.0, 800.0, 4],  # 4 of them delivered by the supplier: no kg
+            [5, 2026, 3, 1, 7, 100, 2, 200.0, 160.0, 0],  # return: takes its commission back too
         ]
         credits = [(2026, 3, 1, 7, 100, -50.0)]  # no commission on credit notes
         paid = [('2026-03', 'Z1', 7, 100, 12.5), ('2026-04', 'Z1', 7, 100, 3.0)]  # paid month, not invoice month
         facts = build_facts(sales, credits, paid, lambda agent, client: f'Z{agent}', lambda product: 25.0,
                             lambda zone, client, product: 0.02)
         self.assertEqual(facts, [
-            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 200.0, 16.0, 12.5, 0.0, 0.0, 0.0, 0.0],
-            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0],
+            ['2026-03', 'Z1', 7, 100, 8.0, 750.0, 640.0, 100.0, 16.0, 12.5, 0.0, 0.0, 0.0, 0.0, 4.0],
+            ['2026-04', 'Z1', 7, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         ])
 
 
@@ -120,15 +120,17 @@ class RouteCostTests(SimpleTestCase):
         })
 
     def test_route_by_own_kg_warehouse_by_all_kg_services_by_sales(self):
-        row = lambda zone, product, units, net, kg: ['2026-10', zone, 7, product, units, net, 0, kg, 0, 0, 0.0, 0.0, 0.0]
-        facts = [row('ZONA1', 1, 1, 1000.0, 75.0), row('ZONA2', 1, 1, 1000.0, 25.0), row('SERVICIOS', 9, 2, 400.0, 0.0)]
+        row = lambda zone, product, units, net, kg, direct=0: ['2026-10', zone, 7, product, units, net, 0, kg, 0, 0,
+                                                              0.0, 0.0, 0.0, 0.0, direct]
+        facts = [row('ZONA1', 1, 1, 1000.0, 75.0), row('ZONA2', 1, 1, 1000.0, 25.0), row('SERVICIOS', 9, 2, 400.0, 0.0),
+                 row('ZONA1', 1, 3, 3000.0, 0.0, direct=3)]  # delivered by the supplier: no kg, no pieces
         costs = {'2026-10': {'ZONA1': {'x': 300.0}, 'ALMACEN': {'x': 100.0}, 'SERVICIOS': {'x': 40.0},
                              'ZONA2': {'x': 10.0}}, '2026-11': {'ZONA1': {'x': 5.0}}}
         unallocated = allocate_route_costs(facts, costs, lambda product: product == 9)
-        self.assertEqual([f[11] for f in facts], [375.0, 35.0, 40.0])
+        self.assertEqual([f[11] for f in facts], [375.0, 35.0, 40.0, 0.0])
         self.assertEqual(unallocated, {'2026-11': {'ZONA1': 5.0}})
         allocate_route_costs(facts, costs, lambda product: product == 9, by='pieces')  # services aren't pieces
-        self.assertEqual([f[12] for f in facts], [350.0, 60.0, 40.0])
+        self.assertEqual([f[12] for f in facts], [350.0, 60.0, 40.0, 0.0])
 
 
 class VehicleReportTests(SimpleTestCase):
@@ -336,3 +338,10 @@ class DollarCostTests(SimpleTestCase):
         lines[1] = (2, *lines[1][1:])  # its own line id
         rows, _ = aggregate_sales(lines, {}, {100, 101}, excluded_lines={1})
         self.assertEqual([r[5] for r in rows], [101])
+        rows, _ = aggregate_sales(lines, {}, {100, 101}, direct_lines={2})  # a direct delivery stays a sale
+        self.assertEqual([(r[5], r[6], r[9]) for r in rows], [(100, 2.0, 0.0), (101, 5.0, 5.0)])
+
+    def test_counted_supplier_notes_leave_the_supplier_discounts(self):
+        from .services import supplier_discounts_by_month
+        rows = [('2026-06', 'NC-NC1983', 11817.75), ('2026-06', 'NC-NC1982', 961.5), ('2026-07', 'NC-NC1995', 50.0)]
+        self.assertEqual(supplier_discounts_by_month(rows, {'NC1983'}), {'2026-06': 961.5, '2026-07': 50.0})
