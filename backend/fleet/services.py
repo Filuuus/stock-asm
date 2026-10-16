@@ -244,7 +244,7 @@ def notion_stops(day, blocks):
 
 
 def rescue_notion_stops(log):
-    """Stops for the days still in Notion's daily log but no longer in Zeek. Days already stored
+    """Stops and km for the days still in Notion's daily log but no longer in Zeek. Days already stored
     from Zeek are left alone. Only works until the month is closed, which archives the pages."""
     # by name, any case: a card renamed since ('Isuzu Bodega' -> 'Isuzu bodega') keeps its old log pages
     imeis = {page_title(notion('GET', f'pages/{card}')).lower(): imei for imei, card in settings.ZEEK_FLEET.items()}
@@ -266,7 +266,10 @@ def rescue_notion_stops(log):
             cursor = data['next_cursor']
         stops = notion_stops(day, blocks)
         save_stops(imei, day, stops, 'notion')
-        log(f'[{name}] {day}: {len(stops)} paradas desde Notion')
+        km = page['properties'].get('Recorrido Diario', {}).get('number')
+        if km is not None:
+            VehicleDayKm.objects.update_or_create(imei=imei, day=day, defaults={'km': km})
+        log(f'[{name}] {day}: {len(stops)} paradas, {km} km desde Notion')
 
 
 # --- Monthly close ------------------------------------------------------------------------
