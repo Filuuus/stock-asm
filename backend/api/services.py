@@ -31,6 +31,9 @@ NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
 # them, 2026-10-13): mats and fans always, Bionat only if sold in the last 12
 # months (the rest is mostly discontinued).
 ON_ORDER_CATEGORIES = {'R_NW', 'R_FAN'}
+# Mats bought only from a distributor (2018-2022), brand unconfirmed, each a duplicate of a
+# mat we stock: hidden from the public (user, 2026-10-16).
+HIDDEN_FROM_PUBLIC = {2566, 2568, 2569}
 # GEA-style codes inside names ("VALVULA (7050-1935-000)", "JGO 4X7023-2721-060").
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
@@ -255,6 +258,10 @@ def get_inventory_catalog(is_worker, raw=False):
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
             # By name, not category: the ERP files some mats under general parts (R).
             product['variant'] = mat_variant(product['CNOMBREPRODUCTO'])
+            # Every mat is Animat / North West Rubber, also the ones once bought through GEA under
+            # GEA part numbers (ERP purchases, checked 2026-10-16).
+            if product['variant'] or (product['category'] == 'R_NW' and 'TAPETE' in product['CNOMBREPRODUCTO']):
+                product['brand'] = 'NORTH WEST RUBBER'
 
         images_by_code = get_images_by_codes([p['CCODIGOPRODUCTO'] for p in data])
         for product in data:
@@ -275,7 +282,7 @@ def _apply_role(data, is_worker):
         in_stock = product['stock'] > 0
         on_order = not in_stock and (product['category'] in ON_ORDER_CATEGORIES
                                      or (product['category'] == 'B' and product['sold_rank'] is not None))
-        if not is_worker and not in_stock and not on_order:
+        if not is_worker and ((not in_stock and not on_order) or product.get('CIDPRODUCTO') in HIDDEN_FROM_PUBLIC):
             continue
         note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
         visible = is_worker or product['category'] in PUBLIC_PRICE_CATEGORIES
@@ -453,7 +460,8 @@ def _variants(product, catalog):
 
 def _product_detail(product, code, catalog, by_code, is_worker):
 
-    gea = _gea_products().get(code)
+    # Mats: GEA's English one-liner adds nothing to our own description (GEA only resold them).
+    gea = None if product.get('variant') else _gea_products().get(code)
     appears_in = _appears_in(code, gea['gea_code'] if gea else _plain_code(code), by_code, summary)
     # Staff only, read live (never cached: it's per product and per role).
     staff = InventoryRepository.fetch_product_activity(code) if is_worker else None

@@ -66,6 +66,11 @@ class InventoryCatalogTests(SimpleTestCase):
         return {'CCODIGOPRODUCTO': 'A', 'category': category, 'brand': 'GEA FARM TECHNOLOGIES',
                 'CPRECIO1': 100.0, 'CIMPUESTO1': iva, 'stock': stock, 'sold_rank': sold_rank}
 
+    def test_duplicate_mats_hidden_from_public_only(self):
+        dup = {**self.row('R_NW'), 'CIDPRODUCTO': 2569}
+        self.assertEqual(_apply_role([dup], False), [])
+        self.assertEqual(len(_apply_role([dup], True)), 1)
+
     def test_out_of_stock_mats_fans_and_selling_bionat_are_public_on_order(self):
         public = lambda row: _apply_role([row], False)
         self.assertEqual(public(self.row('R', stock=0)), [])
