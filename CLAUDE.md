@@ -7,7 +7,7 @@ Internal platform for Agropecuaria Santa María (GEA farm-equipment and dairy-hy
 ## Hard rules
 
 - **The ERP is read-only, always.** The credentials are read-only at the database level and no code may attempt a write. Anything the app needs to store goes in the local SQLite database through a Django app's own models.
-- **The repo is public.** Never commit client, supplier or person names, or ERP ledger account names (vehicle accounts contain license plates). Store bare ERP ids and resolve names live from the ERP. The Excel/PDF files in the repo root are the owner's private reference material and are gitignored (`*.xlsx`, `*.xls`, `*.pdf`); never add them.
+- **The repo is public.** Never commit client, supplier or person names, or ERP ledger account names (vehicle accounts contain license plates). Store bare ERP ids and resolve names live from the ERP. The owner's private reference material (Excel/PDF exports, route-sheet scans, Maps Takeouts) lives in `referencia/`, sorted by topic and gitignored (`*.xlsx`, `*.xls`, `*.pdf`, plus `referencia/` in `.git/info/exclude`); never add it.
 - **Verify against real data.** ERP column and account names are often misleading. Confirm what a field means by querying the live ERP (read-only) before relying on it.
 - **Payroll and money rules are confirmed with management.** Commission rates, late-payment decay, category classification and payment-date resolution in `commissions/services.py` were agreed in several rounds with management; don't change them without the user re-confirming.
 
