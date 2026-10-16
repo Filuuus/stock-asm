@@ -140,3 +140,11 @@ class ToSquareTests(SimpleTestCase):
         self.assertEqual((padded.size, padded.getpixel((0, 0))), ((200, 200), (255, 255, 255)))
         photo = to_square(Image.new('RGBA', (200, 100), (128, 128, 128, 255)))
         self.assertEqual(photo.size, (100, 100))
+
+    def test_transparency_in_a_cropped_cutout_turns_white_not_black(self):
+        from PIL import Image
+        from catalog.services import to_square
+        # The product fills the top corners, so it's cropped, but the bottom is transparent.
+        cutout = Image.new('RGBA', (100, 100), (0, 0, 0, 0))
+        cutout.paste((40, 40, 40, 255), (0, 0, 100, 50))
+        self.assertEqual(to_square(cutout).getpixel((50, 90)), (255, 255, 255))

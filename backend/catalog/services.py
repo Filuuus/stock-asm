@@ -46,7 +46,9 @@ def to_square(im):
         return square
     side = min(im.size)
     left, top = (im.width - side) // 2, (im.height - side) // 2
-    return im.convert('RGB').crop((left, top, left + side, top + side))
+    # Transparent parts (a cut-out filling its corners) go white: a plain RGB convert turns them black.
+    flat = Image.alpha_composite(Image.new('RGBA', im.size, 'white'), im.convert('RGBA')).convert('RGB')
+    return flat.crop((left, top, left + side, top + side))
 
 
 def save_photo(code, upload):
