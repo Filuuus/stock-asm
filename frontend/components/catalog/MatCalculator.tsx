@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
-import { matsForArea, NAILS_PER_MAT } from "@/lib/mats";
+import { MatSpec, matsForArea, NAILS_PER_MAT } from "@/lib/mats";
 import { cn, formatMoney } from "@/lib/utils";
 import { ProductImage } from "@/types/api";
 
@@ -12,17 +12,17 @@ type Item = { key: string; CNOMBREPRODUCTO: string; price: number | null; images
 const INPUT = "w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm";
 const image = (p: Item) => (p.images.find((i) => i.is_primary) ?? p.images[0])?.file ?? null;
 
-// On a 4 × 6 ft mat's page: how many mats (and nails) a job takes, added to the quote request together.
-export default function MatCalculator({ mat, nail }: { mat: Item; nail: Item | null }) {
+// On a mat's page: how many mats (and, for 4 ft mats, nails) a job takes, added to the quote request together.
+export default function MatCalculator({ mat, spec, nail }: { mat: Item; spec: MatSpec; nail: Item | null }) {
   const { add } = useCart();
-  const [byArea, setByArea] = useState(false);
+  const [byArea, setByArea] = useState(!spec.beds);
   const [beds, setBeds] = useState("");
   const [length, setLength] = useState("");
   const [width, setWidth] = useState("");
   const [added, setAdded] = useState(false);
 
   // One mat per bed.
-  const mats = byArea ? matsForArea(Number(length), Number(width)) : Math.max(Math.floor(Number(beds)) || 0, 0);
+  const mats = byArea ? matsForArea(Number(length), Number(width), spec.widthFt) : Math.max(Math.floor(Number(beds)) || 0, 0);
   const nails = nail ? mats * NAILS_PER_MAT : 0;
   const total = (mat.price ?? 0) * mats + (nail?.price ?? 0) * nails;
   const edit = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,16 +48,18 @@ export default function MatCalculator({ mat, nail }: { mat: Item; nail: Item | n
     <section className="mt-6 max-w-sm rounded-lg border border-gray-200 bg-gray-50 p-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="font-semibold text-gray-900">¿Cuántos necesita?</h2>
-        <button
-          type="button"
-          onClick={() => {
-            setByArea(!byArea);
-            setAdded(false);
-          }}
-          className="text-sm text-blue-600 hover:underline"
-        >
-          {byArea ? "Calcular por camas" : "Calcular por área"}
-        </button>
+        {spec.beds && (
+          <button
+            type="button"
+            onClick={() => {
+              setByArea(!byArea);
+              setAdded(false);
+            }}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            {byArea ? "Calcular por camas" : "Calcular por área"}
+          </button>
+        )}
       </div>
       <div className="mt-2 flex gap-2">
         {byArea ? (
@@ -72,11 +74,18 @@ export default function MatCalculator({ mat, nail }: { mat: Item; nail: Item | n
       {mats > 0 && (
         <>
           <p className="mt-3 text-sm text-gray-700">
-            {mats} tapetes{nail && ` + ${nails} clavos (${NAILS_PER_MAT} por tapete)`}:{" "}
-            <span className="font-semibold text-gray-900">{formatMoney(total)}</span>
+            {mats} {mats === 1 ? "tapete" : "tapetes"} de {spec.widthFt} × 6 pies
+            {nail && ` + ${nails} clavos (${NAILS_PER_MAT} por tapete)`}
+            {/* No total without a price: the quote request gets it priced. */}
+            {total > 0 && (
+              <>
+                : <span className="font-semibold text-gray-900">{formatMoney(total)}</span>
+              </>
+            )}
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Estimado con IVA. El instalador confirma la cantidad; la instalación se cotiza aparte.
+            {total > 0 && "Estimado con IVA. "}El instalador confirma la cantidad;{" "}
+            {nail ? "la instalación se cotiza aparte." : "clavos e instalación se cotizan aparte."}
           </p>
           <div className="mt-3 flex items-center gap-3">
             <button

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import MatCalculator from "@/components/catalog/MatCalculator";
+import { MatSpec } from "@/lib/mats";
 import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
@@ -547,7 +548,7 @@ export default function ProductDetailView({
 }: {
   product: ProductDetail;
   highlight?: string;
-  mat?: { nail: Product | null };
+  mat?: { spec: MatSpec; nail: Product | null };
 }) {
   const router = useRouter();
   const gea = product.gea;
@@ -609,7 +610,7 @@ export default function ProductDetailView({
           )}
           <Availability product={product} className="mt-2 text-sm" />
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
-          {mat && <MatCalculator mat={product} nail={mat.nail} />}
+          {mat && <MatCalculator mat={product} spec={mat.spec} nail={mat.nail} />}
           {product.staff && <StaffBox staff={product.staff} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}
