@@ -117,6 +117,25 @@ export default function CatalogView({ products }: { products: Product[] }) {
     return result;
   }, [products, filters, sortMode, normalizedQuery]);
 
+  // Mats sold in several versions show once per family: the first in the current order stands
+  // for the rest. A family narrowed down to one version (by search or filters) shows as itself.
+  const cards = useMemo(() => {
+    const result: { product: Product; versions: Product[] }[] = [];
+    const byFamily = new Map<string, Product[]>();
+    for (const product of filtered) {
+      const family = product.variant?.family;
+      const versions = family ? byFamily.get(family) : undefined;
+      if (versions) {
+        versions.push(product);
+        continue;
+      }
+      const card = { product, versions: [product] };
+      if (family) byFamily.set(family, card.versions);
+      result.push(card);
+    }
+    return result;
+  }, [filtered]);
+
   const activeFilters =
     filters.category.size + filters.line.size + filters.brand.size +
     Number(filters.withoutStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
@@ -126,7 +145,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
     breaks,
     filters,
     query: normalizedQuery,
-    resultCount: filtered.length,
+    resultCount: cards.length,
     onChange: setFilters,
   };
 
@@ -138,7 +157,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
         {/* Phones: count plus buttons that open the filters and the sort as side panels. */}
         <div className="mb-4 flex items-center justify-between gap-3 md:hidden">
           <span className="whitespace-nowrap text-sm text-gray-500">
-            {plural(filtered.length, "resultado", "resultados")}
+            {plural(cards.length, "resultado", "resultados")}
           </span>
           <div className="flex gap-2">
             <Sheet open={sortOpen} onOpenChange={setSortOpen}>
@@ -189,7 +208,7 @@ export default function CatalogView({ products }: { products: Product[] }) {
                     onClick={() => setFiltersOpen(false)}
                     className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
                   >
-                    Ver {plural(filtered.length, "resultado", "resultados")}
+                    Ver {plural(cards.length, "resultado", "resultados")}
                   </button>
                 </div>
               </SheetContent>
@@ -217,13 +236,13 @@ export default function CatalogView({ products }: { products: Product[] }) {
         {/* Staff only: a lookup by GEA part number. */}
         {user && <GeaPartResults query={query} />}
 
-        {filtered.length > 0 ? (
+        {cards.length > 0 ? (
           <div
             className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4"
             onClickCapture={() => session((s) => s.setItem(CATALOG_SCROLL_KEY, String(window.scrollY)))}
           >
-            {filtered.map((product) => (
-              <ProductCard key={product.CIDPRODUCTO} product={product} />
+            {cards.map(({ product, versions }) => (
+              <ProductCard key={product.CIDPRODUCTO} product={product} versions={versions} />
             ))}
           </div>
         ) : (

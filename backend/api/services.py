@@ -66,6 +66,36 @@ def _bionat_type(name):
     name = (name or '').upper()
     return next((t for marker, t in BIONAT_TYPES if marker in name), 'Aditivos')
 
+# Mats sold in many versions show as one product per family, with options on its page.
+# Names read per the user (2026-10-15): "<width> X 6" in feet, I<sides with interlock>,
+# F<feet of interlocking edge>, D/I = right/left (GEA's descriptions say (R)/(L)).
+PEBBLETOP_RE = re.compile(r'EN CLAVAMIENTO (\d) X 6 I(\d) F(\d+)(?: ([DI]))?')
+INTERLOCK_EDGES = {
+    (4, 20): 'En los 4 lados', (4, 16): '2 lados largos y 1 corto', (4, 14): '2 lados cortos y 1 largo',
+    (4, 12): '2 lados largos', (4, 10): '1 lado largo y 1 corto', (4, 8): '2 lados cortos',
+    (2, 4): '2 lados cortos', (1, 2): '2 lados cortos',
+}
+
+
+def mat_variant(name):
+    """{'family', 'options'} for a mat that comes in several versions, else None."""
+    name = (name or '').upper()
+    m = PEBBLETOP_RE.search(name)
+    if m:
+        width, sides, feet, hand = int(m[1]), int(m[2]), int(m[3]), m[4]
+        interlock = 'Sin interlock' if sides == 0 else INTERLOCK_EDGES.get((width, feet), f'I{sides} F{feet}')
+        if hand:
+            interlock += ' (derecha)' if hand == 'D' else ' (izquierda)'
+        # sort: narrow to wide, then most interlock first.
+        return {'family': 'PebbleTop', 'options': {'Ancho': f'{width} pie' + 's' * (width > 1), 'Interlock': interlock},
+                'sort': [width, -feet, hand or '']}
+    if 'MAXGRIP' in name:
+        bare = 'SIN INTERLOCK' in name
+        return {'family': 'MaxGrip', 'options': {'Interlock': 'Sin interlock' if bare else 'En los 4 lados'},
+                'sort': [int(bare)]}
+    return None
+
+
 # Values that mean "no supplier assigned" rather than a real brand.
 NO_BRAND_VALUES = {'(Ninguna)', '(Ninguno)'}
 GENERAL_WAREHOUSE_ID = 4
@@ -208,6 +238,7 @@ def get_inventory_catalog(is_worker, raw=False):
             del product['CTIPOPRODUCTO']
             product['stock'] = stock.get(product['CIDPRODUCTO'], 0) or 0
             product['sold_rank'] = sold_rank.get(product['CIDPRODUCTO'])
+            product['variant'] = mat_variant(product['CNOMBREPRODUCTO']) if product['category'] == 'R_NW' else None
 
         images_by_code = get_images_by_codes([p['CCODIGOPRODUCTO'] for p in data])
         for product in data:
@@ -372,7 +403,7 @@ def get_product_detail(key, is_worker):
     code = product['CCODIGOPRODUCTO']
     detail = _product_detail(product, code, catalog, by_code, is_worker)
     description = ProductDescription.objects.filter(producto_codigo=code).values_list('text', flat=True).first()
-    detail.update(description=description, related=_related(product, catalog))
+    detail.update(description=description, related=_related(product, catalog), variants=_variants(product, catalog))
     return detail if is_worker else scrub(detail)
 
 
@@ -387,6 +418,21 @@ def _related(product, catalog):
             and p['category'] == product['category'] and p['line'] == product['line']]
     same.sort(key=lambda p: (not p['in_stock'], p['sold_rank'] or float('inf'), not p['images']))
     return [summary(p) for p in same[:RELATED_LIMIT]]
+
+
+def _variants(product, catalog):
+    """The versions of the product's family the role can see, one per set of options: this
+    product for its own, else in stock first, then the best seller. Empty if it has no family."""
+    family = (product.get('variant') or {}).get('family')
+    if not family:
+        return []
+    chosen = {}
+    rank = lambda p: (p['key'] != product['key'], not p['in_stock'], p['sold_rank'] or float('inf'), int(p['key']))
+    for p in sorted((p for p in catalog if (p.get('variant') or {}).get('family') == family), key=rank):
+        chosen.setdefault(tuple(p['variant']['options'].items()), p)
+    return [{'key': p['key'], 'slug': p['slug'], 'options': p['variant']['options'], 'price': p['price'],
+             'in_stock': p['in_stock'], 'on_order': p['on_order']}
+            for p in sorted(chosen.values(), key=lambda p: p['variant']['sort'])]
 
 
 def _product_detail(product, code, catalog, by_code, is_worker):

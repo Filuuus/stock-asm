@@ -7,8 +7,23 @@ import AddToCart from "@/components/catalog/AddToCart";
 import { Product, ProductSummary } from "@/types/api";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 
-// Takes a full catalog product or a related-product summary.
-export default function ProductCard({ product }: { product: ProductSummary & Pick<Partial<Product>, "discontinued"> }) {
+// Takes a full catalog product or a related-product summary. versions: a mat family's
+// versions in the catalog (the card then stands for all of them and links to the options).
+export default function ProductCard({
+  product,
+  versions,
+}: {
+  product: ProductSummary & Pick<Partial<Product>, "discontinued" | "variant">;
+  versions?: Product[];
+}) {
+  const family = versions && versions.length > 1 ? product.variant?.family : undefined;
+  // A family card opens its best-selling version in stock.
+  const lead = family
+    ? [...versions!].sort((a, b) => Number(!a.in_stock) - Number(!b.in_stock) || (a.sold_rank ?? Infinity) - (b.sold_rank ?? Infinity))[0]
+    : product;
+  // Same options can exist twice in the ERP (one in stock, one on order); the page shows one.
+  const optionCount = new Set((versions ?? []).map((v) => JSON.stringify(v.variant?.options))).size;
+  const prices = (versions ?? []).filter((v) => v.price_visible && v.price).map((v) => v.price as number);
   const images = product.images;
   const initialIndex = Math.max(
     images.findIndex((img) => img.is_primary),
@@ -25,7 +40,7 @@ export default function ProductCard({ product }: { product: ProductSummary & Pic
       {/* Square box, photo cropped to fill it, so every card lines up. */}
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-50">
         <Link
-          href={productHref(product.key, product.slug)}
+          href={productHref(lead.key, lead.slug)}
           aria-label={product.CNOMBREPRODUCTO}
           tabIndex={-1}
           className="absolute inset-0 z-[1]"
@@ -59,21 +74,43 @@ export default function ProductCard({ product }: { product: ProductSummary & Pic
       </div>
       <div className="mt-3 flex w-full flex-1 flex-col items-start">
         <h3 className="line-clamp-2 w-full text-sm font-medium leading-snug text-gray-800">
-          <Link href={productHref(product.key, product.slug)} className="hover:text-blue-700">
-            {product.CNOMBREPRODUCTO}
+          <Link href={productHref(lead.key, lead.slug)} className="hover:text-blue-700">
+            {family ? `Tapete ${family}` : product.CNOMBREPRODUCTO}
           </Link>
         </h3>
-        {product.CCODIGOPRODUCTO && <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
-        <Price product={product} className="mt-2" />
-        <Availability product={product} className="mt-1" />
-        {product.discontinued && (
-          <p className="mt-1 text-xs font-medium text-amber-700">
-            GEA ya no la surte
-            {product.discontinued.replacement && ` · Reemplazo: ${product.discontinued.replacement}`}
-          </p>
+        {family ? (
+          <>
+            <p className="mt-1 text-xs text-gray-500">{optionCount} opciones</p>
+            {prices.length > 0 && (
+              <p className="mt-2 text-sm text-gray-500">
+                Desde <span className="text-xl font-semibold text-gray-900 sm:text-2xl">{formatMoney(Math.min(...prices))}</span>
+              </p>
+            )}
+            {/* Pinned to the bottom so the buttons line up across a row. */}
+            <div className="mt-auto w-full pt-3">
+              <Link
+                href={productHref(lead.key, lead.slug)}
+                className="flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Ver opciones
+              </Link>
+            </div>
+          </>
+        ) : (
+          <>
+            {product.CCODIGOPRODUCTO && <p className="mt-1 text-xs text-gray-400">SKU: {product.CCODIGOPRODUCTO}</p>}
+            <Price product={product} className="mt-2" />
+            <Availability product={product} className="mt-1" />
+            {product.discontinued && (
+              <p className="mt-1 text-xs font-medium text-amber-700">
+                GEA ya no la surte
+                {product.discontinued.replacement && ` · Reemplazo: ${product.discontinued.replacement}`}
+              </p>
+            )}
+            {/* Pinned to the bottom so the buttons line up across a row. */}
+            <AddToCart product={product} className="mt-auto pt-3" />
+          </>
         )}
-        {/* Pinned to the bottom so the buttons line up across a row. */}
-        <AddToCart product={product} className="mt-auto pt-3" />
       </div>
     </div>
   );
