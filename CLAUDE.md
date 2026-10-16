@@ -34,6 +34,7 @@ Frontend (Next.js 16 / React 19, from `frontend/`):
 ```bash
 npm run dev          # http://localhost:3000, API at http://localhost:8000
 npm run lint         # or: npx eslint components/analytics/SalesBIView.tsx
+npm test             # vitest, lib/*.test.ts; runs in America/Mexico_City (date bugs only show west of UTC)
 npx tsc --noEmit -p .   # type check (no npm script for it)
 ```
 
