@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'analytics',
     'fleet',
     'profitability',
+    'clients',
 ]
 
 MIDDLEWARE = [
@@ -220,6 +221,8 @@ ZEEK_FLEET = dict(
 )
 NOTION_TOKEN = os.getenv('NOTION_TOKEN', '')
 NOTION_FLEET_LOG_DB = os.getenv('NOTION_FLEET_LOG_DB', '')
+# Client directory (clients/services.py): active ERP clients -> this Notion database, same token.
+NOTION_CLIENTS_DB = os.getenv('NOTION_CLIENTS_DB', '')
 
 # Rentabilidad: the accounting share holding the accountant's "Reportes Mensuales <year>.xlsx"
 # (one folder per year), read by import_vehicle_reports. Empty = not configured.

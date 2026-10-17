@@ -109,6 +109,26 @@ NOTION_FLEET_LOG_DB=
 
 The Notion integration needs access to the log database and to every vehicle card. Details (Notion property names, scheduling) are in [`backend/fleet/README.md`](backend/fleet/README.md).
 
+### Client directory (ERP → Notion)
+
+`python manage.py sync_clients_notion` (the `clients` app) copies the active clients into a Notion database so the service calendar can pick a client and show their details. Active = invoiced in the last year or registered in the ERP in the last three months; the walk-in client (210) is left out. Each run creates new clients, updates changed ones and unticks `Activo` for clients no longer active (never deletes, so calendar links survive). It's one way: every property below is overwritten from the ERP, so fix data in Contpaqi, and don't add clients by hand in Notion (pages without an `ID ERP` are ignored). `--dry-run` only counts what would change. Run by hand for now.
+
+Create the database with exactly these properties (the command checks them before writing):
+
+| Property | Type | Source |
+|---|---|---|
+| Nombre | Title | `CRAZONSOCIAL` |
+| ID ERP | Number | `CIDCLIENTEPROVEEDOR`, the sync key |
+| Código | Text | `CCODIGOCLIENTE` |
+| Teléfono, Teléfono 2 | Phone | fiscal address `CTELEFONO1`/`2`, as `33 1388 3418` / `378 712 3456` |
+| Email | Email | `CEMAIL1`, skipping the company's own addresses (`CEMAIL2`/`3` are almost always those) |
+| Zona | Select | the client's assigned agent (`CIDAGENTEVENTA`) |
+| Municipio | Text | fiscal address `CMUNICIPIO` |
+| Ubicación | URL | Google Maps link of the client's exact saved place (`profitability.SavedPlace`), if any |
+| Activo | Checkbox | set by the sync |
+
+Share the database with the same integration as the fleet log and set `NOTION_CLIENTS_DB=<database id>` in `backend/.env` (it uses `NOTION_TOKEN`). In the service calendar, make the client field a **Relation** to this database and add **Rollups** for Teléfono, Ubicación and whatever else should show; keep a separate editable phone for when the person requesting the visit isn't the client's main contact.
+
 ### Corte de Caja monthly export
 
 `python manage.py export_corte_de_caja` regenerates that month's `.xlsx` workbook (one sheet per business day, matching the layout the accountant used to build by hand) at `CORTE_DE_CAJA_EXPORT_DIR` — every run fully overwrites the file with current data, so it's always safe to re-run. Refuses to generate anything before September 2026 (`corte_de_caja/exports.py::EARLIEST_EXPORT_MONTH`) — this replaces the manual process going forward, it doesn't backfill history.
