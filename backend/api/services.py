@@ -139,13 +139,14 @@ class InventoryRepository:
     @staticmethod
     def fetch_stock():
         """{product id: units} in ALMACEN GENERAL for the latest fiscal year
-        (formula verified in the ERP schema notes; the other warehouses are
-        people's trucks, not stock for sale)."""
+        (the other warehouses are people's trucks, not stock for sale). The
+        period columns are cumulative and already include the opening balance
+        (INICIALES), so stock is period 12's entries minus its exits; adding
+        INICIALES again counted the opening twice."""
         with connections['erp'].cursor() as cursor:
             cursor.execute(
                 """
-                SELECT CIDPRODUCTO,
-                       (CENTRADASINICIALES + CENTRADASPERIODO12) - (CSALIDASINICIALES + CSALIDASPERIODO12)
+                SELECT CIDPRODUCTO, CENTRADASPERIODO12 - CSALIDASPERIODO12
                 FROM admExistenciaCosto
                 WHERE CIDALMACEN = %s
                   AND CIDEJERCICIO = (SELECT MAX(CIDEJERCICIO) FROM admExistenciaCosto WHERE CIDALMACEN = %s)
@@ -162,8 +163,7 @@ class InventoryRepository:
         with connections['erp'].cursor() as cursor:
             cursor.execute(
                 """
-                SELECT a.CNOMBREALMACEN,
-                       (e.CENTRADASINICIALES + e.CENTRADASPERIODO12) - (e.CSALIDASINICIALES + e.CSALIDASPERIODO12)
+                SELECT a.CNOMBREALMACEN, e.CENTRADASPERIODO12 - e.CSALIDASPERIODO12  -- see fetch_stock
                 FROM admExistenciaCosto e
                 JOIN admAlmacenes a ON a.CIDALMACEN = e.CIDALMACEN
                 JOIN admProductos p ON p.CIDPRODUCTO = e.CIDPRODUCTO
