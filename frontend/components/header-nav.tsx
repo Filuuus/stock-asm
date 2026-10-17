@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, Menu, ShoppingCart, User } from "lucide-react";
@@ -12,6 +12,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // Inline links on desktop; below that, one menu button that opens
@@ -22,10 +23,11 @@ export default function HeaderNav() {
   const [open, setOpen] = useState(false);
   const { user, loading, isAccounting, isManagement, logout } = useAuth();
   const { count } = useCart();
+  const pending = usePendingRequests(!!user, pathname);
 
   const links = [
     { href: "/catalogo", label: "Catálogo", show: true },
-    { href: "/solicitudes", label: "Solicitudes", show: !!user },
+    { href: "/solicitudes", label: "Solicitudes", show: !!user, badge: pending },
     { href: "/fotos", label: "Fotos", show: !!user },
     { href: "/comisiones", label: "Comisiones", show: true },
     {
@@ -70,15 +72,16 @@ export default function HeaderNav() {
           </span>
         )}
       </Link>
-      <nav className="hidden lg:flex items-center gap-x-5">
+      <nav className="hidden lg:flex items-center gap-x-4 xl:gap-x-5">
         {links.map((l) => (
-          <Link key={l.href} href={l.href} className={linkClass(l.href)}>
+          <Link key={l.href} href={l.href} className={cn(linkClass(l.href), "flex items-center gap-1.5")}>
             {l.label}
+            <Badge count={l.badge} />
           </Link>
         ))}
         {loading ? null : user ? (
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 text-sm text-slate-300">
+            <span className="flex items-center gap-1.5 whitespace-nowrap text-sm text-slate-300">
               <User className="w-4 h-4" />
               {user.username}
             </span>
@@ -101,9 +104,10 @@ export default function HeaderNav() {
         <SheetTrigger asChild>
           <button
             aria-label="Menú"
-            className="lg:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md"
+            className="relative lg:hidden p-2 -mr-2 hover:bg-slate-800 rounded-md"
           >
             <Menu className="w-6 h-6" />
+            {!!pending && <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-amber-400" />}
           </button>
         </SheetTrigger>
         <SheetContent
@@ -117,13 +121,14 @@ export default function HeaderNav() {
               href={l.href}
               onClick={() => setOpen(false)}
               className={cn(
-                "rounded-md px-3 py-2.5 text-base font-medium",
+                "flex items-center justify-between rounded-md px-3 py-2.5 text-base font-medium",
                 pathname === l.href
                   ? "bg-slate-800 text-white"
                   : "text-slate-300 hover:bg-slate-800",
               )}
             >
               {l.label}
+              <Badge count={l.badge} />
             </Link>
           ))}
           <div className="mt-auto border-t border-slate-800 pt-4">
@@ -154,5 +159,40 @@ export default function HeaderNav() {
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+// New quote requests from the public site, so staff notice them without opening
+// /solicitudes: re-checked every minute, on every page change and when the tab
+// gets focus again (the person may have left it open all day).
+function usePendingRequests(enabled: boolean, pathname: string) {
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    const check = () =>
+      apiFetch("/api/solicitudes/pendientes/")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setPending(d.nuevas))
+        .catch(() => {});
+    check();
+    const timer = setInterval(check, 60_000);
+    window.addEventListener("focus", check);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", check);
+    };
+  }, [enabled, pathname]);
+  return enabled ? pending : 0;
+}
+
+function Badge({ count }: { count?: number }) {
+  if (!count) return null;
+  return (
+    <span
+      aria-label={`${count} nuevas`}
+      className="min-w-[1.25rem] rounded-full bg-amber-400 px-1.5 text-center text-xs font-semibold leading-5 text-slate-900"
+    >
+      {count}
+    </span>
   );
 }

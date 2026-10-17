@@ -9,13 +9,13 @@ class Command(BaseCommand):
     help = (
         'Saves each GPS unit\'s daily km and stops from Zeek in the local database (independent of Notion). '
         'Meant to run nightly (Zeek keeps only ~6 days); defaults to yesterday. Safe to re-run: existing days '
-        'are overwritten. --from-notion instead rescues stops of older days from the fleet log pages.'
+        'are overwritten. --from-notion instead rescues stops and km of older days from the fleet log pages.'
     )
 
     def add_arguments(self, parser):
         parser.add_argument('--from', dest='first', type=date.fromisoformat, help='YYYY-MM-DD (default: yesterday)')
         parser.add_argument('--to', dest='last', type=date.fromisoformat, help='YYYY-MM-DD (default: --from)')
-        parser.add_argument('--from-notion', action='store_true', help='rescue stops from Notion daily log pages')
+        parser.add_argument('--from-notion', action='store_true', help='rescue stops and km from Notion daily log pages')
 
     def handle(self, *args, **options):
         if options['from_notion']:

@@ -95,7 +95,9 @@ export function SortableHead<K extends string>({
         <Icon
           className={cn(
             "h-3.5 w-3.5 shrink-0",
-            active ? "opacity-100" : "opacity-0 group-hover:opacity-40 group-focus-visible:opacity-40",
+            // Inactive arrows only appear on hover, which phones don't have: there they'd just be
+            // empty space pushing the last column off screen.
+            active ? "opacity-100" : "hidden sm:block opacity-0 group-hover:opacity-40 group-focus-visible:opacity-40",
           )}
         />
       </button>

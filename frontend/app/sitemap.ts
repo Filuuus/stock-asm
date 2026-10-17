@@ -9,8 +9,9 @@ export const revalidate = 3600;
 // The home page, the catalog and every product the public can see (no cookie: the public view).
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const site = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  const res = await fetch(`${API_URL}/api/inventory/`, { next: { revalidate } });
-  const products: Product[] = res.ok ? await res.json() : [];
+  // API down (e.g. during `next build`): pages only, products come back on the next hourly rebuild.
+  const res = await fetch(`${API_URL}/api/inventory/`, { next: { revalidate } }).catch(() => null);
+  const products: Product[] = res?.ok ? await res.json() : [];
   return [
     { url: site, changeFrequency: "monthly", priority: 1 },
     { url: `${site}/catalogo`, changeFrequency: "daily", priority: 0.9 },

@@ -39,6 +39,13 @@ def quote_requests(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsWorker])
+def quote_pending(request):
+    """How many requests still wait for staff: the badge on the Solicitudes menu link."""
+    return Response({'nuevas': QuoteRequest.objects.filter(status=QuoteRequest.STATUS_NEW).count()})
+
+
+@api_view(['GET'])
 @permission_classes([AllowAny])
 def quote_public(request, token):
     return Response(quotes.public_view(get_object_or_404(QuoteRequest, token=token)))
