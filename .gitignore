@@ -21,6 +21,7 @@ pnpm-debug.log*
 *.db
 **/venv/
 **/.venv/
+backend/staticfiles/
 
 # Scraped / Dynamic Media Assets (Optional: Un-comment to prevent repo bloat)
 frontend/public/products/

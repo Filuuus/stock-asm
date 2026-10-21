@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, Menu, ShoppingCart, User } from "lucide-react";
@@ -24,12 +24,13 @@ export default function HeaderNav() {
   const { user, loading, isAccounting, isManagement, logout } = useAuth();
   const { count } = useCart();
   const pending = usePendingRequests(!!user, pathname);
+  const staffSite = useIsStaffSite();
 
   const links = [
     { href: "/catalogo", label: "Catálogo", show: true },
     { href: "/solicitudes", label: "Solicitudes", show: !!user, badge: pending },
     { href: "/fotos", label: "Fotos", show: !!user },
-    { href: "/comisiones", label: "Comisiones", show: true },
+    { href: "/comisiones", label: "Comisiones", show: staffSite },
     {
       href: "/corte-de-caja",
       label: "Corte de Caja",
@@ -79,7 +80,7 @@ export default function HeaderNav() {
             <Badge count={l.badge} />
           </Link>
         ))}
-        {loading ? null : user ? (
+        {loading || !staffSite ? null : user ? (
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1.5 whitespace-nowrap text-sm text-slate-300">
               <User className="w-4 h-4" />
@@ -132,7 +133,7 @@ export default function HeaderNav() {
             </Link>
           ))}
           <div className="mt-auto border-t border-slate-800 pt-4">
-            {loading ? null : user ? (
+            {loading || !staffSite ? null : user ? (
               <div className="flex items-center justify-between px-3">
                 <span className="flex items-center gap-1.5 text-sm text-slate-300">
                   <User className="w-4 h-4" />
@@ -160,6 +161,22 @@ export default function HeaderNav() {
       </Sheet>
     </div>
   );
+}
+
+// False on the public domain (NEXT_PUBLIC_SITE_URL, with or without www), where nginx closes the staff
+// pages and login; true on the office address and in dev. False while server-rendering, so the public
+// site never flashes the staff links before hydration.
+function useIsStaffSite() {
+  return useSyncExternalStore(noSubscribe, isStaffHost, () => false);
+}
+
+const noSubscribe = () => () => {};
+
+function isStaffHost() {
+  const site = process.env.NEXT_PUBLIC_SITE_URL;
+  const publicHost = site ? new URL(site).hostname : null;
+  const host = window.location.hostname;
+  return host !== publicHost && host !== `www.${publicHost}`;
 }
 
 // New quote requests from the public site, so staff notice them without opening
