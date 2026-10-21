@@ -23,13 +23,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-a#fz8q3a@6(he6gw@f()b(ij9-to@ln2%hy)az3^w=*n%igo4='
+# Production sets these three in .env; the defaults are for local dev only.
+SECRET_KEY = os.getenv(
+    'DJANGO_SECRET_KEY', 'django-insecure-a#fz8q3a@6(he6gw@f()b(ij9-to@ln2%hy)az3^w=*n%igo4='
+)
+DEBUG = os.getenv('DJANGO_DEBUG', '1') == '1'
+# Comma-separated, e.g. "agrostma.com,www.agrostma.com,192.168.1.69"
+ALLOWED_HOSTS = [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS', '').split(',') if h.strip()]
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
+# In production nginx serves the frontend and the API from one origin and sets X-Forwarded-Proto
+# (https for the Cloudflare tunnel), so Django's CSRF origin check sees the scheme the browser used.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -149,6 +153,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # collectstatic target, served by nginx in production
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
