@@ -111,6 +111,9 @@ DATABASES = {
         'OPTIONS': {
             'driver': os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server'),
             'extra_params': 'TrustServerCertificate=yes',
+            # Contpaqi keeps a transaction (and its row locks) open while someone is mid-document, sometimes
+            # for hours; a normal read waits for it. Dirty reads were accepted instead (user, 2026-10-21).
+            'isolation_level': 'READ UNCOMMITTED',
         },
     },
 }
