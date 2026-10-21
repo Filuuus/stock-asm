@@ -2,7 +2,12 @@
 // session cookies are scoped by hostname, not port, so 127.0.0.1 and
 // localhost would NOT share the login cookie even though they're both
 // "localhost" to a human.
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// In production NEXT_PUBLIC_API_URL is "" (browser calls go to the same origin through nginx), and
+// server-side fetches go straight to Django at API_INTERNAL_URL.
+export const API_URL =
+  typeof window === "undefined"
+    ? (process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 
 function getCookie(name: string): string | null {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));

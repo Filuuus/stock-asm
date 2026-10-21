@@ -42,10 +42,11 @@ LOGIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 
 
 def _client_ip(request):
-    # No reverse proxy in front of this yet (see project memory on
-    # deployment) - REMOTE_ADDR is the real client IP for now. Would need
-    # to read X-Forwarded-For instead if that changes.
-    return request.META.get('REMOTE_ADDR', 'unknown')
+    # In production gunicorn only listens on 127.0.0.1 and nginx overwrites
+    # X-Forwarded-For with the one real client IP (the Cloudflare visitor or
+    # the LAN machine), so it can be trusted; REMOTE_ADDR is always nginx.
+    # DRF's throttles read the same header.
+    return request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR', 'unknown')
 
 
 def _login_attempts_key(request):
