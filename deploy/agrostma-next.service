@@ -1,0 +1,16 @@
+[Unit]
+Description=stock-asm Next.js frontend
+After=network-online.target agrostma-django.service
+Wants=network-online.target
+
+[Service]
+User=agrostma
+Group=agrostma
+UMask=0002
+WorkingDirectory=/srv/agrostma/app/frontend
+Environment=NODE_ENV=production
+ExecStart=/srv/agrostma/app/frontend/node_modules/.bin/next start -H 127.0.0.1 -p 3000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

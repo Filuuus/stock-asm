@@ -1,0 +1,16 @@
+[Unit]
+Description=stock-asm Django API (gunicorn)
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+User=agrostma
+Group=agrostma
+UMask=0002
+WorkingDirectory=/srv/agrostma/app/backend
+# Only nginx talks to it. Long timeout: the ERP/ledger queries behind Ventas and Rentabilidad take a while.
+ExecStart=/srv/agrostma/app/backend/venv/bin/gunicorn core.wsgi -b 127.0.0.1:8000 -w 3 --timeout 180
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
