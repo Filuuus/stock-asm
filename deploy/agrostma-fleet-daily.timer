@@ -1,8 +1,10 @@
 [Unit]
-Description=Run the fleet GPS daily job every morning
+Description=Run the fleet GPS daily job right after each day ends
 
 [Timer]
-OnCalendar=*-*-* 06:00
+# The day that just ended counts as "yesterday" for the commands; 10 minutes of slack for Zeek to
+# report the last trips. A trip still under way then (late emergency call) can leave that day short.
+OnCalendar=*-*-* 00:10
 # If the server was off at 06:00, run as soon as it's back.
 Persistent=true
 
