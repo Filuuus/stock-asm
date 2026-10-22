@@ -1,0 +1,9 @@
+[Unit]
+Description=Close the fleet GPS month on the 1st, after the daily job has logged the month's last day
+
+[Timer]
+OnCalendar=*-*-01 07:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

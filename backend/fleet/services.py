@@ -178,7 +178,7 @@ def sync_day(day, log):
             'properties': {
                 'Vehículo': {'title': [{'text': {'content': name}}]},
                 'Recorrido Diario': {'number': km},
-                'Odómetro Total': {'number': odometer},
+                'Kilometraje Total': {'number': odometer},
                 'Ruta': {'url': route},
                 'Fecha': {'date': {'start': day.isoformat()}},
             },
@@ -284,7 +284,7 @@ def summarize_month(pages):
         km = props['Recorrido Diario']['number'] or 0
         vehicle = summary.setdefault(name, {'km': 0, 'odometer': 0, 'days': [], 'page_ids': []})
         vehicle['km'] += km
-        vehicle['odometer'] = max(vehicle['odometer'], props['Odómetro Total']['number'] or 0)
+        vehicle['odometer'] = max(vehicle['odometer'], props['Kilometraje Total']['number'] or 0)
         vehicle['days'].append(((props['Fecha']['date'] or {}).get('start', ''), km, props['Ruta']['url']))
         vehicle['page_ids'].append(page['id'])
     for vehicle in summary.values():
@@ -341,7 +341,7 @@ def create_monthly_entry(name, vehicle, first_day, last_day):
         'properties': {
             'Vehículo': {'title': [{'text': {'content': MONTHLY_TITLE_PREFIX + name}}]},
             'Recorrido Diario': {'number': vehicle['km']},
-            'Odómetro Total': {'number': vehicle['odometer']},
+            'Kilometraje Total': {'number': vehicle['odometer']},
             'Fecha': {'date': {'start': first_day.isoformat(), 'end': last_day.isoformat()}},
         },
         'children': [

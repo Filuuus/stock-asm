@@ -35,7 +35,7 @@ The code expects these property names, exactly as written:
 | Log database | `Vehículo` | Title |
 | | `Fecha` | Date |
 | | `Recorrido Diario` | Number |
-| | `Odómetro Total` | Number |
+| | `Kilometraje Total` | Number |
 | | `Ruta` | URL |
 | Vehicle card | (its title) | Title, used as the vehicle name in the log |
 | | `Kilometraje` | Number, the running odometer |
@@ -73,13 +73,9 @@ venv/bin/python manage.py store_fleet_km --from-notion         # rescue stops of
 
 `store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move, and its stops (each trip's end, until the next trip starts) in `VehicleStop`; a unit Zeek fails to answer for gets no row, so gaps show. Re-running overwrites. **Zeek keeps only about the last six days**, so these tables are the only long-term record: run it at least every few days. For days Zeek has already dropped, `--from-notion` reads the stops from the daily log pages instead (only until `close_fleet_month` archives them), leaving days already stored from Zeek alone.
 
-Schedule `sync_fleet_log` every morning to log the previous day, and `close_fleet_month` on the 1st of each month. For example, with cron:
+On the office server these run from systemd timers in `deploy/` (installed by `deploy/install-services.sh`): `store_fleet_km` then `sync_fleet_log` every day at 06:00 for the previous day, and `close_fleet_month` on the 1st at 07:00, after the daily job has logged the month's last day. A run missed while the server was off happens when it's back. Logs: `journalctl -u agrostma-fleet-daily` (or `-monthly`).
 
-```cron
-0 6 * * * cd /path/to/stock-asm/backend && venv/bin/python manage.py sync_fleet_log
-0 7 1 * * cd /path/to/stock-asm/backend && venv/bin/python manage.py close_fleet_month
-15 6 * * * cd /path/to/stock-asm/backend && venv/bin/python manage.py store_fleet_km
-```
+Only one copy may write the Notion log: `sync_fleet_log` skips vehicles already logged that day, but another script that doesn't check would add the same day twice and double the odometer.
 
 Days are calendar days in Mexico's fixed UTC-6. Mexico has had no daylight saving time since 2022.
 
