@@ -1,0 +1,11 @@
+[Unit]
+Description=stock-asm fleet GPS: last month's Notion report per vehicle, then archive its daily entries
+After=network-online.target agrostma-fleet-daily.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agrostma
+Group=agrostma
+WorkingDirectory=/srv/agrostma/app/backend
+ExecStart=/srv/agrostma/app/backend/venv/bin/python manage.py close_fleet_month

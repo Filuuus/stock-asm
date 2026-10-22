@@ -18,7 +18,7 @@ def log_page(name, day, km, odometer, route=None, page_id=None):
         'Vehículo': {'type': 'title', 'title': [{'plain_text': name}]},
         'Fecha': {'type': 'date', 'date': {'start': day}},
         'Recorrido Diario': {'type': 'number', 'number': km},
-        'Odómetro Total': {'type': 'number', 'number': odometer},
+        'Kilometraje Total': {'type': 'number', 'number': odometer},
         'Ruta': {'type': 'url', 'url': route},
     }}
 

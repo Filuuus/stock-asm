@@ -9,6 +9,11 @@ systemctl daemon-reload
 systemctl enable agrostma-django agrostma-next
 systemctl restart agrostma-django agrostma-next
 
+install -m 644 agrostma-fleet-daily.service agrostma-fleet-daily.timer \
+    agrostma-fleet-monthly.service agrostma-fleet-monthly.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now agrostma-fleet-daily.timer agrostma-fleet-monthly.timer
+
 install -m 644 nginx.conf /etc/nginx/sites-available/agrostma
 ln -sf /etc/nginx/sites-available/agrostma /etc/nginx/sites-enabled/agrostma
 rm -f /etc/nginx/sites-enabled/default
@@ -18,3 +23,4 @@ systemctl reload nginx
 ufw allow from 192.168.1.0/24 to any port 80 proto tcp
 
 systemctl --no-pager --lines=0 status agrostma-django agrostma-next nginx
+systemctl --no-pager list-timers 'agrostma-*'
