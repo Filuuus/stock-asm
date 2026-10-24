@@ -206,8 +206,10 @@ def save_stops(imei, day, stops, source):
 
 def store_km(first_day, last_day, log):
     """Saves every unit's km and stops for each day in the range, 0 km when it didn't move.
-    Overwrites existing rows, so re-running is safe; a unit Zeek fails to answer for is skipped
-    and left without a row for that day, so the gap is visible."""
+    Re-running is safe: a day is overwritten only with at least as many km as already stored, since
+    Zeek sometimes answers with fewer or no trips for a unit that did move (a late upload, or a day
+    already trimming out of its window). A unit Zeek fails to answer for is skipped and left without
+    a row for that day, so the gap is visible."""
     day = first_day
     while day <= last_day:
         start = datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
@@ -219,10 +221,20 @@ def store_km(first_day, last_day, log):
                 log(f'[unidad {n}] {day}: error leyendo Zeek: {e}')
                 continue
             km = day_km(trips) if trips else 0
+            stored = VehicleDayKm.objects.filter(imei=imei, day=day).values_list('km', flat=True).first()
+            if stored is not None and km < stored:
+                log(f'[unidad {n}] {day}: Zeek da {km} km, menos de los {stored} guardados; se conservan')
+                continue
             VehicleDayKm.objects.update_or_create(imei=imei, day=day, defaults={'km': km})
             save_stops(imei, day, trip_stops(trips), 'zeek')
             log(f'[unidad {n}] {day}: {km} km, {len(trips)} paradas')
         day += timedelta(days=1)
+
+
+def vehicle_imeis():
+    """{vehicle name, lowercased: IMEI}, from the Notion cards. By name in any case, so log pages written
+    before a card was renamed ('Isuzu Bodega' -> 'Isuzu bodega') still match."""
+    return {page_title(notion('GET', f'pages/{card}')).lower(): imei for imei, card in settings.ZEEK_FLEET.items()}
 
 
 NOTION_TRIP = re.compile(r'(\d{1,2}:\d{2} [AP]M)\s*➔\s*🔴\s*(\d{1,2}:\d{2} [AP]M)')
@@ -245,9 +257,8 @@ def notion_stops(day, blocks):
 
 def rescue_notion_stops(log):
     """Stops and km for the days still in Notion's daily log but no longer in Zeek. Days already stored
-    from Zeek are left alone. Only works until the month is closed, which archives the pages."""
-    # by name, any case: a card renamed since ('Isuzu Bodega' -> 'Isuzu bodega') keeps its old log pages
-    imeis = {page_title(notion('GET', f'pages/{card}')).lower(): imei for imei, card in settings.ZEEK_FLEET.items()}
+    from Zeek are left alone. close_month runs it before archiving the pages."""
+    imeis = vehicle_imeis()
     pages = notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
         {'property': 'Fecha', 'date': {'is_not_empty': True}},
         {'property': 'Vehículo', 'title': {'does_not_contain': MONTHLY_TITLE_PREFIX.strip(' -')}},
@@ -276,17 +287,18 @@ def rescue_notion_stops(log):
 
 def summarize_month(pages):
     """Groups daily log pages by vehicle:
-    {name: {'km', 'odometer', 'days': [(date, km, route)], 'page_ids': [...]}}."""
+    {name: {'km', 'odometer', 'days': [(date, km, route)], 'pages': [(page id, date)]}}."""
     summary = {}
     for page in pages:
         props = page['properties']
         name = page_title(page)
         km = props['Recorrido Diario']['number'] or 0
-        vehicle = summary.setdefault(name, {'km': 0, 'odometer': 0, 'days': [], 'page_ids': []})
+        day = (props['Fecha']['date'] or {}).get('start', '')
+        vehicle = summary.setdefault(name, {'km': 0, 'odometer': 0, 'days': [], 'pages': []})
         vehicle['km'] += km
         vehicle['odometer'] = max(vehicle['odometer'], props['Kilometraje Total']['number'] or 0)
-        vehicle['days'].append(((props['Fecha']['date'] or {}).get('start', ''), km, props['Ruta']['url']))
-        vehicle['page_ids'].append(page['id'])
+        vehicle['days'].append((day, km, props['Ruta']['url']))
+        vehicle['pages'].append((page['id'], day))
     for vehicle in summary.values():
         vehicle['km'] = round(vehicle['km'], 2)
         vehicle['days'].sort()
@@ -298,7 +310,9 @@ def close_month(first_day, last_day, log):
     archives that vehicle's daily entries (the team's choice, to stay within Notion's limits;
     archived pages go to Notion's trash, which empties after 30 days). A vehicle whose monthly
     entry already exists is not summarized again, only its leftover daily entries archived, so
-    re-running after a failure is safe."""
+    re-running after a failure is safe. Nothing is lost to the archive: every daily page's km and stops
+    are first copied into the local database (rescue_notion_stops), and a page is archived only once
+    its vehicle has that day stored locally."""
     monthly = notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
         {'property': 'Fecha', 'date': {'equals': first_day.isoformat()}},
         {'property': 'Vehículo', 'title': {'starts_with': MONTHLY_TITLE_PREFIX}},
@@ -314,6 +328,8 @@ def close_month(first_day, last_day, log):
         log('No hay registros diarios en ese mes.')
         return
 
+    rescue_notion_stops(log)
+    imeis = vehicle_imeis()
     for name, vehicle in summarize_month(pages).items():
         if name in closed:
             log(f'[{name}] ya tiene reporte mensual.')
@@ -321,9 +337,16 @@ def close_month(first_day, last_day, log):
             create_monthly_entry(name, vehicle, first_day, last_day)
             log(f"[{name}] {vehicle['km']} km en el mes.")
         # Only after the monthly entry exists, so a failed create never loses the daily detail.
-        for page_id in vehicle['page_ids']:
-            notion('PATCH', f'pages/{page_id}', {'archived': True})
-        log(f"[{name}] {len(vehicle['page_ids'])} registros diarios archivados.")
+        imei = imeis.get(name.lower())
+        stored = {d.isoformat() for d in VehicleDayKm.objects.filter(
+            imei=imei, day__range=(first_day, last_day)).values_list('day', flat=True)} if imei else set()
+        kept = [day for _, day in vehicle['pages'] if day not in stored]
+        for page_id, day in vehicle['pages']:
+            if day in stored:
+                notion('PATCH', f'pages/{page_id}', {'archived': True})
+        log(f"[{name}] {len(vehicle['pages']) - len(kept)} registros diarios archivados.")
+        if kept:
+            log(f"[{name}] NO se archivan {', '.join(sorted(kept))}: ese día no está guardado en la base local.")
 
 
 def create_monthly_entry(name, vehicle, first_day, last_day):

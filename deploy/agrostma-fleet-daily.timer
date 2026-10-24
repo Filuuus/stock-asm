@@ -3,9 +3,9 @@ Description=Run the fleet GPS daily job right after each day ends
 
 [Timer]
 # The day that just ended counts as "yesterday" for the commands; 10 minutes of slack for Zeek to
-# report the last trips. A trip still under way then (late emergency call) can leave that day short.
+# report the last trips. The commands also re-check the day before, for trips Zeek reported late.
 OnCalendar=*-*-* 00:10
-# If the server was off at 06:00, run as soon as it's back.
+# If the server was off at that time, run as soon as it's back.
 Persistent=true
 
 [Install]

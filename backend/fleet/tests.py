@@ -64,18 +64,23 @@ class SummaryTests(SimpleTestCase):
         self.assertEqual(summary['Hilux']['odometer'], 1010.1)
         self.assertEqual([d for d, _, _ in summary['Hilux']['days']], ['2026-09-01', '2026-09-02'])
         self.assertEqual(summary['Fiat']['km'], 0)
-        self.assertEqual(summary['Hilux']['page_ids'], ['Hilux-2026-09-02', 'Hilux-2026-09-01'])
+        self.assertEqual(summary['Hilux']['pages'], [('Hilux-2026-09-02', '2026-09-02'), ('Hilux-2026-09-01', '2026-09-01')])
 
 
-class CloseMonthTests(SimpleTestCase):
-    @patch('fleet.services.notion')
-    @patch('fleet.services.notion_query')
-    def test_archives_daily_entries_and_skips_vehicles_already_closed(self, query, notion):
+@patch('fleet.services.vehicle_imeis', lambda: {'hilux': '111', 'fiat': '222', 'isuzu': '333'})
+@patch('fleet.services.rescue_notion_stops')
+@patch('fleet.services.notion')
+@patch('fleet.services.notion_query')
+class CloseMonthTests(TestCase):
+    def test_archives_daily_entries_and_skips_vehicles_already_closed(self, query, notion, rescue):
+        VehicleDayKm.objects.create(imei='111', day=date(2026, 9, 1), km=5)
+        VehicleDayKm.objects.create(imei='222', day=date(2026, 9, 3), km=7)
         query.side_effect = [
             [log_page('Reporte Mensual - Fiat', '2026-09-01', 7, 500)],
             [log_page('Hilux', '2026-09-01', 5, 1000), log_page('Fiat', '2026-09-03', 7, 500)],
         ]
         close_month(date(2026, 9, 1), date(2026, 9, 30), lambda msg: None)
+        rescue.assert_called_once()
         calls = [(c.args[0], c.args[1]) for c in notion.call_args_list]
         # Only Hilux gets a monthly entry, created before its daily entry is archived; Fiat's
         # leftover daily entry is archived too.
@@ -85,6 +90,16 @@ class CloseMonthTests(SimpleTestCase):
             ('PATCH', 'pages/Fiat-2026-09-03'),
         ])
         self.assertEqual(notion.call_args_list[1].args[2], {'archived': True})
+
+    def test_keeps_daily_entries_whose_day_is_not_stored_locally(self, query, notion, rescue):
+        VehicleDayKm.objects.create(imei='111', day=date(2026, 9, 1), km=5)
+        query.side_effect = [[], [
+            log_page('Hilux', '2026-09-01', 5, 1000), log_page('Hilux', '2026-09-02', 8, 1008),
+            log_page('Camión nuevo', '2026-09-02', 3, 300),  # no card matches this name
+        ]]
+        close_month(date(2026, 9, 1), date(2026, 9, 30), lambda msg: None)
+        archived = [c.args[1] for c in notion.call_args_list if c.args[0] == 'PATCH']
+        self.assertEqual(archived, ['pages/Hilux-2026-09-01'])
 
 
 @override_settings(ZEEK_FLEET={'111': 'card-a', '222': 'card-b', '333': 'card-c'})
@@ -106,6 +121,17 @@ class StoreKmTests(TestCase):
             ('111', '2026-10-03'): 30.25, ('222', '2026-10-03'): 0,
         })
         self.assertEqual(VehicleStop.objects.filter(imei='111').count(), 2)  # one per day, re-run replaced
+
+    @patch('fleet.services.fetch_zeek_trips')
+    def test_never_replaces_a_stored_day_with_fewer_km(self, fetch):
+        full = [{'listaUbicaciones': [point(100000), point(112500)]}, {'listaUbicaciones': [point(112500), point(130250)]}]
+        fetch.return_value = full
+        store_km(date(2026, 10, 2), date(2026, 10, 2), lambda msg: None)
+        for later in ([], full[:1]):  # Zeek answers empty, then with only part of the day
+            fetch.return_value = later
+            store_km(date(2026, 10, 2), date(2026, 10, 2), lambda msg: None)
+        self.assertEqual(float(VehicleDayKm.objects.get(imei='111', day=date(2026, 10, 2)).km), 30.25)
+        self.assertEqual(VehicleStop.objects.filter(imei='111', day=date(2026, 10, 2)).count(), 2)
 
 
 class NotionStopsTests(SimpleTestCase):
