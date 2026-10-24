@@ -23,6 +23,8 @@ Both commands are safe to re-run:
 - `sync_fleet_log` skips vehicles that already have an entry for that day, so the odometer is never added twice.
 - `close_fleet_month` skips vehicles that already have that month's report, and archives a vehicle's daily entries only after its report exists.
 
+Nothing is lost when a month is closed: before archiving, `close_fleet_month` copies every daily page's km and stops into the local database (as `store_fleet_km --from-notion` does), and it archives a page only if that vehicle's day is stored locally. Pages it can't match (a vehicle name with no card) stay in Notion, and the log says so.
+
 ## Notion setup
 
 1. Create an integration at [Notion Developers](https://www.notion.so/my-integrations) with read and write access.
@@ -71,9 +73,9 @@ venv/bin/python manage.py store_fleet_km --from 2026-10-02 --to 2026-10-09
 venv/bin/python manage.py store_fleet_km --from-notion         # rescue stops of days Zeek no longer has
 ```
 
-`store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move, and its stops (each trip's end, until the next trip starts) in `VehicleStop`; a unit Zeek fails to answer for gets no row, so gaps show. Re-running overwrites. **Zeek keeps only about the last six days**, so these tables are the only long-term record: run it at least every few days. For days Zeek has already dropped, `--from-notion` reads the stops from the daily log pages instead (only until `close_fleet_month` archives them), leaving days already stored from Zeek alone.
+`store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move, and its stops (each trip's end, until the next trip starts) in `VehicleStop`; a unit Zeek fails to answer for gets no row, so gaps show. Re-running replaces a stored day only with at least as many km: Zeek sometimes answers with no trips, or only part of the day, for a unit that did move (a late upload, or a day already trimming out of its window), and that must not erase what's stored. **Zeek keeps only about the last six days**, so these tables are the only long-term record: run it at least every few days. For days Zeek has already dropped, `--from-notion` reads the stops from the daily log pages instead (only until `close_fleet_month` archives them), leaving days already stored from Zeek alone.
 
-On the office server these run from systemd timers in `deploy/` (installed by `deploy/install-services.sh`): `store_fleet_km` then `sync_fleet_log` every night at 00:10 for the day that just ended, and `close_fleet_month` on the 1st at 01:00, after the daily job has logged the month's last day. A trip still under way at that hour (a late emergency call) isn't finished when the day is logged, so that day can come out short; daily was judged good enough. A run missed while the server was off happens when it's back. Logs: `journalctl -u agrostma-fleet-daily` (or `-monthly`).
+On the office server these run from systemd timers in `deploy/` (installed by `deploy/install-services.sh`): `store_fleet_km` then `sync_fleet_log` every night at 00:10 for the day that just ended, re-checking the day before for trips Zeek reported late, and `close_fleet_month` on the 1st at 01:00, after the daily job has logged the month's last day. A trip still under way at that hour (a late emergency call) isn't finished when the day is logged. The next night's re-check adds a vehicle Zeek hadn't reported at all and updates the local km to the fuller number, but a vehicle already logged in Notion for that day isn't rewritten there. A run missed while the server was off happens when it's back. Logs: `journalctl -u agrostma-fleet-daily` (or `-monthly`).
 
 Only one copy may write the Notion log: `sync_fleet_log` skips vehicles already logged that day, but another script that doesn't check would add the same day twice and double the odometer.
 
