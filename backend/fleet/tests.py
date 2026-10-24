@@ -124,14 +124,20 @@ class StoreKmTests(TestCase):
 
     @patch('fleet.services.fetch_zeek_trips')
     def test_never_replaces_a_stored_day_with_fewer_km(self, fetch):
-        full = [{'listaUbicaciones': [point(100000), point(112500)]}, {'listaUbicaciones': [point(112500), point(130250)]}]
+        # 209.88 km: not exact in binary, so an equal re-read must still count as equal
+        full = [{'listaUbicaciones': [point(100000), point(112500)]}, {'listaUbicaciones': [point(112500), point(309880)]}]
         fetch.return_value = full
         store_km(date(2026, 10, 2), date(2026, 10, 2), lambda msg: None)
         for later in ([], full[:1]):  # Zeek answers empty, then with only part of the day
             fetch.return_value = later
             store_km(date(2026, 10, 2), date(2026, 10, 2), lambda msg: None)
-        self.assertEqual(float(VehicleDayKm.objects.get(imei='111', day=date(2026, 10, 2)).km), 30.25)
+        self.assertEqual(float(VehicleDayKm.objects.get(imei='111', day=date(2026, 10, 2)).km), 209.88)
         self.assertEqual(VehicleStop.objects.filter(imei='111', day=date(2026, 10, 2)).count(), 2)
+
+        fetch.return_value = full
+        logs = []
+        store_km(date(2026, 10, 2), date(2026, 10, 2), logs.append)
+        self.assertFalse([m for m in logs if 'conservan' in m], logs)
 
 
 class NotionStopsTests(SimpleTestCase):
