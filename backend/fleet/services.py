@@ -222,7 +222,7 @@ def store_km(first_day, last_day, log):
                 continue
             km = day_km(trips) if trips else 0
             stored = VehicleDayKm.objects.filter(imei=imei, day=day).values_list('km', flat=True).first()
-            if stored is not None and km < stored:
+            if stored is not None and km < float(stored):  # day_km is a float rounded to 2 places
                 log(f'[unidad {n}] {day}: Zeek da {km} km, menos de los {stored} guardados; se conservan')
                 continue
             VehicleDayKm.objects.update_or_create(imei=imei, day=day, defaults={'km': km})
