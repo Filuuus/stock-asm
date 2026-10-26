@@ -14,6 +14,9 @@ install -m 644 agrostma-fleet-daily.service agrostma-fleet-daily.timer \
 systemctl daemon-reload
 systemctl enable --now agrostma-fleet-daily.timer agrostma-fleet-monthly.timer
 
+# nginx.conf needs the interno.agrostma.com certificate. Stop before touching nginx without it: a config
+# that fails nginx -t would stay on disk and keep nginx from starting at the next reboot.
+[ -e /etc/letsencrypt/live/interno.agrostma.com/fullchain.pem ] || { echo 'Run install-https.sh first.' >&2; exit 1; }
 install -m 644 nginx.conf /etc/nginx/sites-available/agrostma
 ln -sf /etc/nginx/sites-available/agrostma /etc/nginx/sites-enabled/agrostma
 rm -f /etc/nginx/sites-enabled/default
