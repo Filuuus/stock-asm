@@ -199,3 +199,47 @@ class PaymentsWithoutPolizaTests(SimpleTestCase):
         for name, (application, covered) in cases.items():
             with self.subTest(name):
                 self.assertEqual(_payments_without_poliza(self.facturas, [application], covered, *self.period), [])
+
+
+class ExportRecentMonthsTests(SimpleTestCase):
+    def test_exports_last_month_and_this_month_across_new_year(self):
+        from unittest.mock import patch
+        from . import exports
+        with patch.object(exports, 'EARLIEST_EXPORT_MONTH', date(2026, 9, 1)), \
+                patch.object(exports, 'export_month', side_effect=lambda y, m: f'{y}-{m}') as export:
+            result = exports.export_recent_months(date(2027, 1, 5))
+        self.assertEqual([c.args for c in export.call_args_list], [(2026, 12), (2027, 1)])
+        self.assertEqual(result, [{'month': '2026-12', 'path': '2026-12'}, {'month': '2027-01', 'path': '2027-1'}])
+
+    def test_skips_months_before_the_first_export_and_reports_open_files(self):
+        from unittest.mock import patch
+        from . import exports
+        with patch.object(exports, 'export_month', side_effect=exports.ExportFileInUse('x')):
+            result = exports.export_recent_months(date(2026, 9, 10))
+        self.assertEqual([r['month'] for r in result], ['2026-09'])
+        self.assertIn('abierto en Excel', result[0]['error'])
+
+    def test_an_open_file_keeps_the_old_version_and_leaves_no_temp_file(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from openpyxl import Workbook
+        from . import exports
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(exports, 'build_month_workbook', return_value=Workbook()), \
+                patch.object(Path, 'replace', side_effect=PermissionError):
+            with self.assertRaises(exports.ExportFileInUse):
+                exports.export_month(2026, 10, folder)
+            self.assertEqual(list((Path(folder) / '2026').iterdir()), [])
+
+    def test_sheets_are_protected_and_go_in_a_year_folder(self):
+        import tempfile
+        from unittest.mock import patch
+        import openpyxl
+        from openpyxl import Workbook
+        from . import exports
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(exports, 'build_month_workbook', return_value=Workbook()):
+            path = exports.export_month(2026, 10, folder)
+            self.assertEqual(path.parent.name, '2026')
+            self.assertTrue(openpyxl.load_workbook(path).active.protection.sheet)

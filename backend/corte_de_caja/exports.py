@@ -30,6 +30,7 @@ CorteDeCajaAdjustment table - the old spreadsheet is never read as an input.
 """
 
 import calendar
+import os
 from datetime import date
 from pathlib import Path
 
@@ -343,29 +344,51 @@ def build_month_workbook(year, month):
     return wb
 
 
+class ExportFileInUse(Exception):
+    """The month's workbook is open in Excel on someone's PC: Windows refuses to replace an open
+    file, so it keeps the previous version until it's closed and the next run writes it."""
+
+
 def export_month(year, month, output_dir=None):
-    """Writes (overwrites) the month's workbook to CORTE_DE_CAJA_EXPORT_DIR
-    (or `output_dir`) - see core/settings.py. That directory is expected to
-    be an SMB-shared folder on the office server so the accountant/manager
-    can open the file directly, without any manual export step; making the
-    directory actually SMB-visible is a one-time server/IT configuration,
-    not something this function does.
+    """Writes (overwrites) the month's workbook to <CORTE_DE_CAJA_EXPORT_DIR>/<year>/ (or
+    `output_dir`). In production that's a folder on the office file server (see
+    deploy/install-auto-share.sh) that the accountant and management open in Excel.
     """
-    output_dir = Path(output_dir or settings.CORTE_DE_CAJA_EXPORT_DIR)
+    output_dir = Path(output_dir or settings.CORTE_DE_CAJA_EXPORT_DIR) / str(year)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     wb = build_month_workbook(year, month)
+    # The workbook is a report, not a form: changes go through the website. Protection without a
+    # password only stops accidental typing; the folder's Windows permissions are what make it read-only.
+    for ws in wb.worksheets:
+        ws.protection.sheet = True
     filename = f'Corte de Caja {year}-{month:02d}.xlsx'
     path = output_dir / filename
 
-    # Write to a temp file then replace atomically, so a job that runs
-    # while someone has the file open (or another export overlaps) never
-    # leaves a half-written, corrupt workbook in the shared folder. If she
-    # has the file open in Excel when this runs, Windows may refuse the
-    # replace outright (a held file lock, not just a race) - that raises
-    # here rather than corrupting anything; the temp file is simply
-    # overwritten and retried on the next scheduled run.
-    tmp_path = output_dir / f'.{filename}.tmp'
+    # Write to a temp file then replace, so a run never leaves a half-written workbook in the folder.
+    # Per-process name: the timer and the page's button can run at the same time.
+    tmp_path = output_dir / f'.{filename}.{os.getpid()}.tmp'
     wb.save(tmp_path)
-    tmp_path.replace(path)
+    try:
+        tmp_path.replace(path)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise ExportFileInUse(filename) from exc
     return path
+
+
+def export_recent_months(today=None):
+    """Regenerates this month's and last month's workbooks (last month keeps changing while late
+    pólizas are posted). Returns one entry per month: {'month': 'YYYY-MM', 'path'} or {'month', 'error'}."""
+    today = today or date.today()
+    last_month = date(today.year - (today.month == 1), 12 if today.month == 1 else today.month - 1, 1)
+    results = []
+    for month_start in (last_month, today.replace(day=1)):
+        if month_start < EARLIEST_EXPORT_MONTH:
+            continue
+        label = f'{month_start:%Y-%m}'
+        try:
+            results.append({'month': label, 'path': str(export_month(month_start.year, month_start.month))})
+        except ExportFileInUse:
+            results.append({'month': label, 'error': 'El archivo está abierto en Excel; se actualizará cuando lo cierren.'})
+    return results

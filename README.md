@@ -111,19 +111,15 @@ The Notion integration needs access to the log database and to every vehicle car
 
 ### Corte de Caja monthly export
 
-`python manage.py export_corte_de_caja` regenerates that month's `.xlsx` workbook (one sheet per business day, matching the layout the accountant used to build by hand) at `CORTE_DE_CAJA_EXPORT_DIR` — every run fully overwrites the file with current data, so it's always safe to re-run. Refuses to generate anything before September 2026 (`corte_de_caja/exports.py::EARLIEST_EXPORT_MONTH`) — this replaces the manual process going forward, it doesn't backfill history.
+`python manage.py export_corte_de_caja` regenerates this month's and last month's `.xlsx` workbooks (one sheet per business day, matching the layout the accountant used to build by hand) at `CORTE_DE_CAJA_EXPORT_DIR/<year>/Corte de Caja <year>-<month>.xlsx`. Last month is included because it keeps changing while late pólizas are posted. Every run fully overwrites the files with current data, so it's always safe to re-run. The sheets are protected (no password) so nobody types into a report by accident; changes go through the website. Refuses to generate anything before September 2026 (`corte_de_caja/exports.py::EARLIEST_EXPORT_MONTH`) — this replaces the manual process going forward, it doesn't backfill history.
 
 ```
-python manage.py export_corte_de_caja                    # current month
+python manage.py export_corte_de_caja                    # this month and last month
 python manage.py export_corte_de_caja --year 2026 --month 9
 ```
 
 Each day's sheet follows the accountant's own layout (same columns, fonts, borders, merged title and date, `TOTAL EFECTIVO`/`TERMINAL`/`CHEQUES`/`CORTE` block with live formulas), with rows grouped in blocks by zone, a transfers section outside `TOTAL CORTE`, and extra columns/totals the automatic version adds. Block headers use the ERP's own zone names (ZONA 1, OFICINA...); to show the salesperson's name instead, set `CORTE_DE_CAJA_ZONE_LABELS` in `backend/.env`, e.g. `CORTE_DE_CAJA_ZONE_LABELS="ZONA1=Nombre Apellido;ZONA2=Nombre Apellido"` (kept out of the code so real names never reach the repo).
 
-Set `CORTE_DE_CAJA_EXPORT_DIR` in `backend/.env` to wherever this should land — defaults to a local `backend/exports/corte_de_caja/` folder, which is fine for dev but not what the accountant should actually open. In production it should point at a real folder on the (Windows) server that's shared out over SMB, so opening the file is exactly as before, just without the manual build step:
+`CORTE_DE_CAJA_EXPORT_DIR` defaults to a local `backend/exports/corte_de_caja/` folder for dev. On the office server it points at a folder on the file server mounted read-write at `/mnt/auto` (`Compartidos\Auto`, `deploy/install-auto-share.sh`; the Windows account should be able to write only there, and staff should only be able to read it). The `agrostma-corte-export` timer (installed by `deploy/install-services.sh`) runs the command every 15 minutes, Monday to Saturday 7:00–20:45, plus 23:30 every night; the Corte de Caja page's **Actualizar Excel** button (`POST /api/corte-de-caja/exportar/`) runs it on demand.
 
-1. Pick/create a folder on the server and share it over SMB the normal Windows way (Properties → Sharing) — this is a one-time server/IT step, not something the app does.
-2. Set `CORTE_DE_CAJA_EXPORT_DIR` to that folder's local path (e.g. `C:\Shares\CorteDeCaja`) so Django writes directly into the shared folder.
-3. Schedule `python manage.py export_corte_de_caja` to run periodically (Windows Task Scheduler; hourly is a reasonable starting cadence) so the file stays current without anyone triggering it by hand.
-
-If the accountant has the file open in Excel when a scheduled run lands, Windows may refuse to overwrite it (a held file lock) — the run fails safely (nothing gets corrupted) and picks back up on the next scheduled run once she's closed it.
+If someone has the file open in Excel when a run lands, Windows refuses to replace it: that month keeps its previous version (nothing gets corrupted), the run reports it (the button shows it as a warning), and the next run after the file is closed writes it. Excel doesn't reload an open file, so people see new numbers when they reopen it.

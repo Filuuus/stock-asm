@@ -1,0 +1,12 @@
+[Unit]
+Description=stock-asm Corte de Caja: regenerate this month's and last month's Excel workbooks in the shared folder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agrostma
+Group=agrostma
+UMask=0002
+WorkingDirectory=/srv/agrostma/app/backend
+ExecStart=/srv/agrostma/app/backend/venv/bin/python manage.py export_corte_de_caja
