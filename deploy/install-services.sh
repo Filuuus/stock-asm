@@ -10,9 +10,10 @@ systemctl enable agrostma-django agrostma-next
 systemctl restart agrostma-django agrostma-next
 
 install -m 644 agrostma-fleet-daily.service agrostma-fleet-daily.timer \
-    agrostma-fleet-monthly.service agrostma-fleet-monthly.timer /etc/systemd/system/
+    agrostma-fleet-monthly.service agrostma-fleet-monthly.timer \
+    agrostma-corte-export.service agrostma-corte-export.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now agrostma-fleet-daily.timer agrostma-fleet-monthly.timer
+systemctl enable --now agrostma-fleet-daily.timer agrostma-fleet-monthly.timer agrostma-corte-export.timer
 
 # nginx.conf needs the interno.agrostma.com certificate. Stop before touching nginx without it: a config
 # that fails nginx -t would stay on disk and keep nginx from starting at the next reboot.

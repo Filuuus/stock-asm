@@ -8,6 +8,7 @@ from accounts.permissions import IsAccountingOrManagement
 from api.models import AdmDocumentos
 
 from .date_differences import calculate_date_differences
+from .exports import export_recent_months
 from .models import CorteDeCajaAdjustment
 from .services import BANK_CODES, CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENCE_MEDIUM, calculate_corte_de_caja
 
@@ -162,3 +163,14 @@ def confirm_suggestions(request):
         confirmed += 1
         total_amount += float(row['amount'])
     return Response({'confirmed': confirmed, 'total_amount': total_amount})
+
+
+@api_view(['POST'])
+@permission_classes([IsAccountingOrManagement])
+def export_now(request):
+    """The page's "Actualizar Excel" button: the same regeneration the timer runs every 15 minutes,
+    for a change that can't wait."""
+    try:
+        return Response({'months': export_recent_months()})
+    except OSError:
+        return Response({'error': 'No se pudo escribir en la carpeta Auto del servidor de archivos.'}, status=503)

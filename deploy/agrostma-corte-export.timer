@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the Corte de Caja Excel workbooks during office hours
+
+[Timer]
+# Every 15 minutes during office hours, plus once at night for late pólizas. The Corte de Caja page's
+# "Actualizar Excel" button runs the same thing on demand.
+OnCalendar=Mon..Sat *-*-* 07..20:00/15
+OnCalendar=*-*-* 23:30
+
+[Install]
+WantedBy=timers.target

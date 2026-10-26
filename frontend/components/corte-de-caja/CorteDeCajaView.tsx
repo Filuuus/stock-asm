@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Loader2,
   Pencil,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -86,6 +87,8 @@ export default function CorteDeCajaView() {
   const [editNote, setEditNote] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ month: string; path?: string; error?: string }[] | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [view, setView] = useState<"corte" | "diferencias">("corte");
@@ -175,6 +178,23 @@ export default function CorteDeCajaView() {
       setError(err instanceof Error ? err.message : "No se pudieron confirmar las sugerencias.");
     } finally {
       setConfirmingBulk(false);
+    }
+  };
+
+  // The Excel files in the shared folder refresh on their own every 15 minutes; this is for a change
+  // that can't wait.
+  const handleExportNow = async () => {
+    setExporting(true);
+    setExportResult(null);
+    try {
+      const res = await apiFetch("/api/corte-de-caja/exportar/", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar el Excel.");
+      setExportResult(json.months);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo actualizar el Excel.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -394,9 +414,27 @@ export default function CorteDeCajaView() {
         {(loading || authLoading) && (
           <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
         )}
+        <Button
+          variant="outline"
+          className="ml-auto"
+          onClick={handleExportNow}
+          disabled={exporting}
+          title="El Excel de la carpeta compartida se actualiza solo cada 15 minutos"
+        >
+          <RefreshCw className={cn("w-4 h-4", exporting && "animate-spin")} />
+          Actualizar Excel
+        </Button>
       </div>
 
       {error && <Notice tone="error" summary={error} />}
+      {exportResult &&
+        exportResult.map((r) =>
+          r.error ? (
+            <Notice key={r.month} tone="warning" summary={`Excel ${r.month}: ${r.error}`} />
+          ) : (
+            <Notice key={r.month} tone="ok" summary={`Excel ${r.month} actualizado.`} />
+          ),
+        )}
 
       {/* Old results stay visible, faded, while the next ones load. */}
       {data && !error && (
