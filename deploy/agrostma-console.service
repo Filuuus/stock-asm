@@ -1,0 +1,24 @@
+# Status screen on the server's monitor (tty1) instead of the login prompt; other consoles (Ctrl+Alt+F2) still log in.
+# install-console.sh masks getty@tty1 so logind doesn't put a login back on it.
+[Unit]
+Description=stock-asm status screen on tty1
+After=multi-user.target
+Conflicts=getty@tty1.service
+
+[Service]
+DynamicUser=yes
+# Group access to the 0550 share mounts, so the folder checks can list them.
+SupplementaryGroups=agrostma
+ExecStart=/usr/bin/watch -t -c -n 30 /srv/agrostma/app/deploy/console-status.sh
+# No stdin: keystrokes on the console can't stop or suspend it.
+StandardInput=null
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Environment=TERM=linux
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
