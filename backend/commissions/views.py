@@ -4,10 +4,10 @@ from decimal import Decimal, InvalidOperation
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from accounts.permissions import IsManagement, IsWorker
+from accounts.permissions import IsManagement, IsWorker, is_accounting, is_management
 
 from .models import InvoiceCommissionOverride, LineRateOverride
-from .services import CommissionRepository, calculate_commissions
+from .services import CommissionRepository, calculate_commissions, scope_to_zone
 
 
 def _parse_date(value, default):
@@ -26,8 +26,14 @@ def commissions_summary(request):
     except ValueError:
         return Response({'error': 'date_from/date_to deben tener formato YYYY-MM-DD.'}, status=400)
 
-    result = calculate_commissions(date_from, date_to)
-    return Response(result)
+    # Accounting and management see every zone; a salesperson only the zone set on their account
+    # (Usuarios), and one without a zone sees none.
+    if is_management(request.user) or is_accounting(request.user):
+        return Response({**calculate_commissions(date_from, date_to), 'scope_zone': None})
+    zone = getattr(getattr(request.user, 'profile', None), 'zone', '')
+    if not zone:
+        return Response({'error': 'Tu cuenta no tiene zona asignada; pide a gerencia que la asigne.'}, status=403)
+    return Response({**scope_to_zone(calculate_commissions(date_from, date_to), zone), 'scope_zone': zone})
 
 
 @api_view(['GET'])

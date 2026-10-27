@@ -1025,3 +1025,20 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             ),
         },
     }
+
+
+def scope_to_zone(result, zone):
+    """calculate_commissions' result as one salesperson may see it: only their zone's lines, total and
+    warning rows. Punto de Venta invoices without a zone yet belong to no one, so that count is dropped."""
+    def own_rows(section):
+        rows = [r for r in section['rows'] if r['zone'] == zone]
+        return {**section, 'rows': rows, 'count': len(rows), 'total_amount': sum((r['total'] for r in rows), Decimal('0'))}
+
+    return {
+        **result,
+        'zone_totals': {zone: result['zone_totals'].get(zone, Decimal('0'))},
+        'lines': [line for line in result['lines'] if line['zone'] == zone],
+        'unresolved_payment_date': own_rows(result['unresolved_payment_date']),
+        'credit_noted': own_rows(result['credit_noted']),
+        'puntoventa_unassigned': {**result['puntoventa_unassigned'], 'count': 0, 'total_amount': Decimal('0')},
+    }

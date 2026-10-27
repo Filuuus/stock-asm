@@ -216,8 +216,8 @@ export default function CommissionsView() {
         `/api/commissions/summary/?date_from=${from}&date_to=${to}`,
         { cache: "no-store" },
       );
-      if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error ?? `El servidor respondió ${res.status}`);
       if (requestId !== requestIdRef.current) return;
       setData(json);
     } catch (err) {
@@ -470,25 +470,28 @@ export default function CommissionsView() {
             </CardHeader>
           </Card>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {COMMISSION_ZONES.map((zone) => (
-              <Card
-                key={zone}
-                onClick={() => handleZoneClick(zone)}
-                className={cn(
-                  "cursor-pointer transition-colors hover:border-gray-400",
-                  selectedZone === zone && "border-slate-900 ring-1 ring-slate-900",
-                )}
-              >
-                <CardHeader className="p-4">
-                  <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
-                  <CardTitle className="text-lg sm:text-xl">
-                    {formatMoney(data.zone_totals[zone] ?? 0)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
+          {/* A salesperson only gets their own zone, already the total above. */}
+          {!data.scope_zone && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {COMMISSION_ZONES.map((zone) => (
+                <Card
+                  key={zone}
+                  onClick={() => handleZoneClick(zone)}
+                  className={cn(
+                    "cursor-pointer transition-colors hover:border-gray-400",
+                    selectedZone === zone && "border-slate-900 ring-1 ring-slate-900",
+                  )}
+                >
+                  <CardHeader className="p-4">
+                    <CardDescription>{ZONE_LABELS[zone]}</CardDescription>
+                    <CardTitle className="text-lg sm:text-xl">
+                      {formatMoney(data.zone_totals[zone] ?? 0)}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
+              ))}
+            </div>
+          )}
 
           {data.unresolved_payment_date.count > 0 && (
             <Notice

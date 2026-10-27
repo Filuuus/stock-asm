@@ -82,4 +82,6 @@ export interface CommissionsSummary {
   lines: CommissionLine[];
   unresolved_payment_date: UnresolvedPaymentDate;
   credit_noted: CreditNoted;
+  // Set when a salesperson asks: the server already cut everything down to their zone.
+  scope_zone: Zone | null;
 }
