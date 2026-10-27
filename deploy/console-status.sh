@@ -22,14 +22,14 @@ for dir in /mnt/compartidos /mnt/auto; do
 done
 
 echo; echo 'Tareas programadas (última ejecución)'
-for unit in agrostma-corte-export agrostma-fleet-daily agrostma-fleet-monthly; do
+for unit in agrostma-corte-export agrostma-fleet-daily agrostma-fleet-monthly agrostma-backup; do
   result=$(systemctl show -P Result "$unit.service")
   last=$(systemctl show -P LastTriggerUSec "$unit.timer")
   [ "$result" = success ] && ok "$unit  ${last:-nunca}" || bad "$unit  $result  ${last:-nunca}"
 done
 
 echo; echo 'Disco'
-df -h --output=target,size,used,avail,pcent / | sed 's/^/  /'
+df -h --output=target,size,used,avail,pcent / /srv/backups | sed 's/^/  /'
 
 failed=$(systemctl --failed --no-legend --plain | awk '{print $1}')
 [ -n "$failed" ] && { echo; echo 'Unidades con falla:'; echo "$failed" | sed 's/^/  /'; }

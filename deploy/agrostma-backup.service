@@ -1,0 +1,12 @@
+[Unit]
+Description=stock-asm nightly backups: app data and Contabilidad to the backup SSD, app data to servercompac
+After=network-online.target srv-backups.mount
+Wants=network-online.target
+RequiresMountsFor=/srv/backups
+
+[Service]
+Type=oneshot
+User=agrostma
+Group=agrostma
+UMask=0027
+ExecStart=/srv/agrostma/app/deploy/backup.sh
