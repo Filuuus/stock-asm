@@ -39,7 +39,7 @@ class LoginTests(TestCase):
     def test_good_password_logs_in_and_returns_role(self):
         res = self.login()
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.json(), {'authenticated': True, 'username': 'vendedor', 'role': Profile.ROLE_SALESPERSON})
+        self.assertEqual(res.json(), {'authenticated': True, 'username': 'vendedor', 'role': Profile.ROLE_SALESPERSON, 'zone': ''})
         self.assertEqual(self.client.get('/api/auth/me/').json()['username'], 'vendedor')
 
     def test_wrong_password_is_rejected(self):

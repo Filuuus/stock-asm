@@ -30,7 +30,8 @@ export default function HeaderNav() {
     { href: "/catalogo", label: "Catálogo", show: true },
     { href: "/solicitudes", label: "Solicitudes", show: !!user, badge: pending },
     { href: "/fotos", label: "Fotos", show: !!user },
-    { href: "/comisiones", label: "Comisiones", show: staffSite },
+    // A salesperson without a zone has no commissions to see (the server refuses them too).
+    { href: "/comisiones", label: "Comisiones", show: staffSite && (!user || isAccounting || isManagement || !!user.zone) },
     {
       href: "/corte-de-caja",
       label: "Corte de Caja",

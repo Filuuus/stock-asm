@@ -19,6 +19,7 @@ def _user_payload(user):
         'authenticated': True,
         'username': user.username,
         'role': role,
+        'zone': profile.zone if profile else '',
     }
 
 

@@ -1,11 +1,16 @@
-"""Tests for the commission and ledger logic. SimpleTestCase only: these
-functions take plain data, and a test that touched a database would make
-Django try to create a test database on the ERP server."""
+"""Tests for the commission and ledger logic. The logic tests are SimpleTestCase: those
+functions take plain data. The access tests use TestCase, which only creates the local
+'default' test database, never one on the ERP server (calculate_commissions is mocked)."""
 
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, TestCase
+from rest_framework.test import APIClient
+
+from accounts.models import Profile
 
 from .models import CommissionCategoryRate, PuntoVentaClientZone
 from .services import (
@@ -17,6 +22,7 @@ from .services import (
     _extract_folio_tokens,
     _paid_dates_from_ledger,
     _rate_code_for,
+    scope_to_zone,
     attribute_ledger_payments,
 )
 
@@ -202,3 +208,57 @@ class PuntoVentaClientTests(SimpleTestCase):
         self.assertTrue(relative.applies_to('BIO-SPRI'))
         self.assertFalse(relative.applies_to('BIO-BOV'))
         self.assertTrue(PuntoVentaClientZone(cliente_id=2, zone='ZONA2').applies_to('ANY'))
+
+
+def _summary(zones):
+    rows = [{'zone': z, 'total': Decimal('100')} for z in zones]
+    return {
+        'zone_totals': {z: Decimal('10') for z in zones},
+        'lines': [{'zone': z, 'commission': Decimal('10')} for z in zones],
+        'unresolved_payment_date': {'count': len(rows), 'total_amount': Decimal('100') * len(rows), 'rows': rows},
+        'credit_noted': {'count': len(rows), 'total_amount': Decimal('100') * len(rows), 'rows': rows},
+        'puntoventa_unassigned': {'count': 3, 'total_amount': Decimal('900')},
+    }
+
+
+class ScopeToZoneTests(SimpleTestCase):
+    def test_keeps_only_the_zone_and_recounts_its_warnings(self):
+        scoped = scope_to_zone(_summary(['ZONA1', 'ZONA2', 'OFICINA']), 'ZONA2')
+        self.assertEqual(scoped['zone_totals'], {'ZONA2': Decimal('10')})
+        self.assertEqual({line['zone'] for line in scoped['lines']}, {'ZONA2'})
+        for key in ('unresolved_payment_date', 'credit_noted'):
+            self.assertEqual((scoped[key]['count'], scoped[key]['total_amount']), (1, Decimal('100')))
+        self.assertEqual(scoped['puntoventa_unassigned']['count'], 0)
+
+    def test_zone_with_nothing_this_period_shows_zero(self):
+        scoped = scope_to_zone(_summary(['ZONA1']), 'OFICINA')
+        self.assertEqual(scoped['zone_totals'], {'OFICINA': Decimal('0')})
+        self.assertEqual(scoped['lines'], [])
+
+
+@patch('commissions.views.calculate_commissions', lambda date_from, date_to: _summary(['ZONA1', 'ZONA2', 'OFICINA']))
+class CommissionsSummaryAccessTests(TestCase):
+    def _get(self, role, zone=''):
+        user = get_user_model().objects.create_user(username=f'{role}-{zone}', password='x')
+        user.profile.role, user.profile.zone = role, zone
+        user.profile.save()
+        client = APIClient()
+        client.force_authenticate(user)
+        return client.get('/api/commissions/summary/')
+
+    def test_accounting_and_management_see_every_zone(self):
+        for role in (Profile.ROLE_ACCOUNTING, Profile.ROLE_MANAGEMENT):
+            data = self._get(role).json()
+            self.assertEqual(set(data['zone_totals']), {'ZONA1', 'ZONA2', 'OFICINA'})
+            self.assertIsNone(data['scope_zone'])
+
+    def test_salesperson_sees_only_their_zone(self):
+        data = self._get(Profile.ROLE_SALESPERSON, 'OFICINA').json()
+        self.assertEqual(set(data['zone_totals']), {'OFICINA'})
+        self.assertEqual({line['zone'] for line in data['lines']}, {'OFICINA'})
+        self.assertEqual(data['scope_zone'], 'OFICINA')
+
+    def test_salesperson_without_zone_sees_nothing(self):
+        response = self._get(Profile.ROLE_SALESPERSON)
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn('lines', response.json())

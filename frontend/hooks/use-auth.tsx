@@ -8,6 +8,7 @@ export type Role = "SALESPERSON" | "ACCOUNTING" | "MANAGEMENT";
 interface AuthUser {
   username: string;
   role: Role;
+  zone: string; // "" when the account has none (Usuarios); scopes a salesperson's Comisiones
 }
 
 interface AuthContextValue {
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const res = await apiFetch("/api/auth/me/");
       const data = await res.json();
-      setUser(data.authenticated ? { username: data.username, role: data.role } : null);
+      setUser(data.authenticated ? { username: data.username, role: data.role, zone: data.zone ?? "" } : null);
     } catch {
       setUser(null);
     } finally {
@@ -54,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) {
         return { ok: false as const, error: data.error ?? "No se pudo iniciar sesión." };
       }
-      setUser({ username: data.username, role: data.role });
+      setUser({ username: data.username, role: data.role, zone: data.zone ?? "" });
       return { ok: true as const };
     },
     [],
