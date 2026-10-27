@@ -6,7 +6,9 @@ After=multi-user.target
 Conflicts=getty@tty1.service
 
 [Service]
-DynamicUser=yes
+# A static user: under DynamicUser, systemctl can't reach the bus ("Transport endpoint is not connected").
+User=nobody
+Group=nogroup
 # Group access to the 0550 share mounts, so the folder checks can list them.
 SupplementaryGroups=agrostma
 ExecStart=/usr/bin/watch -t -c -n 30 /srv/agrostma/app/deploy/console-status.sh
