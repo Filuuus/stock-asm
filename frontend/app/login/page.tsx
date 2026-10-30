@@ -16,9 +16,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Already signed in: nothing to do here, go to the catalog.
+  // Already signed in: nothing to do here, go to the staff landing page.
   useEffect(() => {
-    if (!loading && user) router.replace("/catalogo");
+    if (!loading && user) router.replace("/solicitudes");
   }, [loading, user, router]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -28,7 +28,7 @@ export default function LoginPage() {
     const result = await login(username, password);
     setSubmitting(false);
     if (result.ok) {
-      router.push("/catalogo");
+      router.push("/solicitudes");
     } else {
       setError(result.error);
     }
