@@ -29,7 +29,7 @@ for unit in agrostma-corte-export agrostma-fleet-daily agrostma-fleet-monthly ag
 done
 
 echo; echo 'Disco'
-df -h --output=target,size,used,avail,pcent / /srv/backups | sed 's/^/  /'
+df -h --output=target,size,used,avail,pcent / /srv/backups /srv/backups-contpaqi | sed 's/^/  /'
 
 failed=$(systemctl --failed --no-legend --plain | awk '{print $1}')
 [ -n "$failed" ] && { echo; echo 'Unidades con falla:'; echo "$failed" | sed 's/^/  /'; }

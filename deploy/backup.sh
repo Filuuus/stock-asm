@@ -3,12 +3,17 @@
 #   1. App data (SQLite database, product photos, exports) -> a dated snapshot on the backup SSD.
 #   2. Compartidos\Contabilidad -> a dated snapshot on the backup SSD.
 #   3. The same app data -> Compartidos\Auto\Respaldos on servercompac, so a copy lives off this machine.
+#   4. Contpaqi: the .bak of every ERP database that servercompac leaves in Respaldos\Contpaqi each night
+#      (deploy/windows/respaldo-contpaqi.ps1) -> compressed onto a volume on the HDD, kept 14 days,
+#      plus the first set of each month, kept a year.
+#      To restore one: unzstd <name>.bak.zst, then restore the .bak in SQL Server Management Studio.
 # Snapshots hard-link files that didn't change since the previous one, so each day only costs what changed.
 set -euo pipefail
 
 APP=${APP:-/srv/agrostma/app}
 SSD=${SSD:-/srv/backups}
 OFFSITE=${OFFSITE:-/mnt/auto/Respaldos}
+CONTPAQI=${CONTPAQI:-/srv/backups-contpaqi}
 KEEP_DAYS=30
 today=$(date +%F)
 cutoff=$(date -d "-$KEEP_DAYS days" +%F)
@@ -47,3 +52,29 @@ find "$OFFSITE/base de datos" -name 'db-*.sqlite3' ! -newermt "$cutoff" -delete
 # SMB: no owners, permissions or hard links, and coarse timestamps.
 rsync -rt --delete --modify-window=2 "$APP/frontend/public/products" "$APP/backend/exports" "$OFFSITE/archivos/"
 echo "$OFFSITE: db-$today.sqlite3 + archivos"
+
+contpaqi=$OFFSITE/Contpaqi
+# Fail (the status screen shows FALLA) when servercompac didn't leave a set in the last 36 hours.
+[ -n "$(find "$contpaqi" -maxdepth 1 -name '*.bak' -mmin -2160 2>/dev/null)" ] \
+    || { echo "No recent Contpaqi backups in $contpaqi." >&2; exit 1; }
+root=$CONTPAQI
+rm -rf "$root/$today.partial"
+mkdir -p "$root/$today.partial"
+for bak in "$contpaqi"/*.bak; do
+    zstd -q -T0 "$bak" -o "$root/$today.partial/$(basename "$bak").zst"
+done
+rm -rf "$root/$today"
+mv "$root/$today.partial" "$root/$today"
+contpaqi_cutoff=$(date -d '-14 days' +%F)
+for dir in "$root"/20??-??-??; do
+    [[ $(basename "$dir") < $contpaqi_cutoff ]] && rm -rf "$dir"
+done
+# Hard links: a monthly set costs no extra space until its daily set is pruned.
+month=$(date +%Y-%m)
+mkdir -p "$root/mensual"
+[ -e "$root/mensual/$month" ] || cp -al "$root/$today" "$root/mensual/$month"
+monthly_cutoff=$(date -d "$(date +%Y-%m-15) -12 months" +%Y-%m)
+for dir in "$root"/mensual/20??-??; do
+    [[ $(basename "$dir") < $monthly_cutoff ]] && rm -rf "$dir"
+done
+echo "$root/$today: $(du -sh "$root/$today" | cut -f1)"

@@ -1,8 +1,8 @@
 [Unit]
-Description=stock-asm nightly backups: app data and Contabilidad to the backup SSD, app data to servercompac
-After=network-online.target srv-backups.mount
+Description=stock-asm nightly backups: app data and Contabilidad to the SSD, app data to servercompac, Contpaqi to the HDD
+After=network-online.target
 Wants=network-online.target
-RequiresMountsFor=/srv/backups
+RequiresMountsFor=/srv/backups /srv/backups-contpaqi
 
 [Service]
 Type=oneshot
