@@ -10,7 +10,7 @@ import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import MatCalculator from "@/components/catalog/MatCalculator";
 import { MatSpec } from "@/lib/mats";
-import { CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
+import { CATALOG_OPENED_KEY, CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
 import ProductCard, { Availability, Price } from "@/components/catalog/ProductCard";
@@ -551,6 +551,16 @@ export default function ProductDetailView({
   mat?: { spec: MatSpec; nail: Product | null };
 }) {
   const router = useRouter();
+  // Marked on this page's own history entry, so it survives a reload and moving back and forward.
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem(CATALOG_OPENED_KEY)) return;
+      sessionStorage.removeItem(CATALOG_OPENED_KEY);
+      window.history.replaceState({ ...window.history.state, fromCatalog: true }, "");
+    } catch {
+      // storage blocked: the link goes to the catalog the plain way
+    }
+  }, [product.key]);
   const gea = product.gea;
   // Arriving from a part's "Aparece en" (our product's key) or the staff GEA
   // part search (a GEA code): start with that part selected.
@@ -575,6 +585,13 @@ export default function ProductDetailView({
         href="/catalogo"
         scroll={false}
         onClick={(e) => {
+          // Opened straight from the catalog: stepping back is instant. A related product or a
+          // shared link has no catalog behind it, so those go there with the remembered filters.
+          e.preventDefault();
+          if (window.history.state?.fromCatalog) {
+            router.back();
+            return;
+          }
           // Back to the same filtered list and scroll position the user left.
           let url = "/catalogo";
           try {
@@ -583,7 +600,6 @@ export default function ProductDetailView({
           } catch {
             // storage blocked: plain link to the catalog
           }
-          e.preventDefault();
           router.push(url, { scroll: false });
         }}
         className="mb-4 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"

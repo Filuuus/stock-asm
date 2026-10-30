@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, SlidersHorizontal } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -34,11 +34,17 @@ export const SORT_OPTIONS: { value: SortMode; label: string }[] = [
 
 const SORT_VALUES = SORT_OPTIONS.map((o) => o.value);
 
+// Cards rendered at a time: drawing the whole catalog at once is what makes it slow.
+const PAGE_SIZE = 48;
+
 // Remembered per tab so "‹ Catálogo" on a product page returns to the same
 // filtered list and scroll position.
 export const CATALOG_URL_KEY = "catalog-url";
 export const CATALOG_SCROLL_KEY = "catalog-scroll";
 export const CATALOG_RESTORE_KEY = "catalog-restore";
+const CATALOG_SHOWN_KEY = "catalog-shown";
+// A card was just opened from the catalog, so the product page can step back to it.
+export const CATALOG_OPENED_KEY = "catalog-opened";
 
 function session(action: (s: Storage) => void) {
   try {
@@ -69,15 +75,27 @@ export default function CatalogView({ products }: { products: Product[] }) {
     session((s) => s.setItem(CATALOG_URL_KEY, url));
   }, [filters, sortMode]);
 
-  // Arriving from a product's "‹ Catálogo" link: back to where the user was.
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const [restoreY, setRestoreY] = useState(0);
+
+  // Back to where the user was, with as many cards as they had loaded: from the browser's back
+  // button (kept on this history entry, so a fresh visit starts at the top) or from a product's
+  // "‹ Catálogo" link. The scroll waits for those cards, or the page is too short to reach it.
   useEffect(() => {
     session((s) => {
-      if (!s.getItem(CATALOG_RESTORE_KEY)) return;
-      s.removeItem(CATALOG_RESTORE_KEY);
-      const y = Number(s.getItem(CATALOG_SCROLL_KEY));
-      if (y) requestAnimationFrame(() => window.scrollTo(0, y));
+      let saved = window.history.state?.catalogView;
+      if (!saved && s.getItem(CATALOG_RESTORE_KEY)) {
+        s.removeItem(CATALOG_RESTORE_KEY);
+        saved = { y: Number(s.getItem(CATALOG_SCROLL_KEY)), shown: Number(s.getItem(CATALOG_SHOWN_KEY)) };
+      }
+      if (!saved) return;
+      setShown(saved.shown || PAGE_SIZE);
+      setRestoreY(saved.y);
     });
   }, []);
+  useEffect(() => {
+    if (restoreY) requestAnimationFrame(() => window.scrollTo(0, restoreY));
+  }, [restoreY]);
   // Phones only: the filter and sort side panels.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
@@ -138,6 +156,27 @@ export default function CatalogView({ products }: { products: Product[] }) {
     }
     return result;
   }, [filtered]);
+
+  // A different list starts from the top again.
+  const [shownFor, setShownFor] = useState(cards);
+  if (cards !== shownFor) {
+    setShownFor(cards);
+    setShown(PAGE_SIZE);
+  }
+
+  // Close to the end of the list (or the button clicked): the next cards. Re-armed after every
+  // page, because an observer only fires on a change and the button can still be in view.
+  const hasMore = shown < cards.length;
+  const loadMore = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!hasMore || !loadMore.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => entry.isIntersecting && setShown((n) => n + PAGE_SIZE),
+      { rootMargin: "800px" },
+    );
+    observer.observe(loadMore.current);
+    return () => observer.disconnect();
+  }, [hasMore, shown]);
 
   const activeFilters =
     filters.category.size + filters.line.size + filters.brand.size +
@@ -240,14 +279,35 @@ export default function CatalogView({ products }: { products: Product[] }) {
         {user && <GeaPartResults query={query} />}
 
         {cards.length > 0 ? (
-          <div
-            className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4"
-            onClickCapture={() => session((s) => s.setItem(CATALOG_SCROLL_KEY, String(window.scrollY)))}
-          >
-            {cards.map(({ product, versions }) => (
-              <ProductCard key={product.CIDPRODUCTO} product={product} versions={versions} />
-            ))}
-          </div>
+          <>
+            <div
+              className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4"
+              onClickCapture={(e) => {
+                const y = window.scrollY;
+                window.history.replaceState({ ...window.history.state, catalogView: { y, shown } }, "");
+                const opensHere = (e.target as Element).closest("a") && !e.metaKey && !e.ctrlKey && !e.shiftKey;
+                session((s) => {
+                  s.setItem(CATALOG_SCROLL_KEY, String(y));
+                  s.setItem(CATALOG_SHOWN_KEY, String(shown));
+                  if (opensHere) s.setItem(CATALOG_OPENED_KEY, "1");
+                });
+              }}
+            >
+              {cards.slice(0, shown).map(({ product, versions }) => (
+                <ProductCard key={product.CIDPRODUCTO} product={product} versions={versions} />
+              ))}
+            </div>
+            {hasMore && (
+              <button
+                ref={loadMore}
+                type="button"
+                onClick={() => setShown((n) => n + PAGE_SIZE)}
+                className="mt-4 self-center rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Ver más productos
+              </button>
+            )}
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white py-8 text-center">
             <p className="text-sm text-gray-500">Sin productos que mostrar.</p>
