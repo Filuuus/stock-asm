@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import MatCalculator from "@/components/catalog/MatCalculator";
+import DescriptionBody from "@/components/catalog/DescriptionBody";
+import LineCard from "@/components/catalog/LineCard";
 import MatSpecBanner from "@/components/catalog/MatSpecBanner";
 import { MatSpec, matSheet } from "@/lib/mats";
 import { CATALOG_OPENED_KEY, CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
@@ -556,7 +558,7 @@ function Description({ product }: { product: ProductDetail }) {
       ) : (
         <>
           {text ? (
-            <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">{sheet?.body ?? text}</p>
+            <DescriptionBody text={sheet?.body ?? text} />
           ) : (
             <p className="text-sm text-gray-400">Sin descripción.</p>
           )}
@@ -657,6 +659,11 @@ export default function ProductDetailView({
           )}
           <Availability product={product} className="mt-2 text-sm" />
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
+          {product.related_lines.length > 0 && (
+            <Link href="/comparar-tapetes" className="mt-3 inline-block text-sm text-blue-600 hover:underline">
+              ¿No sabes cuál elegir? Compara tapetes y colchones
+            </Link>
+          )}
           {mat && <MatCalculator mat={product} spec={mat.spec} nail={mat.nail} />}
           {product.staff && <StaffBox staff={product.staff} />}
           {product.staff && <PublicSwitch product={product} />}
@@ -738,6 +745,22 @@ export default function ProductDetailView({
       <AppearsIn product={product} />
       {gea && <PartsList title="Refacciones" parts={gea.spare_parts} />}
       {gea && <PartsList title="Se usa en" parts={gea.used_in} />}
+      {product.related_lines.length > 0 && (
+        <section className="mt-10">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-semibold text-gray-900">Otras líneas</h2>
+            <Link href="/comparar-tapetes" className="text-sm text-blue-600 hover:underline">
+              Comparar tapetes y colchones
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {product.related_lines.map((line) => (
+              <LineCard key={line.line} line={line} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {product.related.length > 0 && (
         <section className="mt-10">
           <h2 className="mb-3 text-lg font-semibold text-gray-900">Productos relacionados</h2>

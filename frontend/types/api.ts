@@ -72,6 +72,7 @@ export interface ProductDetail extends Product {
   description: string | null; // written by staff (or pre-filled from the manufacturer)
   variants: VariantOption[]; // the family's versions, this one included; empty without a family
   related: ProductSummary[]; // same category and line
+  related_lines: ProductLine[]; // a mat's page recommends other lines instead (then related is empty)
   // Staff only (null for the public): live from the ERP.
   staff: {
     warehouses: { name: string; units: number }[]; // every warehouse holding stock, trucks included
@@ -115,4 +116,19 @@ export interface CatalogRules {
   hidden: { key: string; slug: string; name: string }[];
   categories: CategoryRuleRow[];
   brands: { erp_name: string; public_name: string }[];
+}
+
+// A product line (PebbleTop, Atmos...): what a description's "Línea:" groups.
+export interface ProductLine {
+  line: string;
+  key: string; // the page it opens: its best seller in stock
+  slug: string;
+  images: ProductImage[];
+  description: string;
+  uses: string; // every member's "Dónde se usa"
+  versions: number;
+  price_from: number | null;
+  mat_price: number | null; // lowest full 4 ft cow mat: what an area estimate multiplies
+  in_stock: boolean;
+  on_order: boolean;
 }

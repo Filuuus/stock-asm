@@ -19,6 +19,9 @@ from commissions.services import _classify_line
 # show prices or go on order, the public brand names and the hidden products are Gerencia's call:
 # they live in the database and are edited at /ajustes-catalogo (see public_rules).
 SPECIAL_ORDER_ID_OFFSET = 900000  # far above the ERP's ids
+# A product line (PebbleTop, Atmos...) is whatever descriptions say so in their spec sheet.
+LINE_RE = re.compile(r'^Línea:\s*(.+?)\s*$', re.M)
+USES_RE = re.compile(r'^(?:Dónde se usa|Uso):\s*(.+)$', re.M)
 NO_RULE = CategoryRule()
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
@@ -123,14 +126,14 @@ class InventoryRepository:
 
     @staticmethod
     def fetch_stock():
-        """{product id: units} in ALMACEN GENERAL for the latest fiscal year
-        (formula verified in the ERP schema notes; the other warehouses are
-        people's trucks, not stock for sale)."""
+        """{product id: units} in ALMACEN GENERAL for the latest fiscal year (the other
+        warehouses are people's trucks, not stock for sale). Period 12 repeats the last real
+        month and already includes the opening balance: adding INICIALES counts it twice."""
         with connections['erp'].cursor() as cursor:
             cursor.execute(
                 """
                 SELECT CIDPRODUCTO,
-                       (CENTRADASINICIALES + CENTRADASPERIODO12) - (CSALIDASINICIALES + CSALIDASPERIODO12)
+                       CENTRADASPERIODO12 - CSALIDASPERIODO12
                 FROM admExistenciaCosto
                 WHERE CIDALMACEN = %s
                   AND CIDEJERCICIO = (SELECT MAX(CIDEJERCICIO) FROM admExistenciaCosto WHERE CIDALMACEN = %s)
@@ -148,7 +151,7 @@ class InventoryRepository:
             cursor.execute(
                 """
                 SELECT a.CNOMBREALMACEN,
-                       (e.CENTRADASINICIALES + e.CENTRADASPERIODO12) - (e.CSALIDASINICIALES + e.CSALIDASPERIODO12)
+                       e.CENTRADASPERIODO12 - e.CSALIDASPERIODO12
                 FROM admExistenciaCosto e
                 JOIN admAlmacenes a ON a.CIDALMACEN = e.CIDALMACEN
                 JOIN admProductos p ON p.CIDPRODUCTO = e.CIDPRODUCTO
@@ -434,8 +437,46 @@ def get_product_detail(key, is_worker):
     code = product['CCODIGOPRODUCTO']
     detail = _product_detail(product, code, catalog, by_code, is_worker)
     description = ProductDescription.objects.filter(producto_codigo=code).values_list('text', flat=True).first()
-    detail.update(description=description, related=_related(product, catalog), variants=_variants(product, catalog))
+    line = LINE_RE.search(description or '')
+    detail.update(description=description, variants=_variants(product, catalog),
+                  related=[] if line else _related(product, catalog),
+                  related_lines=[row for row in _lines(catalog) if row['line'] != line[1]][:RELATED_LIMIT] if line else [])
     return detail if is_worker else scrub(detail)
+
+
+def _lines(catalog):
+    """The catalog by product line: each stands for its members with one product's page, its best
+    seller in stock (as _variants picks), and the lowest price any of them shows."""
+    texts = dict(ProductDescription.objects.filter(text__contains='Línea:').values_list('producto_codigo', 'text'))
+    members = defaultdict(list)
+    for p in catalog:
+        line = LINE_RE.search(texts.get(p['CCODIGOPRODUCTO'], ''))
+        if line:
+            members[line[1]].append(p)
+    rows = []
+    for line, products in members.items():
+        lead = min(products, key=lambda p: (not p['in_stock'], p['sold_rank'] or float('inf'), int(p['key'])))
+        prices = [p['price'] for p in products if p['price']]
+        # What an area estimate multiplies: the full 4 ft cow mat, not a narrow or calf version's price.
+        options = lambda p: (p.get('variant') or {}).get('options') or {}
+        mat_prices = [p['price'] for p in products if p['price'] and options(p).get('Ancho', '4 pies') == '4 pies'
+                      and options(p).get('Animal', 'Vacas') == 'Vacas']
+        rows.append({
+            'line': line, 'key': lead['key'], 'slug': lead['slug'], 'images': lead['images'],
+            'description': texts[lead['CCODIGOPRODUCTO']],
+            'uses': ' '.join(u for p in products for u in USES_RE.findall(texts[p['CCODIGOPRODUCTO']])),
+            'versions': len({str((p.get('variant') or {}).get('options') or p['key']) for p in products}),
+            'price_from': min(prices) if prices else None,
+            'mat_price': min(mat_prices) if mat_prices else None,
+            'in_stock': any(p['in_stock'] for p in products), 'on_order': any(p['on_order'] for p in products),
+            'sold_rank': min((p['sold_rank'] for p in products if p['sold_rank']), default=None),
+        })
+    return sorted(rows, key=lambda r: (not r['in_stock'], r['sold_rank'] or float('inf'), r['line']))  # best sellers first
+
+
+def get_product_lines(is_worker):
+    rows = _lines(_catalog(is_worker))
+    return rows if is_worker else scrub(rows)
 
 
 def summary(p):

@@ -158,6 +158,7 @@ class ProductDetailTests(SimpleTestCase):
                 patch('api.services.ProductDescription') as descriptions, \
                 patch('api.services._gea_products', return_value=self.GEA), \
                 patch.object(InventoryRepository, 'fetch_product_activity', return_value={}):
+            descriptions.objects.filter.return_value.values_list.return_value.first.return_value = None
             part = get_product_detail('2', True)
         self.assertEqual([(a['parent']['CCODIGOPRODUCTO'], a['pos']) for a in part['appears_in']],
                          [('7041-2700-550', '0020')])

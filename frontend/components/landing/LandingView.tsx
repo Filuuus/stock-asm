@@ -201,6 +201,10 @@ export default function LandingView({ products, coverage }: { products: Product[
               );
             })}
           </div>
+          <Link href="/comparar-tapetes" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">
+            ¿Buscas tapetes o colchones? Compáralos y calcula cuántos necesitas
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </Link>
         </div>
       </section>
 

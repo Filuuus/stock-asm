@@ -34,33 +34,33 @@ const BOTTOMS: Record<MatBottom, Tile> = {
 };
 
 // The mat's cross-section to scale: the top edge, then back along the bottom edge, sampled every half px.
-function outline(top: MatTop, bottom: MatBottom, height: number) {
+function outline(top: MatTop, bottom: MatBottom, height: number, width: number) {
   const edge = ([tile, depth]: Tile, x: number) => Math.min(depth(((x % tile) + tile) % tile / tile), height);
   const points: string[] = [];
-  for (let x = 0; x <= WIDTH; x += 0.5) points.push(`${x},${edge(TOPS[top], x).toFixed(1)}`);
-  for (let x = WIDTH; x >= 0; x -= 0.5) points.push(`${x},${(height - Math.min(edge(BOTTOMS[bottom], x), height * 0.6)).toFixed(1)}`);
+  for (let x = 0; x <= width; x += 0.5) points.push(`${x},${edge(TOPS[top], x).toFixed(1)}`);
+  for (let x = width; x >= 0; x -= 0.5) points.push(`${x},${(height - Math.min(edge(BOTTOMS[bottom], x), height * 0.6)).toFixed(1)}`);
   return points.join(" ");
 }
 
 // To scale: a mat's own top and underside, or a mattress's cover over its foam.
-function Profile({ layers, top, bottom }: { layers: MatLayer[]; top: MatTop; bottom: MatBottom }) {
+export function Profile({ layers, top, bottom, width = WIDTH }: { layers: MatLayer[]; top: MatTop; bottom: MatBottom; width?: number }) {
   const heights = layers.map((l) => Math.max(l.mm * PX_PER_MM, 5));
   const total = heights.reduce((a, b) => a + b, 0);
   let y = 0;
   return (
     <svg
-      width={WIDTH}
+      width={width}
       height={total + 1}
-      viewBox={`0 0 ${WIDTH} ${total + 1}`}
+      viewBox={`0 0 ${width} ${total + 1}`}
       role="img"
       aria-label={`Corte del producto: ${layers.map((l) => `${l.label ?? "espesor"} ${l.mm} mm`).join(", ")}`}
       className="shrink-0"
     >
       {layers.length === 1 ? (
-        <polygon points={outline(top, bottom, total)} className="fill-slate-800" />
+        <polygon points={outline(top, bottom, total, width)} className="fill-slate-800" />
       ) : (
         layers.map((l, i) => {
-          const rect = <rect key={l.text} y={y} width={WIDTH} height={heights[i]} className={i ? "fill-slate-300" : "fill-slate-800"} />;
+          const rect = <rect key={l.text} y={y} width={width} height={heights[i]} className={i ? "fill-slate-300" : "fill-slate-800"} />;
           y += heights[i];
           return rect;
         })
