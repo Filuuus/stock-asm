@@ -41,8 +41,8 @@ def quote_requests(request):
 @api_view(['GET'])
 @permission_classes([IsWorker])
 def quote_pending(request):
-    """How many requests still wait for staff: the badge on the Solicitudes menu link."""
-    return Response({'nuevas': QuoteRequest.objects.filter(status=QuoteRequest.STATUS_NEW).count()})
+    """What the badge on the Solicitudes menu link counts."""
+    return Response({'nuevas': quotes.pending_count()})
 
 
 @api_view(['GET'])
@@ -57,26 +57,53 @@ def quote_staff(request, pk):
     req = get_object_or_404(QuoteRequest, pk=pk)
     if request.method == 'PUT':
         try:
-            quotes.set_items(req, request.data.get('items'))
+            quotes.set_items(req, request.data.get('items'), request.user)
         except quotes.QuoteError as e:
             return _error(e)
-    return Response(quotes.staff_view(req))
+    return Response(quotes.staff_view(req, request.user))
+
+
+# What any staff member can do to a request; approving and reopening are management's.
+STAFF_ACTIONS = {
+    'contactar': lambda req, user, data: quotes.mark_contacted(req, user),
+    'deshacer-contacto': lambda req, user, data: quotes.undo_contacted(req, user),
+    'tomar': lambda req, user, data: quotes.take(req, user),
+    'soltar': lambda req, user, data: quotes.release(req, user),
+    'enviada': lambda req, user, data: quotes.mark_sent(req, user),
+    'nota': lambda req, user, data: quotes.add_note(req, user, data.get('text')),
+    'cerrar': lambda req, user, data: quotes.close(req, user, data.get('reason')),
+}
+MANAGEMENT_ACTIONS = {
+    'aprobar': lambda req, user, data: quotes.approve(req, user, data.get('valid_days', quotes.DEFAULT_VALID_DAYS)),
+    'reabrir': lambda req, user, data: quotes.reopen(req, user),
+}
 
 
 @api_view(['POST'])
-@permission_classes([IsManagement])
-def quote_decide(request, pk, decision):
-    if decision not in ('aprobar', 'rechazar'):
+@permission_classes([IsWorker])
+def quote_action(request, pk, action):
+    change = STAFF_ACTIONS.get(action) or MANAGEMENT_ACTIONS.get(action)
+    if change is None:
         return Response(status=404)
+    if action in MANAGEMENT_ACTIONS and not IsManagement().has_permission(request, None):
+        return Response(status=403)
     req = get_object_or_404(QuoteRequest, pk=pk)
     try:
-        if decision == 'aprobar':
-            quotes.approve(req, request.user, request.data.get('valid_days', quotes.DEFAULT_VALID_DAYS))
-        else:
-            quotes.reject(req, request.user)
+        change(req, request.user, request.data)
     except quotes.QuoteError as e:
         return _error(e)
-    return Response(quotes.staff_view(req))
+    return Response(quotes.staff_view(req, request.user))
+
+
+@api_view(['DELETE'])
+@permission_classes([IsWorker])
+def quote_note(request, pk, note):
+    req = get_object_or_404(QuoteRequest, pk=pk)
+    try:
+        quotes.delete_note(req, request.user, note)
+    except quotes.QuoteError as e:
+        return _error(e)
+    return Response(quotes.staff_view(req, request.user))
 
 
 # /ajustes-catalogo: every change returns the whole page's data.

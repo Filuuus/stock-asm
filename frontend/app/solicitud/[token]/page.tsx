@@ -54,7 +54,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
           />
         )}
         {req.status === "REJECTED" && (
-          <Notice tone="warning" title="No pudimos atender esta solicitud" summary="Contáctanos para revisarla juntos." />
+          <Notice tone="warning" title="Solicitud cerrada" summary="Si quieres retomarla, escríbenos." />
         )}
       </div>
 
