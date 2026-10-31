@@ -10,31 +10,16 @@ from django.core.cache import cache
 from django.db import connections
 from django.utils.text import slugify
 from .models import AdmClasificacionesValores, AdmProductos
-from catalog.models import ProductDescription
+from catalog.models import BrandRule, CategoryRule, HiddenProduct, ProductDescription, SpecialOrderProduct
 from catalog.services import get_images_by_codes
 from commissions.services import _classify_line
 
-# Public catalog rules (owner, 2026-10-13): logged-out visitors only see products
-# in stock; prices only for these categories (not chemicals, fans, services -
-# too many close competitors) and only while in stock; no part numbers anywhere
-# (customers would buy the exact piece elsewhere); and the brand only when it's
-# a real brand, never the distributor we buy from.
-PUBLIC_PRICE_CATEGORIES = {'R', 'R_NW', 'B'}
-PUBLIC_BRANDS = {
-    'GEA FARM TECHNOLOGIES': 'GEA',
-    'BIONAT-SANO, SA DE CV': 'Bionat',
-    'NORTH WEST RUBBER': 'North West Rubber',
-    'VES-ARTEX': 'VES-Artex',
-}
-NO_PUBLIC_BRAND_CATEGORIES = {'R_CHEM'}
-# Out of stock but still public as "Sobre pedido" (management wants to push
-# them, 2026-10-13): mats and fans always, Bionat only if sold in the last 12
-# months (the rest is mostly discontinued).
-ON_ORDER_CATEGORIES = {'R_NW', 'R_FAN'}
-# Mats bought only from a distributor (2018-2022), brand unconfirmed, each a duplicate of a
-# mat we stock: hidden from the public (user, 2026-10-16).
-HIDDEN_FROM_PUBLIC = {2566, 2568, 2569}
-# GEA-style codes inside names ("VALVULA (7050-1935-000)", "JGO 4X7023-2721-060").
+# Public catalog rules (owner, 2026-10-13): logged-out visitors only see what's in stock or on
+# order; no part numbers anywhere (customers would buy the exact piece elsewhere). Which categories
+# show prices or go on order, the public brand names and the hidden products are Gerencia's call:
+# they live in the database and are edited at /ajustes-catalogo (see public_rules).
+SPECIAL_ORDER_ID_OFFSET = 900000  # far above the ERP's ids
+NO_RULE = CategoryRule()
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
 CODE_KEYS = {'CCODIGOPRODUCTO', 'code', 'gea_code', 'replacement'}
@@ -262,6 +247,7 @@ def get_inventory_catalog(is_worker, raw=False):
             # GEA part numbers (ERP purchases, checked 2026-10-16).
             if product['variant'] or (product['category'] == 'R_NW' and 'TAPETE' in product['CNOMBREPRODUCTO']):
                 product['brand'] = 'NORTH WEST RUBBER'
+        data += _special_order_rows()
 
         images_by_code = get_images_by_codes([p['CCODIGOPRODUCTO'] for p in data])
         for product in data:
@@ -272,23 +258,44 @@ def get_inventory_catalog(is_worker, raw=False):
     return _apply_role(data, is_worker)
 
 
+def _special_order_rows():
+    """Catalog rows for SpecialOrderProduct: no stock or ERP price, so they're on order and quoted."""
+    return [{
+        'CIDPRODUCTO': SPECIAL_ORDER_ID_OFFSET + p.pk, 'CCODIGOPRODUCTO': p.code, 'CNOMBREPRODUCTO': p.name,
+        'CPRECIO1': 0, 'CIMPUESTO1': 16, 'category': 'R_NW', 'brand': 'NORTH WEST RUBBER', 'line': 'CONFORT ANIMAL',
+        'key': str(SPECIAL_ORDER_ID_OFFSET + p.pk), 'slug': slugify(p.name)[:60].strip('-'), 'stock': 0,
+        'sold_rank': None, 'variant': None, 'special_order': True,
+    } for p in SpecialOrderProduct.objects.order_by('pk')]
+
+
+def public_rules():
+    return {
+        'hidden': set(HiddenProduct.objects.values_list('product_id', flat=True)),
+        'categories': {r.category: r for r in CategoryRule.objects.all()},
+        'brands': dict(BrandRule.objects.values_list('erp_name', 'public_name')),
+    }
+
+
 def _apply_role(data, is_worker):
     """Per request, never cached: the cached catalog is shared by every role.
-    Staff see everything; the public only what's in stock or on order
-    (ON_ORDER_CATEGORIES), priced per PUBLIC_PRICE_CATEGORIES. Codes are still here - _scrub removes them."""
+    Staff see everything; the public only what's in stock or on order and not
+    hidden, priced per public_rules. Codes are still here - _scrub removes them."""
     gea = _gea_products() if is_worker else {}
+    rules = public_rules()
     result = []
     for product in data:
+        rule = rules['categories'].get(product['category'], NO_RULE)
         in_stock = product['stock'] > 0
-        on_order = not in_stock and (product['category'] in ON_ORDER_CATEGORIES
-                                     or (product['category'] == 'B' and product['sold_rank'] is not None))
-        if not is_worker and ((not in_stock and not on_order) or product.get('CIDPRODUCTO') in HIDDEN_FROM_PUBLIC):
+        on_order = not in_stock and (rule.on_order == CategoryRule.ON_ORDER_ALWAYS or (
+            rule.on_order == CategoryRule.ON_ORDER_IF_SOLD and product['sold_rank'] is not None))
+        hidden = product.get('CIDPRODUCTO') in rules['hidden']
+        if not is_worker and ((not in_stock and not on_order) or hidden):
             continue
         note = (gea.get(product['CCODIGOPRODUCTO']) or {}).get('note') or {}
-        visible = is_worker or product['category'] in PUBLIC_PRICE_CATEGORIES
+        visible = is_worker or rule.show_price
         brand = product['brand']
         if not is_worker:
-            brand = None if product['category'] in NO_PUBLIC_BRAND_CATEGORIES else PUBLIC_BRANDS.get(brand)
+            brand = None if rule.hide_brand else rules['brands'].get(brand)
         result.append({
             **product,
             'CPRECIO1': product['CPRECIO1'] if visible else None,
@@ -301,6 +308,7 @@ def _apply_role(data, is_worker):
             'stock': product['stock'] if is_worker else None,
             'in_stock': in_stock,
             'on_order': on_order,
+            'hidden': hidden,
             # Staff only: GEA no longer supplies it (and what replaces it).
             'discontinued': {'replacement': note.get('replacement')} if note.get('not_orderable') else None,
         })

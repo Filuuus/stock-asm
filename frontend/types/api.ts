@@ -27,6 +27,8 @@ export interface Product {
   in_stock: boolean;
   // Out of stock but offered anyway ("Sobre pedido"): mats, fans, selling Bionat.
   on_order: boolean;
+  hidden: boolean; // Gerencia took it off the public site (staff still see it)
+  special_order?: boolean; // not in the ERP: a SpecialOrderProduct
   // 1 = best seller over the last 12 months; null = no sales.
   sold_rank: number | null;
   // Mats sold in several versions: one catalog card per family, options on the product page.
@@ -98,4 +100,19 @@ export interface ProductDetail extends Product {
       replacement_ours: ProductSummary[]; // our products for the replacement code
     } | null; // staff only
   } | null;
+}
+
+// /ajustes-catalogo
+export interface CategoryRuleRow {
+  category: string;
+  show_price: boolean;
+  on_order: "NEVER" | "ALWAYS" | "IF_SOLD";
+  hide_brand: boolean;
+}
+
+export interface CatalogRules {
+  specials: { key: string; slug: string; name: string; hidden: boolean; photos: number }[];
+  hidden: { key: string; slug: string; name: string }[];
+  categories: CategoryRuleRow[];
+  brands: { erp_name: string; public_name: string }[];
 }

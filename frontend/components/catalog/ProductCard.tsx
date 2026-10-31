@@ -129,7 +129,7 @@ export function Price({ product, className }: { product: ProductSummary; classNa
     return <span className={cn("text-xs font-medium text-gray-400", className)}>Precio disponible para personal</span>;
   }
   if (product.price <= 0) {
-    return <span className={cn("text-sm font-medium text-gray-400", className)}>Sin precio</span>;
+    return <span className={cn("text-sm font-medium text-gray-400", className)}>{product.on_order ? "Se cotiza" : "Sin precio"}</span>;
   }
   return (
     <span className={cn("text-xl font-semibold text-gray-900 sm:text-2xl", className)}>

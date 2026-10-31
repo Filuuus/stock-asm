@@ -10,7 +10,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: ["/", "/producto/"],
       disallow: [
         "/carrito", "/solicitud/", "/solicitudes", "/fotos", "/comisiones", "/corte-de-caja", "/facturas",
-        "/ventas", "/rentabilidad", "/usuarios", "/login",
+        "/ventas", "/rentabilidad", "/usuarios", "/ajustes-catalogo", "/login",
       ],
     },
     sitemap: `${site}/sitemap.xml`,

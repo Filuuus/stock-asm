@@ -57,6 +57,7 @@ export default function HeaderNav() {
       links: [
         { href: "/ventas", label: "Ventas", show: staff && isManagement },
         { href: "/rentabilidad", label: "Rentabilidad", show: staff && isManagement },
+        { href: "/ajustes-catalogo", label: "Ajustes", show: staff && isManagement },
       ],
     },
   ]

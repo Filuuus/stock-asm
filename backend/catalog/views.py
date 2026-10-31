@@ -6,7 +6,7 @@ from rest_framework.throttling import AnonRateThrottle
 
 from accounts.permissions import IsManagement, IsWorker
 
-from . import quotes
+from . import quotes, rules
 from .models import QuoteRequest
 
 
@@ -77,3 +77,48 @@ def quote_decide(request, pk, decision):
     except quotes.QuoteError as e:
         return _error(e)
     return Response(quotes.staff_view(req))
+
+
+# /ajustes-catalogo: every change returns the whole page's data.
+def _rules_response(change, *args):
+    try:
+        change(*args)
+    except rules.RuleError as e:
+        return _error(e)
+    return Response(rules.overview())
+
+
+@api_view(['GET'])
+@permission_classes([IsManagement])
+def rules_overview(request):
+    return Response(rules.overview())
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def rules_specials(request):
+    return _rules_response(rules.add_special, request.data.get('name'))
+
+
+@api_view(['PATCH'])
+@permission_classes([IsManagement])
+def rules_special(request, key):
+    return _rules_response(rules.rename_special, key, request.data.get('name'))
+
+
+@api_view(['PUT'])
+@permission_classes([IsManagement])
+def rules_hidden(request, key):
+    return _rules_response(rules.set_hidden, key, request.data.get('hidden'))
+
+
+@api_view(['PUT'])
+@permission_classes([IsManagement])
+def rules_category(request, category):
+    return _rules_response(rules.set_category, category, request.data)
+
+
+@api_view(['PUT'])
+@permission_classes([IsManagement])
+def rules_brand(request):
+    return _rules_response(rules.set_brand, request.data.get('erp_name'), request.data.get('public_name'))

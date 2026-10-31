@@ -28,6 +28,40 @@ class ProductDescription(models.Model):
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
 
+class SpecialOrderProduct(models.Model):
+    """Something we can order but the ERP doesn't have (office samples of Animat's other lines):
+    in the catalog as "Sobre pedido", quoted by staff. Its catalog id is SPECIAL_ORDER_ID_OFFSET + pk."""
+
+    code = models.CharField(max_length=30, unique=True)  # what photos, descriptions and quotes point to
+    name = models.CharField(max_length=120)
+
+
+class HiddenProduct(models.Model):
+    """Not shown to the public; staff still see it. By catalog id, ERP or special order."""
+
+    product_id = models.PositiveIntegerField(unique=True)
+
+
+class CategoryRule(models.Model):
+    """What the public sees of a catalog category (management decides, /ajustes-catalogo)."""
+
+    ON_ORDER_NEVER, ON_ORDER_ALWAYS, ON_ORDER_IF_SOLD = 'NEVER', 'ALWAYS', 'IF_SOLD'
+    ON_ORDER_CHOICES = [(ON_ORDER_NEVER, 'Nunca'), (ON_ORDER_ALWAYS, 'Siempre'),
+                        (ON_ORDER_IF_SOLD, 'Si se vendió en 12 meses')]
+
+    category = models.CharField(max_length=10, unique=True)
+    show_price = models.BooleanField(default=False)
+    on_order = models.CharField(max_length=10, choices=ON_ORDER_CHOICES, default=ON_ORDER_NEVER)
+    hide_brand = models.BooleanField(default=False)
+
+
+class BrandRule(models.Model):
+    """The name the public sees for an ERP brand; a brand with no rule isn't shown (it may be a distributor)."""
+
+    erp_name = models.CharField(max_length=120, unique=True)
+    public_name = models.CharField(max_length=60)
+
+
 def _new_token():
     return secrets.token_urlsafe(16)
 

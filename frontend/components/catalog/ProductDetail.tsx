@@ -9,11 +9,14 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Notice } from "@/components/notice";
 import AddToCart from "@/components/catalog/AddToCart";
 import MatCalculator from "@/components/catalog/MatCalculator";
-import { MatSpec } from "@/lib/mats";
+import MatSpecBanner from "@/components/catalog/MatSpecBanner";
+import { MatSpec, matSheet } from "@/lib/mats";
 import { CATALOG_OPENED_KEY, CATALOG_RESTORE_KEY, CATALOG_URL_KEY } from "@/components/catalog/CatalogView";
 import { HIDE_BELOW_SM } from "@/components/sortable-table";
 import { CATEGORY_LABELS, lineLabel } from "@/components/catalog/CatalogFilters";
 import ProductCard, { Availability, Price } from "@/components/catalog/ProductCard";
+import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 import { formatDay } from "@/lib/dates";
@@ -479,6 +482,32 @@ function VariantPicker({ product }: { product: ProductDetail }) {
   );
 }
 
+// Gerencia's switch to take a product off the public site; undone here or at /ajustes-catalogo.
+function PublicSwitch({ product }: { product: ProductDetail }) {
+  const { isManagement } = useAuth();
+  const [hidden, setHidden] = useState(product.hidden);
+  const [error, setError] = useState<string | null>(null);
+  if (!isManagement) return null;
+
+  const change = async (visible: boolean) => {
+    setError(null);
+    const res = await apiFetch(`/api/catalogo/ajustes/ocultos/${product.key}/`, {
+      method: "PUT",
+      body: JSON.stringify({ hidden: !visible }),
+    });
+    if (res.ok) setHidden(!visible);
+    else setError("No se pudo guardar.");
+  };
+
+  return (
+    <div className="mt-4 flex items-center gap-2 text-sm text-gray-700">
+      <Switch id="visible-publico" checked={!hidden} onCheckedChange={change} />
+      <label htmlFor="visible-publico">Visible al público</label>
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </div>
+  );
+}
+
 // The product's description; staff can write or edit it right here.
 function Description({ product }: { product: ProductDetail }) {
   const [text, setText] = useState(product.description ?? "");
@@ -499,8 +528,10 @@ function Description({ product }: { product: ProductDetail }) {
   };
 
   if (!text && !isStaff) return null;
+  const sheet = matSheet(text);
   return (
     <section className="mt-10 max-w-3xl">
+      {sheet && draft === null && <MatSpecBanner sheet={sheet} />}
       <h2 className="mb-3 text-lg font-semibold text-gray-900">Descripción</h2>
       {draft !== null ? (
         <>
@@ -525,7 +556,7 @@ function Description({ product }: { product: ProductDetail }) {
       ) : (
         <>
           {text ? (
-            <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">{text}</p>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">{sheet?.body ?? text}</p>
           ) : (
             <p className="text-sm text-gray-400">Sin descripción.</p>
           )}
@@ -628,6 +659,7 @@ export default function ProductDetailView({
           <AddToCart product={product} withQuantity className="mt-4 max-w-sm" />
           {mat && <MatCalculator mat={product} spec={mat.spec} nail={mat.nail} />}
           {product.staff && <StaffBox staff={product.staff} />}
+          {product.staff && <PublicSwitch product={product} />}
           {gea?.service && <Service service={gea.service} />}
           {gea && gea.manuals.length > 0 && <Manuals manuals={gea.manuals} />}
           {note && (
