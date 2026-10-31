@@ -1,7 +1,8 @@
 from django.urls import path
 from catalog.views import rules_brand, rules_category, rules_hidden, rules_overview, rules_special, rules_specials
 
-from .views import gea_parts, inventory_list, product_description, product_detail, product_photo, product_photos
+from .views import (gea_parts, inventory_list, product_description, product_detail, product_lines, product_photo,
+                    product_photos)
 
 urlpatterns = [
     path('catalogo/ajustes/', rules_overview, name='catalog-rules'),
@@ -12,6 +13,7 @@ urlpatterns = [
     path('catalogo/ajustes/marcas/', rules_brand, name='catalog-rules-brand'),
     path('inventory/', inventory_list, name='inventory-list'),
     path('gea-parts/', gea_parts, name='gea-parts'),
+    path('inventory/lineas/', product_lines, name='product-lines'),
     path('inventory/<str:key>/', product_detail, name='product-detail'),
     path('inventory/<str:key>/fotos/', product_photos, name='product-photos'),
     path('inventory/<str:key>/fotos/<int:pk>/', product_photo, name='product-photo'),

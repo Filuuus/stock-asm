@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, SlidersHorizontal } from "lucide-react";
+import { ArrowUpDown, ChevronRight, SlidersHorizontal } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn, plural } from "@/lib/utils";
@@ -277,6 +278,18 @@ export default function CatalogView({ products }: { products: Product[] }) {
 
         {/* Staff only: a lookup by GEA part number. */}
         {user && <GeaPartResults query={query} />}
+
+        {filters.category.has("R_NW") && (
+          <Link
+            href="/comparar-tapetes"
+            className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 hover:bg-emerald-100"
+          >
+            <span>
+              <span className="font-semibold">¿No sabes cuál elegir?</span> Compara tapetes y colchones, y calcula cuántos necesitas.
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+          </Link>
+        )}
 
         {cards.length > 0 ? (
           <>

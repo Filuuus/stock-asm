@@ -9,8 +9,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from accounts.models import Profile
-from api.services import _catalog, get_inventory_catalog
-from catalog.models import HiddenProduct, QuoteRequest, SpecialOrderProduct
+from api.services import _catalog, _lines, get_inventory_catalog, get_product_detail
+from catalog.models import HiddenProduct, ProductDescription, QuoteRequest, SpecialOrderProduct
 
 CATALOG = [
     {'key': '1', 'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA (7050-1935-000)', 'price': 100.0, 'stock': 5.0,
@@ -251,3 +251,51 @@ class CatalogRulesTests(TestCase):
         self.assertEqual(self.client.get('/api/catalogo/ajustes/').status_code, 403)
         self.assertEqual(self.client.put('/api/catalogo/ajustes/ocultos/7/', {'hidden': True},
                                          'application/json').status_code, 403)
+
+
+@override_settings(CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}})
+class ProductLineTests(TestCase):
+    """Lines come from 'Línea:' in descriptions; a mat page recommends other lines, not its own versions."""
+    databases = {'default'}
+
+    def setUp(self):
+        def row(key, name, price, stock, rank=None):
+            return {'key': key, 'slug': name.lower(), 'CCODIGOPRODUCTO': f'C{key}', 'CNOMBREPRODUCTO': name, 'price': price,
+                    'CPRECIO1': price, 'price_visible': True, 'in_stock': stock, 'on_order': not stock, 'sold_rank': rank, 'images': [], 'category': 'R_NW',
+                    'line': 'CONFORT ANIMAL', 'variant': None}
+        self.catalog = [row('1', 'PEBBLE A', 900.0, True, 2), row('2', 'PEBBLE B', 700.0, False), row('3', 'PEBBLE C', 800.0, True, 1),
+                        row('4', 'IRON', 0.0, True), row('5', 'CLAVO', 20.0, True)]
+        for code, text in (('C1', 'Línea: PebbleTop\nUso: pasillos.'), ('C2', 'Línea: PebbleTop\nDónde se usa: caballerizas.'),
+                           ('C3', 'Línea: PebbleTop'), ('C4', 'Línea: IronGrip'), ('C5', 'Sin línea.')):
+            ProductDescription.objects.create(producto_codigo=code, text=text)
+
+    def test_groups_a_line_on_its_best_seller_in_stock_with_lowest_price_and_all_uses(self):
+        rows = {r['line']: r for r in _lines(self.catalog)}
+        self.assertEqual(sorted(rows), ['IronGrip', 'PebbleTop'])  # the nail has no line
+        pebble = rows['PebbleTop']
+        self.assertEqual((pebble['key'], pebble['price_from'], pebble['versions']), ('3', 700.0, 3))
+        self.assertEqual(pebble['uses'], 'pasillos. caballerizas.')
+        self.assertIsNone(rows['IronGrip']['price_from'])  # no price yet: quoted
+
+    def test_the_area_estimate_price_ignores_narrow_and_calf_versions(self):
+        self.catalog[1]['variant'] = {'options': {'Animal': 'Vacas', 'Ancho': '1 pie'}}  # the $700 one
+        self.catalog[2]['variant'] = {'options': {'Animal': 'Becerras', 'Ancho': '4 pies'}}
+        self.catalog[0]['variant'] = {'options': {'Animal': 'Vacas', 'Ancho': '4 pies'}}
+        pebble = next(r for r in _lines(self.catalog) if r['line'] == 'PebbleTop')
+        self.assertEqual((pebble['price_from'], pebble['mat_price']), (700.0, 900.0))
+
+    def test_a_line_page_recommends_the_other_lines_and_others_stay_as_they_were(self):
+        with patch('api.services._catalog', return_value=self.catalog), patch('api.services._gea_products', return_value={}), \
+                patch('api.services.InventoryRepository.fetch_product_activity', return_value=None):
+            detail = get_product_detail('1', False)
+            nail = get_product_detail('5', False)
+        self.assertEqual([r['line'] for r in detail['related_lines']], ['IronGrip'])
+        self.assertEqual(detail['related'], [])
+        self.assertEqual(nail['related_lines'], [])
+        self.assertTrue(nail['related'])
+
+    def test_lines_endpoint_is_public_and_hides_codes(self):
+        with patch('api.services._catalog', return_value=self.catalog):
+            response = self.client.get('/api/inventory/lineas/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('C1', str(response.content))

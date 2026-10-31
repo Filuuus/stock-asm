@@ -3,11 +3,16 @@ from rest_framework.parsers import MultiPartParser
 from accounts.permissions import IsWorker
 from rest_framework.response import Response
 from catalog.services import PhotoError, delete_photo, save_photo, set_description
-from .services import _catalog, get_inventory_catalog, get_product_detail, search_gea_parts
+from .services import _catalog, get_inventory_catalog, get_product_detail, get_product_lines, search_gea_parts
 
 @api_view(['GET'])
 def inventory_list(request):
     return Response(get_inventory_catalog(request.user.is_authenticated))
+
+
+@api_view(['GET'])
+def product_lines(request):
+    return Response(get_product_lines(request.user.is_authenticated))
 
 
 @api_view(['GET'])
