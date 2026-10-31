@@ -265,7 +265,7 @@ function Badge({ count }: { count?: number }) {
   if (!count) return null;
   return (
     <span
-      aria-label={`${count} nuevas`}
+      aria-label={`${count} por atender`}
       className="min-w-[1.25rem] rounded-full bg-amber-400 px-1.5 text-center text-xs font-semibold leading-5 text-slate-900"
     >
       {count}

@@ -82,14 +82,14 @@ export default function CatalogSettingsView() {
   if (authLoading) return null;
   if (!isManagement) {
     return (
-      <main className="mx-auto max-w-5xl p-6">
+      <main className="mx-auto w-full max-w-5xl p-6">
         <Notice tone="error" title="Esta página es solo para Gerencia." />
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-5xl p-4 sm:p-6">
       <h1 className="text-2xl font-semibold text-gray-900">Ajustes del catálogo</h1>
       <p className="mt-1 text-sm text-gray-500">Lo que cambies aquí se aplica de inmediato en el sitio público.</p>
       {error && (
@@ -121,8 +121,8 @@ export default function CatalogSettingsView() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Nombre</TableHead>
-                    <TableHead className="w-20 text-center">Fotos</TableHead>
-                    <TableHead className="w-24 text-center">Público</TableHead>
+                    <TableHead className="w-20 whitespace-nowrap text-center">Fotos</TableHead>
+                    <TableHead className="w-24 whitespace-nowrap text-center">Público</TableHead>
                     <TableHead className="w-20" />
                   </TableRow>
                 </TableHeader>

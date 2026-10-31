@@ -74,8 +74,9 @@ class QuoteRequest(models.Model):
     never in the repo or the ERP.
     """
 
-    STATUS_NEW, STATUS_APPROVED, STATUS_REJECTED = 'NEW', 'APPROVED', 'REJECTED'
-    STATUS_CHOICES = [(STATUS_NEW, 'Nueva'), (STATUS_APPROVED, 'Aprobada'), (STATUS_REJECTED, 'Rechazada')]
+    STATUS_NEW, STATUS_CONTACTED, STATUS_APPROVED, STATUS_REJECTED = 'NEW', 'CONTACTED', 'APPROVED', 'REJECTED'
+    STATUS_CHOICES = [(STATUS_NEW, 'Nueva'), (STATUS_CONTACTED, 'Contactada'), (STATUS_APPROVED, 'Aprobada'),
+                      (STATUS_REJECTED, 'Cerrada')]
 
     token = models.CharField(max_length=32, unique=True, default=_new_token, editable=False)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_NEW)
@@ -87,6 +88,10 @@ class QuoteRequest(models.Model):
     decided_at = models.DateTimeField(null=True, blank=True)
     decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     valid_until = models.DateField(null=True, blank=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name='owned_quote_requests')
+    contacted_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)  # the quote went out to the customer
 
     class Meta:
         ordering = ['-created_at']
@@ -106,3 +111,18 @@ class QuoteRequestItem(models.Model):
     class Meta:
         ordering = ['id']
         unique_together = [('request', 'producto_codigo')]
+
+
+class QuoteEvent(models.Model):
+    """A request's timeline, staff only: notes people write and what was done to it."""
+
+    NOTE, ACTION = 'NOTE', 'ACTION'
+
+    request = models.ForeignKey(QuoteRequest, related_name='events', on_delete=models.CASCADE)
+    kind = models.CharField(max_length=10, choices=[(NOTE, 'Nota'), (ACTION, 'Acción')])
+    text = models.TextField()
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'pk']

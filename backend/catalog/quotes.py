@@ -3,19 +3,27 @@
 Prices only ever leave the server for an approved request, and then only the
 prices frozen at approval - never the live catalog price.
 """
+import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from api.services import _catalog, scrub
 
-from .models import QuoteRequest, QuoteRequestItem
+from .models import QuoteEvent, QuoteRequest, QuoteRequestItem
 
 MAX_ITEMS = 100
 DEFAULT_VALID_DAYS = 15
 MAX_PRICE = Decimal('100000000')
+MAX_NOTE = 2000
+# Business days a request can wait before it stands out: a new one with nobody contacting it,
+# a contacted one with no activity at all (nothing here can see WhatsApp).
+NEW_AMBER_DAYS, NEW_RED_DAYS, STALE_DAYS = 1, 2, 3
+OPEN_STATUSES = (QuoteRequest.STATUS_NEW, QuoteRequest.STATUS_CONTACTED)
+AREA_RE = re.compile(r'Área: ([^,]+)')
 
 
 class QuoteError(ValueError):
@@ -79,6 +87,55 @@ def create_request(data):
     return req
 
 
+def business_days_since(start, now):
+    """Whole weekdays from start's date to now's; a weekend adds nothing."""
+    day, end, days = timezone.localtime(start).date(), timezone.localtime(now).date(), 0
+    while day < end:
+        day += timedelta(days=1)
+        days += day.weekday() < 5
+    return days
+
+
+def _display(user):
+    return (user.get_full_name() or user.username) if user else None
+
+
+def _log(req, user, text, kind=QuoteEvent.ACTION):
+    QuoteEvent.objects.create(request=req, author=user, text=text, kind=kind)
+
+
+def _last_activity(req):
+    return getattr(req, 'last_event', None) or req.contacted_at or req.created_at
+
+
+def _attention(req, now):
+    """amber or red when a request has waited too long, None otherwise."""
+    if req.status == QuoteRequest.STATUS_NEW:
+        days = business_days_since(req.created_at, now)
+        return 'red' if days >= NEW_RED_DAYS else 'amber' if days >= NEW_AMBER_DAYS else None
+    if req.status == QuoteRequest.STATUS_CONTACTED:
+        return 'stale' if business_days_since(_last_activity(req), now) >= STALE_DAYS else None
+    return None
+
+
+def _to_send(req):
+    return req.status == QuoteRequest.STATUS_APPROVED and req.sent_at is None
+
+
+def _with_activity(requests):
+    return requests.annotate(last_event=Max('events__created_at'))
+
+
+def pending_count():
+    """The menu badge: what needs someone and has nobody moving it."""
+    now = timezone.now()
+    return sum(
+        1 for r in _with_activity(QuoteRequest.objects.exclude(status=QuoteRequest.STATUS_REJECTED))
+        if (r.status == QuoteRequest.STATUS_NEW and r.owner_id is None) or _to_send(r)
+        or _attention(r, now) == 'stale'
+    )
+
+
 def _image(product):
     images = product.get('images') or []
     img = next((i for i in images if i['is_primary']), images[0] if images else None)
@@ -121,24 +178,36 @@ def public_view(req):
     rows = scrub(_rows(req, by_code, live_prices=False))
     approved = req.status == QuoteRequest.STATUS_APPROVED
     return {
-        'number': req.pk, 'status': req.status, 'created_at': req.created_at,
-        'name': req.name, 'valid_until': req.valid_until if approved else None,
+        # Contacted is internal: the customer's request is still in review.
+        'number': req.pk, 'status': QuoteRequest.STATUS_NEW if req.status == QuoteRequest.STATUS_CONTACTED else req.status,
+        'created_at': req.created_at, 'name': req.name, 'valid_until': req.valid_until if approved else None,
         'items': rows, 'total': _total(rows) if approved else None,
     }
 
 
 def staff_list():
-    return [{
-        'id': r.pk, 'status': r.status, 'created_at': r.created_at, 'name': r.name,
-        'company': r.company, 'items': r.items.count(),
-    } for r in QuoteRequest.objects.all()[:200]]
+    by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
+    now, today = timezone.now(), timezone.localdate()
+    rows = []
+    # order_by is needed: a query with Max() drops the model's default ordering.
+    newest = _with_activity(QuoteRequest.objects.select_related('owner').prefetch_related('items')).order_by('-created_at', '-pk')
+    for r in newest[:200]:
+        area = AREA_RE.search(r.note)
+        rows.append({
+            'id': r.pk, 'status': r.status, 'created_at': r.created_at, 'name': r.name, 'company': r.company,
+            'phone': r.phone, 'owner': _display(r.owner), 'attention': _attention(r, now), 'to_send': _to_send(r),
+            'expired': r.status == QuoteRequest.STATUS_APPROVED and bool(r.valid_until) and r.valid_until < today,
+            'comparison': r.note.startswith('Comparando opciones'), 'area': area[1] if area else None,
+            'items': [by_code.get(i.producto_codigo, {}).get('CNOMBREPRODUCTO', i.producto_codigo) for i in r.items.all()],
+        })
+    return rows
 
 
-def staff_view(req):
+def staff_view(req, user):
     by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
     # Approved requests show the frozen prices; open ones the live prices.
-    rows = _rows(req, by_code, live_prices=req.status == QuoteRequest.STATUS_NEW)
-    if req.status != QuoteRequest.STATUS_NEW:
+    rows = _rows(req, by_code, live_prices=req.status in OPEN_STATUSES)
+    if req.status not in OPEN_STATUSES:
         for r in rows:
             r.update(stock=by_code.get(r['code'], {}).get('stock'))
     return {
@@ -146,18 +215,81 @@ def staff_view(req):
         'name': req.name, 'phone': req.phone, 'company': req.company, 'note': req.note,
         'decided_at': req.decided_at, 'decided_by': req.decided_by.username if req.decided_by else None,
         'valid_until': req.valid_until, 'items': rows, 'total': _total(rows),
+        'owner': _display(req.owner), 'mine': req.owner_id == user.pk, 'to_send': _to_send(req),
+        'expired': req.status == QuoteRequest.STATUS_APPROVED and bool(req.valid_until)
+        and req.valid_until < timezone.localdate(),
+        'events': [{
+            'id': e.pk, 'kind': e.kind, 'text': e.text, 'author': _display(e.author), 'created_at': e.created_at,
+            'mine': e.author_id == user.pk,
+        } for e in req.events.select_related('author')],
     }
 
 
-def _require_new(req):
-    if req.status != QuoteRequest.STATUS_NEW:
+def _require_open(req):
+    if req.status not in OPEN_STATUSES:
         raise QuoteError('Esta solicitud ya fue atendida.')
 
 
-def set_items(req, items):
+def mark_contacted(req, user):
+    """From the WhatsApp link or the manual button; whoever writes first takes an unowned request."""
+    if req.status != QuoteRequest.STATUS_NEW:
+        return
+    req.status, req.contacted_at = QuoteRequest.STATUS_CONTACTED, timezone.now()
+    req.owner = req.owner or user
+    req.save()
+    _log(req, user, 'marcó la solicitud como contactada')
+
+
+def undo_contacted(req, user):
+    if req.status != QuoteRequest.STATUS_CONTACTED:
+        raise QuoteError('Esta solicitud no está contactada.')
+    req.status, req.contacted_at = QuoteRequest.STATUS_NEW, None
+    if req.owner_id == user.pk:
+        req.owner = None
+    req.save()
+    _log(req, user, 'deshizo el contacto')
+
+
+def take(req, user):
+    if req.owner_id != user.pk:
+        req.owner = user
+        req.save()
+        _log(req, user, 'tomó la solicitud')
+
+
+def release(req, user):
+    if req.owner_id is not None:
+        req.owner = None
+        req.save()
+        _log(req, user, 'soltó la solicitud')
+
+
+def mark_sent(req, user):
+    if not _to_send(req):
+        return
+    req.sent_at = timezone.now()
+    req.save()
+    _log(req, user, 'envió la cotización')
+
+
+def add_note(req, user, text):
+    text = str(text or '').strip()
+    if not text:
+        raise QuoteError('Escribe la nota.')
+    if len(text) > MAX_NOTE:
+        raise QuoteError(f'Máximo {MAX_NOTE} caracteres.')
+    _log(req, user, text, QuoteEvent.NOTE)
+
+
+def delete_note(req, user, pk):
+    if not req.events.filter(pk=pk, kind=QuoteEvent.NOTE, author=user).delete()[0]:
+        raise QuoteError('Solo puedes borrar tus propias notas.')
+
+
+def set_items(req, items, user=None):
     """Staff adjust quantities and prices before approving; quantity 0 removes the item.
     A typed price overrides the catalog's and is kept when management approves."""
-    _require_new(req)
+    _require_open(req)
     by_code = {i.producto_codigo for i in req.items.all()}
     cleaned = _clean_items(items, by_code)
     prices = {str(i['code']).strip(): _clean_price(i['unit_price'], i['code']) for i in items if 'unit_price' in i}
@@ -170,10 +302,11 @@ def set_items(req, items):
                 req.items.filter(producto_codigo=code).update(quantity=qty, **typed)
     if not req.items.exists():
         raise QuoteError('La solicitud debe conservar al menos un producto.')
+    _log(req, user, 'actualizó productos y precios')
 
 
 def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
-    _require_new(req)
+    _require_open(req)
     try:
         valid_days = int(valid_days)
     except (TypeError, ValueError):
@@ -195,11 +328,39 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
         req.decided_by = user
         req.valid_until = timezone.localdate() + timedelta(days=valid_days)
         req.save()
+        _log(req, user, 'aprobó la cotización')
 
 
-def reject(req, user):
-    _require_new(req)
-    req.status = QuoteRequest.STATUS_REJECTED
-    req.decided_at = timezone.now()
-    req.decided_by = user
-    req.save()
+def reopen(req, user):
+    """Gerencia fixes an approved quote: back to contacted, prices off the customer's link until approved again."""
+    if req.status != QuoteRequest.STATUS_APPROVED:
+        raise QuoteError('Solo se puede reabrir una cotización aprobada.')
+    prices = {p['CCODIGOPRODUCTO']: p['price'] for p in _catalog(True)}
+    with transaction.atomic():
+        for item in req.items.all():
+            live = prices.get(item.producto_codigo)
+            if live and item.unit_price == Decimal(str(live)).quantize(Decimal('0.01')):  # frozen, not typed
+                item.unit_price = None
+                item.save(update_fields=['unit_price'])
+        req.status, req.valid_until, req.sent_at = QuoteRequest.STATUS_CONTACTED, None, None
+        req.decided_at, req.decided_by = None, None
+        req.contacted_at = req.contacted_at or timezone.now()
+        req.save()
+        _log(req, user, 'reabrió la cotización')
+
+
+def close(req, user, reason):
+    """Any staff member, at any point: the reason stays in the timeline, never on the customer's link."""
+    reason = str(reason or '').strip()
+    if not reason:
+        raise QuoteError('Escribe por qué se cierra.')
+    if len(reason) > MAX_NOTE:
+        raise QuoteError(f'Máximo {MAX_NOTE} caracteres.')
+    if req.status == QuoteRequest.STATUS_REJECTED:
+        raise QuoteError('Esta solicitud ya está cerrada.')
+    with transaction.atomic():
+        req.status = QuoteRequest.STATUS_REJECTED
+        req.decided_at = timezone.now()
+        req.decided_by = user
+        req.save()
+        _log(req, user, f'cerró la solicitud: {reason}')

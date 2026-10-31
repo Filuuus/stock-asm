@@ -1,5 +1,6 @@
 """Quote requests. These use the local database only (databases = {'default'}),
 so no test database is created on the ERP server; the ERP catalog is mocked."""
+from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -7,11 +8,12 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 
 from accounts.models import Profile
 from catalog import quotes
 from api.services import _catalog, _lines, get_inventory_catalog, get_product_detail
-from catalog.models import HiddenProduct, ProductDescription, QuoteRequest, SpecialOrderProduct
+from catalog.models import HiddenProduct, ProductDescription, QuoteEvent, QuoteRequest, SpecialOrderProduct
 
 CATALOG = [
     {'key': '1', 'CCODIGOPRODUCTO': 'A', 'CNOMBREPRODUCTO': 'PEZONERA (7050-1935-000)', 'price': 100.0, 'stock': 5.0,
@@ -82,7 +84,7 @@ class QuoteRequestTests(TestCase):
     def test_staff_price_is_kept_at_approval_and_hidden_until_then(self, _):
         req = quotes.create_request({'name': 'C', 'phone': '33 1234 5678', 'items': [{'key': '1', 'quantity': 2}, {'key': '2', 'quantity': 1}]})
         quotes.set_items(req, [{'code': 'B', 'quantity': 3, 'unit_price': '1500.50'}])
-        row = {r['code']: r for r in quotes.staff_view(req)['items']}
+        row = {r['code']: r for r in quotes.staff_view(req, self.seller)['items']}
         self.assertEqual((row['B']['unit_price'], row['B']['subtotal']), (Decimal('1500.50'), Decimal('4501.50')))
         self.assertEqual(row['A']['unit_price'], Decimal('100'))  # untouched: the catalog's
         self.assertIsNone(quotes.public_view(req)['total'])
@@ -95,22 +97,121 @@ class QuoteRequestTests(TestCase):
     def test_a_blank_price_goes_back_to_the_catalog_and_bad_ones_are_refused(self, _):
         req = quotes.create_request({'name': 'C', 'phone': '33 1234 5678', 'items': [{'key': '1', 'quantity': 1}]})
         quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': 90}])
-        self.assertEqual(quotes.staff_view(req)['items'][0]['unit_price'], Decimal('90'))
+        self.assertEqual(quotes.staff_view(req, self.seller)['items'][0]['unit_price'], Decimal('90'))
         quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': ''}])
-        self.assertEqual(quotes.staff_view(req)['items'][0]['unit_price'], Decimal('100'))
+        self.assertEqual(quotes.staff_view(req, self.seller)['items'][0]['unit_price'], Decimal('100'))
         for bad in ('abc', 0, -5):
             with self.assertRaises(quotes.QuoteError):
                 quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': bad}])
 
-    def test_pending_count_for_the_menu_badge(self, _):
-        first = QuoteRequest.objects.get(token=self.send().json()['token'])
-        self.send()
-        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').status_code, 403)
-        self.client.force_login(self.seller)
-        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').json(), {'nuevas': 2})
+    def badge(self):
+        return self.client.get('/api/solicitudes/pendientes/').json()['nuevas']
+
+    def act(self, req, action, **data):
+        return self.client.post(f'/api/solicitudes/{req.pk}/{action}/', data, content_type='application/json')
+
+    def test_badge_counts_what_nobody_is_moving(self, _):
         self.client.force_login(self.manager)
-        self.client.post(f'/api/solicitudes/{first.pk}/rechazar/')
-        self.assertEqual(self.client.get('/api/solicitudes/pendientes/').json(), {'nuevas': 1})
+        self.assertEqual(self.badge(), 0)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.assertEqual(self.badge(), 1)  # new, no owner
+        self.act(req, 'contactar')
+        self.assertEqual(self.badge(), 0)  # someone has it
+        self.act(req, 'aprobar')
+        self.assertEqual(self.badge(), 1)  # approved, not sent
+        self.act(req, 'enviada')
+        self.assertEqual(self.badge(), 0)
+
+    def test_contacted_with_no_activity_returns_to_the_badge_until_a_note(self, _):
+        self.client.force_login(self.manager)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.act(req, 'contactar')
+        monday = timezone.make_aware(datetime(2026, 11, 2, 10))
+        QuoteEvent.objects.filter(request=req).update(created_at=monday - timedelta(days=7))
+        with patch('catalog.quotes.timezone.now', return_value=monday):
+            self.assertEqual(quotes.pending_count(), 1)
+            self.assertEqual(self.client.get('/api/solicitudes/').json()[0]['attention'], 'stale')
+        self.act(req, 'nota', text='esperando respuesta')
+        self.assertEqual(self.badge(), 0)
+
+    def test_whatsapp_contact_takes_it_and_can_be_undone(self, _):
+        self.client.force_login(self.seller)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        view = self.act(req, 'contactar').json()
+        self.assertEqual((view['status'], view['owner'], view['mine']), ('CONTACTED', 'vendedor', True))
+        self.act(req, 'contactar')  # a second click logs nothing
+        self.assertEqual(req.events.count(), 1)
+        view = self.act(req, 'deshacer-contacto').json()
+        self.assertEqual((view['status'], view['owner']), ('NEW', None))
+
+    def test_anyone_can_take_over_and_release(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.client.force_login(self.seller)
+        self.act(req, 'tomar')
+        self.client.force_login(self.manager)
+        self.assertEqual(self.act(req, 'tomar').json()['owner'], 'gerencia')
+        self.assertIsNone(self.act(req, 'soltar').json()['owner'])
+
+    def test_notes_are_staff_only_and_only_your_own_can_go(self, _):
+        token = self.send().json()['token']
+        req = QuoteRequest.objects.get(token=token)
+        self.client.force_login(self.seller)
+        note = self.act(req, 'nota', text='llega en enero').json()['events'][-1]
+        self.assertEqual(self.act(req, 'nota', text='  ').status_code, 400)
+        self.client.force_login(self.manager)
+        self.assertEqual(self.client.delete(f'/api/solicitudes/{req.pk}/notas/{note["id"]}/').status_code, 400)
+        self.client.logout()
+        self.assertNotIn('enero', str(self.client.get(f'/api/solicitudes/publica/{token}/').content))
+        self.client.force_login(self.seller)
+        self.assertEqual(self.client.delete(f'/api/solicitudes/{req.pk}/notas/{note["id"]}/').json()['events'], [])
+
+    def test_any_staff_can_close_with_a_reason_the_customer_never_sees(self, _):
+        token = self.send().json()['token']
+        req = QuoteRequest.objects.get(token=token)
+        self.client.force_login(self.seller)
+        self.assertEqual(self.act(req, 'cerrar', reason=' ').status_code, 400)
+        view = self.act(req, 'cerrar', reason='ya no le interesa').json()
+        self.assertEqual(view['status'], 'REJECTED')
+        self.assertIn('ya no le interesa', view['events'][-1]['text'])
+        self.client.logout()
+        public = self.client.get(f'/api/solicitudes/publica/{token}/')
+        self.assertEqual(public.json()['status'], 'REJECTED')
+        self.assertNotIn('interesa', str(public.content))
+
+    def test_contacted_looks_like_new_to_the_customer(self, _):
+        token = self.send().json()['token']
+        req = QuoteRequest.objects.get(token=token)
+        self.client.force_login(self.seller)
+        self.act(req, 'contactar')
+        self.client.logout()
+        self.assertEqual(self.client.get(f'/api/solicitudes/publica/{token}/').json()['status'], 'NEW')
+
+    def test_reopening_is_managements_and_takes_prices_off_the_link(self, _):
+        token = self.send().json()['token']
+        req = QuoteRequest.objects.get(token=token)
+        self.client.force_login(self.manager)
+        quotes.set_items(req, [{'code': 'B', 'quantity': 1, 'unit_price': 500}], self.manager)
+        self.act(req, 'aprobar')
+        self.client.force_login(self.seller)
+        self.assertEqual(self.act(req, 'reabrir').status_code, 403)
+        self.client.force_login(self.manager)
+        view = self.act(req, 'reabrir').json()
+        self.assertEqual(view['status'], 'CONTACTED')
+        self.assertEqual({i['code']: i['typed_price'] for i in view['items']}, {'A': None, 'B': 500.0})  # the catalog's freeze is gone, a typed one stays
+        self.client.logout()
+        public = self.client.get(f'/api/solicitudes/publica/{token}/').json()
+        self.assertEqual((public['status'], public['total']), ('NEW', None))
+
+    def test_staff_list_is_newest_first(self, _):
+        first = QuoteRequest.objects.get(token=self.send().json()['token'])
+        second = QuoteRequest.objects.get(token=self.send().json()['token'])
+        QuoteRequest.objects.filter(pk=first.pk).update(created_at=timezone.now() + timedelta(days=1))
+        self.assertEqual([r['id'] for r in quotes.staff_list()], [first.pk, second.pk])
+
+    def test_business_days_skip_weekends(self, _):
+        friday = timezone.make_aware(datetime(2026, 10, 30, 18))
+        self.assertEqual(quotes.business_days_since(friday, friday + timedelta(days=3)), 1)  # Monday
+        self.assertEqual(quotes.business_days_since(friday, friday + timedelta(days=2)), 0)  # Sunday
 
     def test_rejects_unknown_products_and_missing_phone(self, _):
         bad = self.client.post('/api/solicitudes/', {'name': 'X', 'phone': '33 1234 5678', 'items': [{'key': '9', 'quantity': 1}]},

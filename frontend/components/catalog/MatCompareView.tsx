@@ -93,7 +93,7 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
     setPicked((now) => (now.includes(name) ? now.filter((n) => n !== name) : now.length < MAX_COMPARED ? [...now, name] : now));
 
   return (
-    <main className="mx-auto max-w-7xl p-4 sm:p-6">
+    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
       <h1 className="text-2xl font-semibold text-gray-900 sm:text-3xl">Compara tapetes y colchones</h1>
       <p className="mt-2 max-w-2xl text-gray-600">
         Elige dónde lo vas a usar y compara hasta {MAX_COMPARED} productos. Si tienes dudas, en la oficina tenemos muestras para que los veas.
