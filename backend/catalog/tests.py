@@ -9,6 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from accounts.models import Profile
+from catalog import quotes
 from api.services import _catalog, _lines, get_inventory_catalog, get_product_detail
 from catalog.models import HiddenProduct, ProductDescription, QuoteRequest, SpecialOrderProduct
 
@@ -77,6 +78,29 @@ class QuoteRequestTests(TestCase):
         self.client.put(f'/api/solicitudes/{req.pk}/', {'items': [{'code': 'A', 'quantity': 5}, {'code': 'B', 'quantity': 0}]},
                         content_type='application/json')
         self.assertEqual([(i.producto_codigo, i.quantity) for i in req.items.all()], [('A', Decimal('5.00'))])
+
+    def test_staff_price_is_kept_at_approval_and_hidden_until_then(self, _):
+        req = quotes.create_request({'name': 'C', 'phone': '33 1234 5678', 'items': [{'key': '1', 'quantity': 2}, {'key': '2', 'quantity': 1}]})
+        quotes.set_items(req, [{'code': 'B', 'quantity': 3, 'unit_price': '1500.50'}])
+        row = {r['code']: r for r in quotes.staff_view(req)['items']}
+        self.assertEqual((row['B']['unit_price'], row['B']['subtotal']), (Decimal('1500.50'), Decimal('4501.50')))
+        self.assertEqual(row['A']['unit_price'], Decimal('100'))  # untouched: the catalog's
+        self.assertIsNone(quotes.public_view(req)['total'])
+        self.assertTrue(all(r['unit_price'] is None for r in quotes.public_view(req)['items']))
+        quotes.approve(req, User.objects.create_user('jefa'))
+        public = {r['code'] or r['name']: r for r in quotes.public_view(req)['items']}
+        self.assertEqual(public['JUNTA']['unit_price'], Decimal('1500.50'))
+        self.assertEqual(quotes.public_view(req)['total'], Decimal('4701.50'))
+
+    def test_a_blank_price_goes_back_to_the_catalog_and_bad_ones_are_refused(self, _):
+        req = quotes.create_request({'name': 'C', 'phone': '33 1234 5678', 'items': [{'key': '1', 'quantity': 1}]})
+        quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': 90}])
+        self.assertEqual(quotes.staff_view(req)['items'][0]['unit_price'], Decimal('90'))
+        quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': ''}])
+        self.assertEqual(quotes.staff_view(req)['items'][0]['unit_price'], Decimal('100'))
+        for bad in ('abc', 0, -5):
+            with self.assertRaises(quotes.QuoteError):
+                quotes.set_items(req, [{'code': 'A', 'quantity': 1, 'unit_price': bad}])
 
     def test_pending_count_for_the_menu_badge(self, _):
         first = QuoteRequest.objects.get(token=self.send().json()['token'])
@@ -293,6 +317,15 @@ class ProductLineTests(TestCase):
         self.assertEqual(detail['related'], [])
         self.assertEqual(nail['related_lines'], [])
         self.assertTrue(nail['related'])
+
+    def test_people_mats_and_animal_mats_never_recommend_each_other(self):
+        ProductDescription.objects.filter(producto_codigo='C5').update(text='Línea: StepSoft\nDónde se usa: operadores en fosas.')
+        with patch('api.services._catalog', return_value=self.catalog), patch('api.services._gea_products', return_value={}), \
+                patch('api.services.InventoryRepository.fetch_product_activity', return_value=None):
+            pebble = get_product_detail('1', False)
+            step = get_product_detail('5', False)
+        self.assertEqual([r['line'] for r in pebble['related_lines']], ['IronGrip'])
+        self.assertEqual(step['related_lines'], [])
 
     def test_lines_endpoint_is_public_and_hides_codes(self):
         with patch('api.services._catalog', return_value=self.catalog):

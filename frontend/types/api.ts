@@ -126,6 +126,7 @@ export interface ProductLine {
   images: ProductImage[];
   description: string;
   uses: string; // every member's "Dónde se usa"
+  for_people: boolean; // made for people: never shown beside the animal mats
   versions: number;
   price_from: number | null;
   mat_price: number | null; // lowest full 4 ft cow mat: what an area estimate multiplies

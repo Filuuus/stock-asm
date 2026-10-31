@@ -100,7 +100,7 @@ class QuoteRequestItem(models.Model):
     # Mirrors AdmProductos.CCODIGOPRODUCTO, same pattern as ProductImage.
     producto_codigo = models.CharField(max_length=30)
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
-    # Frozen when management approves; null = no price ("se cotiza aparte").
+    # Typed by staff, or frozen from the catalog when management approves; null = no price ("se cotiza aparte").
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     class Meta:

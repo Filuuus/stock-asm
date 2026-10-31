@@ -25,7 +25,7 @@ interface Detail {
   decided_by: string | null;
   valid_until: string | null;
   total: number;
-  items: { key: string | null; code: string; name: string; quantity: number; unit_price: number | null; subtotal: number | null; stock: number | null }[];
+  items: { key: string | null; code: string; name: string; quantity: number; unit_price: number | null; typed_price?: string | number | null; catalog_price?: number | null; subtotal: number | null; stock: number | null }[];
 }
 
 const units = (n: number | null) => (n === null ? "-" : Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 }));
@@ -44,6 +44,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
   const { user, loading, isManagement } = useAuth();
   const [req, setReq] = useState<Detail | null>(null);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [prices, setPrices] = useState<Record<string, string>>({});
   const [validDays, setValidDays] = useState("15");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
   const show = useCallback((data: Detail) => {
     setReq(data);
     setQuantities(Object.fromEntries(data.items.map((i) => [i.code, String(Number(i.quantity))])));
+    setPrices(Object.fromEntries(data.items.map((i) => [i.code, i.typed_price ? String(Number(i.typed_price)) : ""])));
   }, []);
 
   useEffect(() => {
@@ -91,7 +93,11 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
   }
 
   const isNew = req.status === "NEW";
-  const edited = req.items.some((i) => quantities[i.code] !== String(Number(i.quantity)));
+  const edited = req.items.some(
+    (i) =>
+      quantities[i.code] !== String(Number(i.quantity)) ||
+      (prices[i.code] ?? "") !== (i.typed_price ? String(Number(i.typed_price)) : ""),
+  );
   const link = typeof window === "undefined" ? "" : `${window.location.origin}/solicitud/${req.token}`;
   const message = `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista: ${link}`;
 
@@ -113,6 +119,10 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
         <p>
           <span className="text-gray-500">Teléfono:</span>{" "}
           <a href={`tel:${req.phone}`} className="text-blue-600 hover:underline">{req.phone}</a>
+          {" · "}
+          <a href={`https://wa.me/${whatsappNumber(req.phone)}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+            WhatsApp
+          </a>
         </p>
         <p><span className="text-gray-500">Recibida:</span> {formatDay(req.created_at)}</p>
         {req.decided_at && (
@@ -165,7 +175,25 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                 <td className={cn("hidden px-4 py-3 text-right sm:table-cell", i.stock !== null && i.stock <= 0 && "text-red-600")}>
                   {units(i.stock)}
                 </td>
-                <td className="num px-4 py-3 text-right">{i.unit_price !== null ? formatMoney(i.unit_price) : <span className="text-xs text-gray-500">Sin precio</span>}</td>
+                <td className="num px-4 py-3 text-right">
+                  {isNew ? (
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={prices[i.code] ?? ""}
+                      placeholder={i.catalog_price ? String(i.catalog_price) : "Sin precio"}
+                      onChange={(e) => setPrices((p) => ({ ...p, [i.code]: e.target.value }))}
+                      aria-label={`Precio de ${i.name}`}
+                      className="ml-auto w-28 text-right"
+                    />
+                  ) : i.unit_price !== null ? (
+                    formatMoney(i.unit_price)
+                  ) : (
+                    <span className="text-gray-400">Sin precio</span>
+                  )}
+                </td>
                 <td className="num px-4 py-3 text-right">{i.subtotal !== null ? formatMoney(i.subtotal) : "-"}</td>
               </tr>
             ))}
@@ -182,7 +210,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
       </div>
       {isNew && (
         <p className="mt-2 text-xs text-gray-500">
-          Precios actuales del catálogo; se congelan al aprobar. Cantidad 0 quita el producto. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
+          Escribe el precio con IVA para poner o cambiar el de un producto; en blanco usa el del catálogo. Los precios se congelan al aprobar. Cantidad 0 quita el producto. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
         </p>
       )}
 
@@ -196,11 +224,15 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
               disabled={busy}
               onClick={() =>
                 send(`/api/solicitudes/${req.id}/`, "PUT", {
-                  items: Object.entries(quantities).map(([code, quantity]) => ({ code, quantity: Number(quantity) || 0 })),
+                  items: Object.entries(quantities).map(([code, quantity]) => ({
+                    code,
+                    quantity: Number(quantity) || 0,
+                    unit_price: prices[code] ?? "",
+                  })),
                 })
               }
             >
-              Guardar cantidades
+              Guardar cambios
             </Button>
           )}
           {isManagement ? (
@@ -215,7 +247,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
               <Button variant="outline" disabled={busy || edited} onClick={() => send(`/api/solicitudes/${req.id}/rechazar/`, "POST")}>
                 Rechazar
               </Button>
-              {edited && <p className="w-full text-xs text-gray-500">Guarda las cantidades antes de aprobar.</p>}
+              {edited && <p className="w-full text-xs text-gray-500">Guarda los cambios antes de aprobar.</p>}
             </>
           ) : (
             <p className="text-sm text-gray-500">Solo gerencia puede aprobar o rechazar.</p>
