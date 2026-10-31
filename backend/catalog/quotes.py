@@ -15,6 +15,7 @@ from .models import QuoteRequest, QuoteRequestItem
 
 MAX_ITEMS = 100
 DEFAULT_VALID_DAYS = 15
+MAX_PRICE = Decimal('100000000')
 
 
 class QuoteError(ValueError):
@@ -39,6 +40,19 @@ def _clean_items(items, by_code, field='code'):
             raise QuoteError(f'Cantidad no válida para {code}.')
         cleaned[code] = cleaned.get(code, Decimal(0)) + qty
     return cleaned
+
+
+def _clean_price(value, code):
+    """A price staff typed, IVA included; blank clears it, back to the catalog's."""
+    if value in (None, ''):
+        return None
+    try:
+        price = Decimal(str(value)).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError):
+        raise QuoteError(f'Precio no válido para {code}.')
+    if not 0 < price <= MAX_PRICE:
+        raise QuoteError(f'Precio no válido para {code}.')
+    return price
 
 
 def create_request(data):
@@ -78,7 +92,7 @@ def _rows(req, by_code, live_prices):
     for item in req.items.all():
         p = by_code.get(item.producto_codigo, {})
         if live_prices:
-            price = p.get('price') or None
+            price = item.unit_price or p.get('price') or None
         else:
             price = item.unit_price if req.status == QuoteRequest.STATUS_APPROVED else None
         price = Decimal(str(price)) if price else None
@@ -89,6 +103,7 @@ def _rows(req, by_code, live_prices):
             'image': _image(p),
             'quantity': item.quantity,
             'unit_price': price,
+            **({'typed_price': item.unit_price, 'catalog_price': p.get('price') or None} if live_prices else {}),
             'subtotal': (price * item.quantity).quantize(Decimal('0.01')) if price else None,
             **({'stock': p.get('stock'), 'in_stock': p.get('in_stock')} if live_prices else {}),
         })
@@ -140,16 +155,19 @@ def _require_new(req):
 
 
 def set_items(req, items):
-    """Staff adjust quantities before approving; quantity 0 removes the item."""
+    """Staff adjust quantities and prices before approving; quantity 0 removes the item.
+    A typed price overrides the catalog's and is kept when management approves."""
     _require_new(req)
     by_code = {i.producto_codigo for i in req.items.all()}
     cleaned = _clean_items(items, by_code)
+    prices = {str(i['code']).strip(): _clean_price(i['unit_price'], i['code']) for i in items if 'unit_price' in i}
     with transaction.atomic():
         for code, qty in cleaned.items():
             if qty == 0:
                 req.items.filter(producto_codigo=code).delete()
             else:
-                req.items.filter(producto_codigo=code).update(quantity=qty)
+                typed = {'unit_price': prices[code]} if code in prices else {}
+                req.items.filter(producto_codigo=code).update(quantity=qty, **typed)
     if not req.items.exists():
         raise QuoteError('La solicitud debe conservar al menos un producto.')
 
@@ -166,6 +184,8 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
     prices = {p['CCODIGOPRODUCTO']: p['price'] for p in _catalog(True)}
     with transaction.atomic():
         for item in req.items.all():
+            if item.unit_price is not None:  # typed by staff
+                continue
             price = prices.get(item.producto_codigo)
             # $0 / missing price: left empty, the customer sees "se cotiza aparte".
             item.unit_price = Decimal(str(price)).quantize(Decimal('0.01')) if price else None

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Notice } from "@/components/notice";
 import { useCart } from "@/hooks/use-cart";
 import { apiFetch } from "@/lib/api";
+import { QUOTE_NOTE_KEY } from "@/lib/cart-note";
 import { plural, productHref } from "@/lib/utils";
 
 // The quote-request cart: prices stay private, so the customer sends the list
@@ -22,6 +23,18 @@ export default function CartPage() {
   const [form, setForm] = useState({ name: "", phone: "", company: "", note: "" });
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Arriving from the mat comparison: its options and area, ready to send or edit.
+  useEffect(() => {
+    try {
+      const note = sessionStorage.getItem(QUOTE_NOTE_KEY);
+      if (!note) return;
+      sessionStorage.removeItem(QUOTE_NOTE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setForm((f) => ({ ...f, note }));
+    } catch {
+      // storage blocked: the note starts empty
+    }
+  }, []);
   const field = (key: keyof typeof form) => ({
     value: form[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>

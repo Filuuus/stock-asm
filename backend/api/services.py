@@ -22,6 +22,8 @@ SPECIAL_ORDER_ID_OFFSET = 900000  # far above the ERP's ids
 # A product line (PebbleTop, Atmos...) is whatever descriptions say so in their spec sheet.
 LINE_RE = re.compile(r'^Línea:\s*(.+?)\s*$', re.M)
 USES_RE = re.compile(r'^(?:Dónde se usa|Uso):\s*(.+)$', re.M)
+# Mats made for people: an animal would ruin them, so they never show next to the animal mats.
+PEOPLE_RE = re.compile(r'\b(personas|operadores)\b', re.I)
 NO_RULE = CategoryRule()
 CODE_IN_TEXT_RE = re.compile(r'\s*\(?(?<!\d)\d{4,5}-\d{4}-\d{3,4}[A-Z]?(?!\d)\)?')
 # Keys that carry a part number (ours, GEA's, or a GEA document number).
@@ -440,7 +442,7 @@ def get_product_detail(key, is_worker):
     line = LINE_RE.search(description or '')
     detail.update(description=description, variants=_variants(product, catalog),
                   related=[] if line else _related(product, catalog),
-                  related_lines=[row for row in _lines(catalog) if row['line'] != line[1]][:RELATED_LIMIT] if line else [])
+                  related_lines=_other_lines(line[1], catalog) if line else [])
     return detail if is_worker else scrub(detail)
 
 
@@ -461,10 +463,11 @@ def _lines(catalog):
         options = lambda p: (p.get('variant') or {}).get('options') or {}
         mat_prices = [p['price'] for p in products if p['price'] and options(p).get('Ancho', '4 pies') == '4 pies'
                       and options(p).get('Animal', 'Vacas') == 'Vacas']
+        uses = ' '.join(u for p in products for u in USES_RE.findall(texts[p['CCODIGOPRODUCTO']]))
         rows.append({
             'line': line, 'key': lead['key'], 'slug': lead['slug'], 'images': lead['images'],
             'description': texts[lead['CCODIGOPRODUCTO']],
-            'uses': ' '.join(u for p in products for u in USES_RE.findall(texts[p['CCODIGOPRODUCTO']])),
+            'uses': uses, 'for_people': bool(PEOPLE_RE.search(uses)),
             'versions': len({str((p.get('variant') or {}).get('options') or p['key']) for p in products}),
             'price_from': min(prices) if prices else None,
             'mat_price': min(mat_prices) if mat_prices else None,
@@ -472,6 +475,13 @@ def _lines(catalog):
             'sold_rank': min((p['sold_rank'] for p in products if p['sold_rank']), default=None),
         })
     return sorted(rows, key=lambda r: (not r['in_stock'], r['sold_rank'] or float('inf'), r['line']))  # best sellers first
+
+
+def _other_lines(line, catalog):
+    """A line's recommendations: only others for the same users, people or animals."""
+    rows = _lines(catalog)
+    own = next(r for r in rows if r['line'] == line)
+    return [r for r in rows if r['line'] != line and r['for_people'] == own['for_people']][:RELATED_LIMIT]
 
 
 def get_product_lines(is_worker):

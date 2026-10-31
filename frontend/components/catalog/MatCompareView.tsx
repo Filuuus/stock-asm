@@ -3,10 +3,14 @@
 import { useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { Profile } from "@/components/catalog/MatSpecBanner";
+import { Button } from "@/components/ui/button";
 import { linePrice, lineAvailability, lineImage } from "@/components/catalog/LineCard";
 import { Notice } from "@/components/notice";
+import { useCart } from "@/hooks/use-cart";
+import { QUOTE_NOTE_KEY } from "@/lib/cart-note";
 import { parseDescription, specValue } from "@/lib/description";
 import { matsForArea, matSheet, NAILS_PER_MAT } from "@/lib/mats";
 import { cn, formatMoney, productHref } from "@/lib/utils";
@@ -22,8 +26,17 @@ const AREAS = [
   { label: "Becerras", match: /becerras/i },
   { label: "Caballos", match: /caballerizas/i },
   { label: "Engorda con rejilla", match: /engorda/i },
-  { label: "Mangas y manejo", match: /mangas|rampas|básculas/i },
+  { label: "Mangas, rampas y remolques", match: /mangas|rampas|básculas|remolques/i },
 ];
+const PEOPLE = "Personas y operadores";
+const MAIN_LINES = ["PebbleTop", "MaxGrip", "IronGrip"];
+
+// The lines for an area. People's mats only show under their own area: an animal would ruin them.
+function linesFor(lines: ProductLine[], area: string | null) {
+  if (area === PEOPLE) return lines.filter((l) => l.for_people);
+  const match = AREAS.find((a) => a.label === area)?.match;
+  return lines.filter((l) => !l.for_people && (!match || match.test(l.uses)));
+}
 
 const SPEC_ROWS = ["Espesor", "Espuma", "Cubierta", "Peso", "Superficie", "Parte inferior", "Se limpia con", "Vida útil", "Garantía"];
 
@@ -36,15 +49,21 @@ function compareRows(lines: ProductLine[]) {
 // Standard 4 × 6 ft mats can be counted from a floor area; rolls and mattresses are measured for the job.
 const isStandardMat = (size: string | null | undefined) => /4 × 6 pies|6 × 4 pies/.test(size ?? "");
 
+// What opens selected: our main lines, or an area's first few.
+function defaultPicks(lines: ProductLine[], area: string | null) {
+  const shown = linesFor(lines, area).map((l) => l.line);
+  const main = MAIN_LINES.filter((name) => shown.includes(name));
+  return !area && main.length ? main : shown.slice(0, 3);
+}
+
 export default function MatCompareView({ lines, nailPrice }: { lines: ProductLine[]; nailPrice: number | null }) {
+  const router = useRouter();
+  const { add, remove } = useCart();
   const [length, setLength] = useState("");
   const [width, setWidth] = useState("");
   const [area, setArea] = useState<string | null>(null);
-  const shown = useMemo(() => {
-    const match = AREAS.find((a) => a.label === area)?.match;
-    return match ? lines.filter((l) => match.test(l.uses)) : lines;
-  }, [area, lines]);
-  const [picked, setPicked] = useState(() => lines.slice(0, 3).map((l) => l.line));
+  const shown = useMemo(() => linesFor(lines, area), [area, lines]);
+  const [picked, setPicked] = useState(() => defaultPicks(lines, null));
   const compared = picked.flatMap((name) => lines.filter((l) => l.line === name));
   const { data, rows } = compareRows(compared);
   const mats = matsForArea(Number(length), Number(width));
@@ -52,8 +71,23 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
   const chooseArea = (label: string | null) => {
     const next = label === area ? null : label;
     setArea(next);
-    const match = AREAS.find((a) => a.label === next)?.match;
-    setPicked((match ? lines.filter((l) => match.test(l.uses)) : lines).slice(0, 3).map((l) => l.line));
+    setPicked(defaultPicks(lines, next));
+  };
+  // Each option in the request, counted for the area; the note tells staff they're alternatives.
+  const requestQuote = () => {
+    for (const { line, sheet } of data) {
+      const image = (line.images.find((i) => i.is_primary) ?? line.images[0])?.file ?? null;
+      remove(line.key);
+      add({ key: line.key, name: line.line, image }, mats > 0 && isStandardMat(sheet?.size) ? mats : 1);
+    }
+    const area = mats > 0 ? ` Área: ${length} × ${width} m (${(Number(length) * Number(width)).toFixed(1)} m²), ${mats} tapetes de 4 × 6 pies.` : "";
+    const note = `Comparando opciones: ${data.map((d) => d.line.line).join(", ")}.${area}`;
+    try {
+      sessionStorage.setItem(QUOTE_NOTE_KEY, note);
+    } catch {
+      // storage blocked: the request still goes out, just without the note
+    }
+    router.push("/carrito");
   };
   const toggle = (name: string) =>
     setPicked((now) => (now.includes(name) ? now.filter((n) => n !== name) : now.length < MAX_COMPARED ? [...now, name] : now));
@@ -67,18 +101,18 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
 
       <h2 className="mt-6 text-sm font-semibold text-gray-900">¿Dónde lo vas a usar?</h2>
       <div className="mt-2 flex flex-wrap gap-2">
-        {AREAS.map((a) => (
+        {[...AREAS.map((a) => a.label), PEOPLE].map((label) => (
           <button
-            key={a.label}
+            key={label}
             type="button"
-            aria-pressed={area === a.label}
-            onClick={() => chooseArea(a.label)}
+            aria-pressed={area === label}
+            onClick={() => chooseArea(label)}
             className={cn(
               "rounded-full border px-3.5 py-1.5 text-sm",
-              area === a.label ? "border-slate-900 bg-slate-900 text-white" : "border-gray-300 bg-white text-gray-700 hover:border-gray-400",
+              area === label ? "border-slate-900 bg-slate-900 text-white" : "border-gray-300 bg-white text-gray-700 hover:border-gray-400",
             )}
           >
-            {a.label}
+            {label}
           </button>
         ))}
       </div>
@@ -115,10 +149,18 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
         })}
       </div>
 
-      <div className="mt-6 max-w-xl rounded-xl border border-gray-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-gray-900">¿Qué área vas a cubrir?</h2>
-        <p className="text-xs text-gray-500">Mídela y compara cuántos tapetes necesitas y cuánto costarían.</p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
+      {area === PEOPLE && (
+        <div className="mt-6">
+          <Notice tone="warning" title="Estos productos son solo para personas." summary="Un animal los dañaría; para ganado elige otra categoría." />
+        </div>
+      )}
+
+      <div className="mt-6 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 md:flex-row md:items-center md:justify-between md:gap-8">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">¿Qué área vas a cubrir?</h2>
+          <p className="text-xs text-gray-500">Mídela y compara cuántos tapetes necesitas y cuánto costarían.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:w-96 md:shrink-0">
           {[{ label: "Largo (m)", value: length, set: setLength }, { label: "Ancho (m)", value: width, set: setWidth }].map((f) => (
             <label key={f.label} className="text-xs text-gray-600">
               {f.label}
@@ -176,7 +218,7 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
                     {data.map(({ line, sheet }) => (
                       <td key={line.line} className="font-semibold">
                         {isStandardMat(sheet?.size) && line.mat_price
-                          ? `Desde ${formatMoney(mats * (line.mat_price + NAILS_PER_MAT * (nailPrice ?? 0)))}`
+                          ? `Desde ${formatMoney(mats * (line.mat_price + (line.for_people ? 0 : NAILS_PER_MAT * (nailPrice ?? 0))))}`
                           : "Se cotiza"}
                       </td>
                     ))}
@@ -229,9 +271,24 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
           </table>
         </div>
       )}
+      {compared.length > 0 && (
+        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 md:flex-row md:items-center md:justify-between md:gap-8">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">¿Te interesan estas opciones?</h2>
+            <p className="text-xs text-gray-500">
+              Pide tu cotización con {compared.length === 1 ? "este producto" : `estos ${compared.length} productos`}
+              {mats > 0 && " y tu área"}. Te contactamos por WhatsApp con precios y fecha estimada de entrega.
+            </p>
+          </div>
+          <Button onClick={requestQuote} className="shrink-0 bg-blue-600 hover:bg-blue-700">
+            Solicitar cotización
+          </Button>
+        </div>
+      )}
+
       <p className="mt-3 text-xs text-gray-500">
         El diseño puede variar respecto a las imágenes.
-        {mats > 0 && ` Estimado con IVA para tapetes de 4 × 6 pies${nailPrice ? `, con ${NAILS_PER_MAT} clavos por tapete` : ""}; no incluye instalación ni envío. El precio final puede cambiar según el interlock y se confirma en la cotización.`}
+        {mats > 0 && ` Estimado con IVA para tapetes de 4 × 6 pies${nailPrice && area !== PEOPLE ? `, con ${NAILS_PER_MAT} clavos por tapete` : ""}; no incluye instalación ni envío. El precio final puede cambiar según el interlock y se confirma en la cotización.`}
       </p>
     </main>
   );
