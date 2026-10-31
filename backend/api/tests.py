@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from catalog.models import CategoryRule
+
 from .services import (InventoryRepository, _apply_role, _bionat_type, _variants, get_inventory_catalog,
                        get_product_detail, mat_variant, search_gea_parts)
 
@@ -17,6 +19,22 @@ def producto(pid, code, stock_units, name='PEZONERA'):
     }, stock_units
 
 
+# The migration's rules, without a database: these tests run on the pure functions.
+RULES = {
+    'hidden': {2566, 2568, 2569},
+    'categories': {r.category: r for r in [
+        CategoryRule(category='R', show_price=True), CategoryRule(category='R_CHEM', hide_brand=True),
+        CategoryRule(category='R_NW', show_price=True, on_order=CategoryRule.ON_ORDER_ALWAYS),
+        CategoryRule(category='R_FAN', on_order=CategoryRule.ON_ORDER_ALWAYS),
+        CategoryRule(category='B', show_price=True, on_order=CategoryRule.ON_ORDER_IF_SOLD),
+    ]},
+    'brands': {'GEA FARM TECHNOLOGIES': 'GEA', 'NORTH WEST RUBBER': 'North West Rubber'},
+}
+no_database = lambda cls: patch('api.services.public_rules', new=lambda: RULES)(
+    patch('api.services._special_order_rows', new=list)(cls))
+
+
+@no_database
 class InventoryCatalogTests(SimpleTestCase):
     def catalog(self, is_worker):
         rows = [producto(1, 'A', 5.0, 'VALVULA (7050-1935-000)'), producto(2, 'B', 0.0), producto(3, 'C', -1.0, 'MIPRO 150')]
@@ -97,6 +115,7 @@ class InventoryCatalogTests(SimpleTestCase):
         self.assertEqual([staff[i]['sold_rank'] for i in (1, 2, 3)], [2, 1, None])
 
 
+@no_database
 class ProductDetailTests(SimpleTestCase):
     GEA = {'7041-2700-550': {
         'gea_code': '7041-2700-550', 'desc': 'Pulsador', 'path': [],
@@ -161,6 +180,7 @@ class ProductDetailTests(SimpleTestCase):
         self.assertEqual([p['key'] for p in public['related']], ['2'])
 
 
+@no_database
 class GeaPartSearchTests(SimpleTestCase):
     GEA = {'7041-2700-550': {'gea_code': '7041-2700-550', 'desc': 'Pulsador', 'parts': [
         {'pos': '0020', 'qty': 1.0, 'code': '7041-2717-010', 'desc': 'Vástago de embolo'},
