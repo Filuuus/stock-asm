@@ -6,10 +6,26 @@ export const NAILS_PER_MAT = 6;
 
 // Whole mats of widthFt × 6 ft to cover a length × width floor, laid in whichever direction needs fewer.
 export function matsForArea(length: number, width: number, widthFt = 4) {
+  return piecesForArea(length, width, { width: widthFt * FOOT_M, length: MAT_LENGTH_FT * FOOT_M });
+}
+
+// Whole pieces of any size: rounds up on each side, so they always cover at least the whole floor.
+export function piecesForArea(length: number, width: number, piece: { width: number; length: number }) {
   if (!(length > 0 && width > 0)) return 0;
-  const [w, l] = [widthFt * FOOT_M, MAT_LENGTH_FT * FOOT_M];
-  const lay = (a: number, b: number) => Math.ceil(a / w - 1e-9) * Math.ceil(b / l - 1e-9);
+  const lay = (a: number, b: number) => Math.ceil(a / piece.width - 1e-9) * Math.ceil(b / piece.length - 1e-9);
   return Math.min(lay(length, width), lay(width, length));
+}
+
+// The size of one piece from a description's "Medida" line, in meters. Null for what comes in rolls
+// or as mattresses (cut or measured for the job) and for lines with a range of sizes.
+export function pieceSize(description: string) {
+  const size = description.match(/^\W*Medida:?\s+(.+)$/m)?.[1] ?? "";
+  // Exact feet, as the mat's own page counts them: 1.22 m is a rounded 4 ft.
+  if (/4 × 6 pies|6 × 4 pies/.test(size)) return { width: 4 * FOOT_M, length: MAT_LENGTH_FT * FOOT_M };
+  const meters = size.match(/(\d+(?:\.\d+)?) × (\d+(?:\.\d+)?) m\b/);
+  if (meters) return { width: Number(meters[1]), length: Number(meters[2]) };
+  const side = size.match(/(\d+(?:\.\d+)?) cm por lado/);
+  return side ? { width: Number(side[1]) / 100, length: Number(side[1]) / 100 } : null;
 }
 
 // The floor someone measured: follows them from the comparison to any mat's page, for this tab only.
