@@ -12,6 +12,25 @@ export function matsForArea(length: number, width: number, widthFt = 4) {
   return Math.min(lay(length, width), lay(width, length));
 }
 
+// The floor someone measured: follows them from the comparison to any mat's page, for this tab only.
+const AREA_KEY = "mat-area";
+
+export function savedMatArea(): { length: string; width: string } | null {
+  try {
+    return JSON.parse(sessionStorage.getItem(AREA_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveMatArea(length: string, width: string) {
+  try {
+    sessionStorage.setItem(AREA_KEY, JSON.stringify({ length, width }));
+  } catch {
+    // storage blocked: the next page just starts empty
+  }
+}
+
 export interface MatSpec {
   widthFt: number;
   beds: boolean; // one mat per bed: full-width animal mats
