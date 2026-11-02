@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
+import { matchesQuery } from "@/lib/search";
 import { cn, formatMoney, plural } from "@/lib/utils";
 import { Product } from "@/types/api";
 
@@ -98,7 +99,7 @@ export function matches(p: Product, f: Filters, query: string, skip?: FilterGrou
     if (f.min && p.price < parseFloat(f.min)) return false;
     if (f.max && p.price > parseFloat(f.max)) return false;
   }
-  if (query && !normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO ?? ""}`).includes(query)) return false;
+  if (query && !matchesQuery(normalize(`${p.CNOMBREPRODUCTO} ${p.CCODIGOPRODUCTO ?? ""}`), query)) return false;
   return true;
 }
 
