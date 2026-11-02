@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matSheet, matSpec, matsForArea } from "./mats";
+import { matSheet, matSpec, matsForArea, pieceSize, piecesForArea } from "./mats";
 
 const FT = 0.3048;
 
@@ -119,5 +119,22 @@ describe("matSheet", () => {
     expect(matSheet('Animat\nEspesor: 11/16" (17.5 mm)')?.layers[0].mm).toBe(17.5);
     expect(matSheet("Sustituto de leche.\nUso: becerras.")).toBeNull();
     expect(matSheet("Tapete Animat sin datos.")).toBeNull();
+  });
+});
+
+describe("pieces of other sizes", () => {
+  it("reads a size from the Medida line only", () => {
+    expect(pieceSize("Medida: 1.00 × 1.50 m")).toEqual({ width: 1, length: 1.5 });
+    expect(pieceSize("Medida: 101.5 cm por lado")).toEqual({ width: 1.015, length: 1.015 });
+    const fourBySix = { width: 4 * FT, length: 6 * FT };
+    expect(pieceSize("• Medida 1.83 × 1.22 m (6 × 4 pies), 20.6 kg/m².")).toEqual(fourBySix);
+    expect(pieceSize("Medida 4 × 6 pies (1.22 × 1.83 m): el ancho de una vaca")).toEqual(fourBySix);
+    expect(pieceSize("Espuma: 5 cm, 1.80 × 1.00 m\nRollo: 30.5 m × 1.70 m")).toBeNull();
+  });
+
+  it("always covers at least the whole floor: 2 × 2 m takes 4 of either people's mat", () => {
+    expect(piecesForArea(2, 2, { width: 1.015, length: 1.015 })).toBe(4);
+    expect(piecesForArea(2, 2, { width: 1, length: 1.5 })).toBe(4);
+    expect(piecesForArea(2.1, 3, { width: 1, length: 1.5 })).toBe(6);
   });
 });

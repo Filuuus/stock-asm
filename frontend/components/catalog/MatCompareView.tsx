@@ -12,7 +12,7 @@ import { Notice } from "@/components/notice";
 import { useCart } from "@/hooks/use-cart";
 import { QUOTE_NOTE_KEY } from "@/lib/cart-note";
 import { parseDescription, specValue } from "@/lib/description";
-import { matsForArea, matSheet, NAILS_PER_MAT, savedMatArea, saveMatArea } from "@/lib/mats";
+import { matSheet, NAILS_PER_MAT, pieceSize, piecesForArea, savedMatArea, saveMatArea } from "@/lib/mats";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 import { ProductLine } from "@/types/api";
 
@@ -46,9 +46,6 @@ function compareRows(lines: ProductLine[]) {
   return { data, rows: rows.filter((r) => r.values.some(Boolean)) };
 }
 
-// Standard 4 × 6 ft mats can be counted from a floor area; rolls and mattresses are measured for the job.
-const isStandardMat = (size: string | null | undefined) => /4 × 6 pies|6 × 4 pies/.test(size ?? "");
-
 // What opens selected: our main lines, or an area's first few.
 function defaultPicks(lines: ProductLine[], area: string | null) {
   const shown = linesFor(lines, area).map((l) => l.line);
@@ -66,7 +63,12 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
   const [picked, setPicked] = useState(() => defaultPicks(lines, null));
   const compared = picked.flatMap((name) => lines.filter((l) => l.line === name));
   const { data, rows } = compareRows(compared);
-  const mats = matsForArea(Number(length), Number(width));
+  const hasArea = Number(length) > 0 && Number(width) > 0;
+  // Each line in its own size; null when it comes in rolls or mattresses, measured for the job.
+  const piecesOf = (line: ProductLine) => {
+    const size = pieceSize(line.description);
+    return size ? piecesForArea(Number(length), Number(width), size) : null;
+  };
 
   // Back from a product page, or changed on one.
   useEffect(() => {
@@ -85,12 +87,13 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
   };
   // Each option in the request, counted for the area; the note tells staff they're alternatives.
   const requestQuote = () => {
-    for (const { line, sheet } of data) {
+    for (const { line } of data) {
       const image = (line.images.find((i) => i.is_primary) ?? line.images[0])?.file ?? null;
       remove(line.key);
-      add({ key: line.key, name: line.line, image }, mats > 0 && isStandardMat(sheet?.size) ? mats : 1);
+      add({ key: line.key, name: line.line, image }, piecesOf(line) || 1);
     }
-    const area = mats > 0 ? ` Área: ${length} × ${width} m (${(Number(length) * Number(width)).toFixed(1)} m²), ${mats} tapetes de 4 × 6 pies.` : "";
+    const counts = data.map(({ line }) => `${line.line} ${piecesOf(line) ?? "según medida"}`).join(", ");
+    const area = hasArea ? ` Área: ${length} × ${width} m (${(Number(length) * Number(width)).toFixed(1)} m²), tapetes: ${counts}.` : "";
     const note = `Comparando opciones: ${data.map((d) => d.line.line).join(", ")}.${area}`;
     try {
       sessionStorage.setItem(QUOTE_NOTE_KEY, note);
@@ -215,20 +218,18 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
                 <th scope="row" className="text-left">Precio</th>
                 {data.map(({ line }) => <td key={line.line} className="font-semibold">{linePrice(line)}</td>)}
               </tr>
-              {mats > 0 && (
+              {hasArea && (
                 <>
                   <tr className="bg-blue-50/60">
                     <th scope="row" className="text-left">Tapetes para tu área</th>
-                    {data.map(({ line, sheet }) => (
-                      <td key={line.line}>{isStandardMat(sheet?.size) ? mats.toLocaleString("es-MX") : "Según medida"}</td>
-                    ))}
+                    {data.map(({ line }) => <td key={line.line}>{piecesOf(line)?.toLocaleString("es-MX") ?? "Según medida"}</td>)}
                   </tr>
                   <tr className="bg-blue-50/60">
                     <th scope="row" className="text-left">Costo estimado</th>
-                    {data.map(({ line, sheet }) => (
+                    {data.map(({ line }) => (
                       <td key={line.line} className="font-semibold">
-                        {isStandardMat(sheet?.size) && line.mat_price
-                          ? `Desde ${formatMoney(mats * (line.mat_price + (line.for_people ? 0 : NAILS_PER_MAT * (nailPrice ?? 0))))}`
+                        {piecesOf(line) && line.mat_price
+                          ? `Desde ${formatMoney(piecesOf(line)! * (line.mat_price + (line.for_people ? 0 : NAILS_PER_MAT * (nailPrice ?? 0))))}`
                           : "Se cotiza"}
                       </td>
                     ))}
@@ -287,7 +288,7 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
             <h2 className="text-sm font-semibold text-gray-900">¿Te interesan estas opciones?</h2>
             <p className="text-xs text-gray-500">
               Pide tu cotización con {compared.length === 1 ? "este producto" : `estos ${compared.length} productos`}
-              {mats > 0 && " y tu área"}. Te contactamos por WhatsApp con precios y fecha estimada de entrega.
+              {hasArea && " y tu área"}. Te contactamos por WhatsApp con precios y fecha estimada de entrega.
             </p>
           </div>
           <Button onClick={requestQuote} className="shrink-0 bg-blue-600 hover:bg-blue-700">
@@ -298,7 +299,7 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
 
       <p className="mt-3 text-xs text-gray-500">
         El diseño puede variar respecto a las imágenes.
-        {mats > 0 && ` Estimado con IVA para tapetes de 4 × 6 pies${nailPrice && area !== PEOPLE ? `, con ${NAILS_PER_MAT} clavos por tapete` : ""}; no incluye instalación ni envío. El precio final puede cambiar según el interlock y se confirma en la cotización.`}
+        {hasArea && ` Cantidades redondeadas hacia arriba para cubrir toda el área. Estimado con IVA${nailPrice && area !== PEOPLE ? `, con ${NAILS_PER_MAT} clavos por tapete de 4 × 6 pies` : ""}; no incluye instalación ni envío. El precio final puede cambiar según el interlock y se confirma en la cotización.`}
       </p>
     </main>
   );
