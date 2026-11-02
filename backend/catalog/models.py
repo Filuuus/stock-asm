@@ -92,6 +92,8 @@ class QuoteRequest(models.Model):
                               related_name='owned_quote_requests')
     contacted_at = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)  # the quote went out to the customer
+    # Sent from the customer's link to change an earlier request; that one stays as it is.
+    revises = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='revisions')
 
     class Meta:
         ordering = ['-created_at']

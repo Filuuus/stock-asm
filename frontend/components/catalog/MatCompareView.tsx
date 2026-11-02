@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,7 +12,7 @@ import { Notice } from "@/components/notice";
 import { useCart } from "@/hooks/use-cart";
 import { QUOTE_NOTE_KEY } from "@/lib/cart-note";
 import { parseDescription, specValue } from "@/lib/description";
-import { matsForArea, matSheet, NAILS_PER_MAT } from "@/lib/mats";
+import { matsForArea, matSheet, NAILS_PER_MAT, savedMatArea, saveMatArea } from "@/lib/mats";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 import { ProductLine } from "@/types/api";
 
@@ -67,6 +67,16 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
   const compared = picked.flatMap((name) => lines.filter((l) => l.line === name));
   const { data, rows } = compareRows(compared);
   const mats = matsForArea(Number(length), Number(width));
+
+  // Back from a product page, or changed on one.
+  useEffect(() => {
+    const saved = savedMatArea();
+    if (!saved) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLength(saved.length);
+    setWidth(saved.width);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const chooseArea = (label: string | null) => {
     const next = label === area ? null : label;
@@ -161,7 +171,7 @@ export default function MatCompareView({ lines, nailPrice }: { lines: ProductLin
           <p className="text-xs text-gray-500">Mídela y compara cuántos tapetes necesitas y cuánto costarían.</p>
         </div>
         <div className="grid grid-cols-2 gap-3 md:w-96 md:shrink-0">
-          {[{ label: "Largo (m)", value: length, set: setLength }, { label: "Ancho (m)", value: width, set: setWidth }].map((f) => (
+          {[{ label: "Largo (m)", value: length, set: (v: string) => { setLength(v); saveMatArea(v, width); } }, { label: "Ancho (m)", value: width, set: (v: string) => { setWidth(v); saveMatArea(length, v); } }].map((f) => (
             <label key={f.label} className="text-xs text-gray-600">
               {f.label}
               <input

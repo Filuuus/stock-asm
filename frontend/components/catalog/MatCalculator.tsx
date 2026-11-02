@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
-import { MatSpec, matsForArea, NAILS_PER_MAT } from "@/lib/mats";
+import { MatSpec, matsForArea, NAILS_PER_MAT, savedMatArea, saveMatArea } from "@/lib/mats";
 import { cn, formatMoney } from "@/lib/utils";
 import { ProductImage } from "@/types/api";
 
@@ -20,6 +20,17 @@ export default function MatCalculator({ mat, spec, nail }: { mat: Item; spec: Ma
   const [length, setLength] = useState("");
   const [width, setWidth] = useState("");
   const [added, setAdded] = useState(false);
+
+  // Measured already (in the comparison or on another mat): no need to type it again.
+  useEffect(() => {
+    const area = savedMatArea();
+    if (!area?.length && !area?.width) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setByArea(true);
+    setLength(area.length);
+    setWidth(area.width);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   // One mat per bed.
   const mats = byArea ? matsForArea(Number(length), Number(width), spec.widthFt) : Math.max(Math.floor(Number(beds)) || 0, 0);
@@ -64,8 +75,8 @@ export default function MatCalculator({ mat, spec, nail }: { mat: Item; spec: Ma
       <div className="mt-2 flex gap-2">
         {byArea ? (
           <>
-            {number("Largo (m)", length, setLength, true)}
-            {number("Ancho (m)", width, setWidth, true)}
+            {number("Largo (m)", length, (v) => { setLength(v); saveMatArea(v, width); }, true)}
+            {number("Ancho (m)", width, (v) => { setWidth(v); saveMatArea(length, v); }, true)}
           </>
         ) : (
           number("Camas (un tapete por cama)", beds, setBeds)

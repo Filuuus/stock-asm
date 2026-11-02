@@ -234,4 +234,8 @@ NOTION_CLIENTS_DB = os.getenv('NOTION_CLIENTS_DB', '')
 
 # Rentabilidad: the accounting share holding the accountant's "Reportes Mensuales <year>.xlsx"
 # (one folder per year), read by import_vehicle_reports. Empty = not configured.
+# Shared office line shown on a customer's quote once someone has talked to them; not in the repo so
+# it can't be scraped, the people on it didn't want it flooded.
+QUOTE_CONTACT_PHONE = os.getenv('QUOTE_CONTACT_PHONE', '')
+
 VEHICLE_REPORTS_DIR = os.getenv('VEHICLE_REPORTS_DIR', '')

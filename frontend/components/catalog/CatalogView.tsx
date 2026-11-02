@@ -183,6 +183,12 @@ export default function CatalogView({ products }: { products: Product[] }) {
     filters.category.size + filters.line.size + filters.brand.size +
     Number(filters.withoutStock) + Number(filters.withPrice) + Number(Boolean(filters.min || filters.max));
 
+  // Only once someone narrows the list: one mat among the whole catalog says nothing about what they want.
+  // Asking for mats counts even with no results ("tapete para becerras" isn't in any name).
+  const showsMats =
+    /tapete|colchon/.test(normalizedQuery) ||
+    ((normalizedQuery !== "" || activeFilters > 0) && filtered.some((p) => p.category === "R_NW" || p.variant));
+
   const filterProps = {
     products,
     breaks,
@@ -197,6 +203,25 @@ export default function CatalogView({ products }: { products: Product[] }) {
       <CatalogFilters className="hidden md:block" {...filterProps} />
 
       <div className="flex-1 flex flex-col">
+        {/* Above everything: people searching "tapetes" were going straight past the comparison. */}
+        {showsMats && (
+          <Link
+            href="/comparar-tapetes"
+            className="group mb-4 flex flex-col gap-3 rounded-xl bg-emerald-700 p-4 text-white hover:bg-emerald-800 sm:flex-row sm:items-center sm:justify-between sm:p-5"
+          >
+            <span>
+              <span className="block text-lg font-semibold">¿Qué tapete necesitas?</span>
+              <span className="mt-0.5 block text-sm text-emerald-50">
+                Compáralos por espesor, superficie y uso, calcula cuántos necesitas y pide tu cotización.
+              </span>
+            </span>
+            <span className="inline-flex shrink-0 items-center justify-center gap-1 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-emerald-800">
+              Comparar tapetes
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </span>
+          </Link>
+        )}
+
         {/* Phones: count plus buttons that open the filters and the sort as side panels. */}
         <div className="mb-4 flex items-center justify-between gap-3 md:hidden">
           <span className="whitespace-nowrap text-sm text-gray-500">
@@ -278,18 +303,6 @@ export default function CatalogView({ products }: { products: Product[] }) {
 
         {/* Staff only: a lookup by GEA part number. */}
         {user && <GeaPartResults query={query} />}
-
-        {filters.category.has("R_NW") && (
-          <Link
-            href="/comparar-tapetes"
-            className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 hover:bg-emerald-100"
-          >
-            <span>
-              <span className="font-semibold">¿No sabes cuál elegir?</span> Compara tapetes y colchones, y calcula cuántos necesitas.
-            </span>
-            <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
-          </Link>
-        )}
 
         {cards.length > 0 ? (
           <>

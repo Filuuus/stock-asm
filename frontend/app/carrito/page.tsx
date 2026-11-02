@@ -13,6 +13,7 @@ import { Notice } from "@/components/notice";
 import { useCart } from "@/hooks/use-cart";
 import { apiFetch } from "@/lib/api";
 import { QUOTE_NOTE_KEY } from "@/lib/cart-note";
+import { quoteRevision, type QuoteRevision } from "@/lib/quote-revision";
 import { plural, productHref } from "@/lib/utils";
 
 // The quote-request cart: prices stay private, so the customer sends the list
@@ -23,6 +24,12 @@ export default function CartPage() {
   const [form, setForm] = useState({ name: "", phone: "", company: "", note: "" });
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState<QuoteRevision | null>(null);
+  // Changing a quote from its link: who it's for comes from that request, so the form only asks for a note.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRevision(quoteRevision());
+  }, [items.length]);
   // Arriving from the mat comparison: its options and area, ready to send or edit.
   useEffect(() => {
     try {
@@ -52,7 +59,11 @@ export default function CartPage() {
     try {
       const res = await apiFetch("/api/solicitudes/", {
         method: "POST",
-        body: JSON.stringify({ ...form, items: items.map((i) => ({ key: i.key, quantity: i.quantity })) }),
+        body: JSON.stringify({
+          ...form,
+          revises: revision?.token,
+          items: items.map((i) => ({ key: i.key, quantity: i.quantity })),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -88,6 +99,19 @@ export default function CartPage() {
       <p className="mt-1 text-sm text-gray-500">
         {plural(items.length, "producto", "productos")}. Envíala y te compartimos los precios en cuanto la revisemos.
       </p>
+      {revision && (
+        <div className="mt-4">
+          <Notice
+            tone="info"
+            title={`Modificando la solicitud #${revision.number}`}
+            summary="Cambia cantidades, quita productos o agrega otros del catálogo. Revisaremos los cambios y tu solicitud original sigue igual."
+          />
+          <div className="mt-2 flex flex-wrap gap-4 text-sm">
+            <Link href="/catalogo" className="text-blue-600 hover:underline">Agregar productos</Link>
+            <button type="button" onClick={clear} className="text-gray-500 hover:underline">Cancelar cambios</button>
+          </div>
+        </div>
+      )}
 
       <ul className="mt-6 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">
         {items.map((item) => (
@@ -129,20 +153,24 @@ export default function CartPage() {
       </ul>
 
       <form onSubmit={submit} className="mt-8 space-y-4 rounded-lg border border-gray-200 bg-white p-4 sm:p-6">
-        <h2 className="text-lg font-semibold text-gray-900">Tus datos</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{revision ? "¿Qué necesitas cambiar?" : "Tus datos"}</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="name">Nombre *</Label>
-            <Input id="name" required maxLength={120} autoComplete="name" {...field("name")} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="phone">Teléfono (WhatsApp) *</Label>
-            <Input id="phone" required type="tel" maxLength={30} autoComplete="tel" placeholder="10 dígitos" {...field("phone")} />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="company">Rancho o empresa</Label>
-            <Input id="company" maxLength={120} autoComplete="organization" {...field("company")} />
-          </div>
+          {!revision && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="name">Nombre *</Label>
+                <Input id="name" required maxLength={120} autoComplete="name" {...field("name")} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="phone">Teléfono (WhatsApp) *</Label>
+                <Input id="phone" required type="tel" maxLength={30} autoComplete="tel" placeholder="10 dígitos" {...field("phone")} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="company">Rancho o empresa</Label>
+                <Input id="company" maxLength={120} autoComplete="organization" {...field("company")} />
+              </div>
+            </>
+          )}
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="note">Nota</Label>
             <Textarea id="note" maxLength={2000} rows={3} placeholder="Algo que debamos saber" {...field("note")} />
@@ -150,7 +178,7 @@ export default function CartPage() {
         </div>
         {error && <Notice tone="error" title={error} />}
         <Button type="submit" disabled={sending} className="w-full sm:w-auto">
-          {sending ? "Enviando…" : "Enviar solicitud"}
+          {sending ? "Enviando…" : revision ? "Enviar cambios" : "Enviar solicitud"}
         </Button>
       </form>
     </main>
