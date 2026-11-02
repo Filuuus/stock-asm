@@ -126,7 +126,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
 
   const isOpen = req.status === "NEW" || req.status === "CONTACTED";
   const edited = req.items.some((i) => quantities[i.code] !== String(Number(i.quantity)) || (prices[i.code] ?? "") !== typed(i));
-  const link = typeof window === "undefined" ? "" : `${window.location.origin}/solicitud/${req.token}`;
+  const link = typeof window === "undefined" ? "" : `${process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin}/solicitud/${req.token}`;
   const message = `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista: ${link}`;
 
   const addNote = async (e: FormEvent) => {
