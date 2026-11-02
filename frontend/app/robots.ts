@@ -9,7 +9,7 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: ["/", "/producto/"],
       disallow: [
-        "/carrito", "/solicitud/", "/solicitudes", "/fotos", "/comisiones", "/corte-de-caja", "/facturas",
+        "/carrito", "/solicitud/", "/mis-solicitudes", "/solicitudes", "/fotos", "/comisiones", "/corte-de-caja", "/facturas",
         "/ventas", "/rentabilidad", "/usuarios", "/ajustes-catalogo", "/login",
       ],
     },

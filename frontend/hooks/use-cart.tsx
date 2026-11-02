@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { setQuoteRevision } from "@/lib/quote-revision";
 
 // The quote-request cart. Kept in this browser only (localStorage) until it's
 // sent; prices are never stored here - they stay private until management
@@ -36,6 +37,8 @@ function snapshot(): CartItem[] {
 }
 
 function write(items: CartItem[]) {
+  // An empty cart isn't changing any quote any more.
+  if (items.length === 0) setQuoteRevision(null);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
@@ -61,6 +64,7 @@ interface CartContextValue {
   setQuantity: (key: string, quantity: number) => void;
   remove: (key: string) => void;
   clear: () => void;
+  replace: (items: CartItem[]) => void;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -85,6 +89,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setQuantity: (key, quantity) => write(snapshot().map((i) => (i.key === key ? { ...i, quantity } : i))),
       remove: (key) => write(snapshot().filter((i) => i.key !== key)),
       clear: () => write(EMPTY),
+      replace: write,
     }),
     [items],
   );

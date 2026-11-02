@@ -10,6 +10,7 @@ import { Notice } from "@/components/notice";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
 import { formatDay } from "@/lib/dates";
+import AddProduct from "@/components/quote/AddProduct";
 import { QUOTE_STATUS, type QuoteStatus, whatsappUrl } from "@/lib/quote-status";
 import { cn, formatMoney, productHref } from "@/lib/utils";
 
@@ -51,6 +52,8 @@ interface Detail {
   mine: boolean;
   to_send: boolean;
   expired: boolean;
+  revises: number | null;
+  revisions: number[];
   items: QuoteItem[];
   events: QuoteEvent[];
 }
@@ -61,7 +64,7 @@ const moment = (iso: string) =>
   new Date(iso).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 // One request: the customer, what they asked for and everyone's notes. While it's open staff
-// adjust quantities and prices; management approves, which freezes the prices, and the
+// adjust products, quantities and prices; management approves, which freezes the prices, and the
 // customer's link then shows them.
 export default function RequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -108,6 +111,15 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
     }
   };
   const act = (action: string, body?: object) => send(`/api/solicitudes/${id}/${action}/`, "POST", body);
+  // Any unsaved quantities and prices go along, because saving reloads the table.
+  const saveItems = (change: Record<string, string> = {}) =>
+    send(`/api/solicitudes/${id}/`, "PUT", {
+      items: Object.entries({ ...quantities, ...change }).map(([code, quantity]) => ({
+        code,
+        quantity: Number(quantity) || 0,
+        unit_price: prices[code] ?? "",
+      })),
+    });
 
   if (!loading && !user) {
     return (
@@ -154,6 +166,16 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
         </span>
         {req.to_send && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-sm font-medium text-amber-800">Por enviar</span>}
         {req.expired && <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-sm font-medium text-gray-600">Vencida</span>}
+        {req.revises && (
+          <Link href={`/solicitudes/${req.revises}`} className="text-sm text-blue-600 hover:underline">
+            Cambios a la solicitud #{req.revises}
+          </Link>
+        )}
+        {req.revisions.map((id) => (
+          <Link key={id} href={`/solicitudes/${id}`} className="text-sm text-blue-600 hover:underline">
+            Cambios en la solicitud #{id}
+          </Link>
+        ))}
       </div>
 
       {/* The next step for this stage, always on top. */}
@@ -240,6 +262,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                   <th className="hidden whitespace-nowrap px-4 py-2 text-right font-medium sm:table-cell">Existencia</th>
                   <th className="px-4 py-2 text-right font-medium">Precio</th>
                   <th className="px-4 py-2 text-right font-medium">Importe</th>
+                  {isOpen && <th className="w-10 px-2 py-2"><span className="sr-only">Quitar</span></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -291,12 +314,26 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                       )}
                     </td>
                     <td className="num px-4 py-3 text-right">{i.subtotal !== null ? formatMoney(i.subtotal) : "-"}</td>
+                    {isOpen && (
+                      <td className="px-2 py-3">
+                        <button
+                          type="button"
+                          disabled={busy || req.items.length === 1}
+                          onClick={() => saveItems({ [i.code]: "0" })}
+                          aria-label={`Quitar ${i.name}`}
+                          title={req.items.length === 1 ? "La solicitud debe conservar al menos un producto" : "Quitar"}
+                          className="rounded p-2 text-gray-400 hover:bg-gray-100 hover:text-red-600 disabled:opacity-40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="border-t border-gray-200">
-                  <td colSpan={5} className="px-4 py-3 text-right font-semibold text-gray-900">
+                  <td colSpan={isOpen ? 6 : 5} className="px-4 py-3 text-right font-semibold text-gray-900">
                     Total: <span className="num">{formatMoney(req.total)}</span>{" "}
                     <span className="text-xs font-normal text-gray-500">IVA incluido</span>
                   </td>
@@ -306,8 +343,9 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
           </div>
           {isOpen && (
             <>
+              <AddProduct exclude={req.items.map((i) => i.code)} disabled={busy} onAdd={(code) => saveItems({ [code]: "1" })} />
               <p className="mt-2 text-xs text-gray-500">
-                Escribe el precio con IVA para poner o cambiar el de un producto; en blanco usa el del catálogo. Los precios se congelan al aprobar. Cantidad 0 quita el producto. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
+                Escribe el precio con IVA para poner o cambiar el de un producto; en blanco usa el del catálogo. Los precios se congelan al aprobar. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
               </p>
               {edited && (
                 <div className="mt-3 flex items-center gap-3">
@@ -315,13 +353,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                     variant="outline"
                     disabled={busy}
                     onClick={() =>
-                      send(`/api/solicitudes/${id}/`, "PUT", {
-                        items: Object.entries(quantities).map(([code, quantity]) => ({
-                          code,
-                          quantity: Number(quantity) || 0,
-                          unit_price: prices[code] ?? "",
-                        })),
-                      })
+                      saveItems()
                     }
                   >
                     Guardar cambios

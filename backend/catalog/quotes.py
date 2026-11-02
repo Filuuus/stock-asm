@@ -7,6 +7,7 @@ import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -63,9 +64,29 @@ def _clean_price(value, code):
     return price
 
 
+def _can_modify(req):
+    return req.status != QuoteRequest.STATUS_REJECTED
+
+
+def _contacted(req):
+    """The office number is only for customers someone has already talked to; a change to
+    a request counts as the same conversation."""
+    return bool(
+        req.status == QuoteRequest.STATUS_APPROVED or req.contacted_at or req.sent_at
+        or (req.revises and _contacted(req.revises))
+    )
+
+
 def create_request(data):
-    name = str(data.get('name', '')).strip()
-    phone = str(data.get('phone', '')).strip()
+    # A change from the customer's link: who it is comes from the original, so the
+    # link's page never has to show their phone.
+    original = None
+    if data.get('revises'):
+        original = QuoteRequest.objects.filter(token=str(data['revises'])).first()
+        if not original or not _can_modify(original):
+            raise QuoteError('Esa solicitud ya no se puede modificar.')
+    name = original.name if original else str(data.get('name', '')).strip()
+    phone = original.phone if original else str(data.get('phone', '')).strip()
     if not name or not phone:
         raise QuoteError('Nombre y teléfono son obligatorios.')
     if len(name) > 120 or len(phone) > 30 or sum(c.isdigit() for c in phone) < 10:
@@ -78,12 +99,15 @@ def create_request(data):
     with transaction.atomic():
         req = QuoteRequest.objects.create(
             name=name, phone=phone,
-            company=str(data.get('company', '')).strip()[:120],
+            company=original.company if original else str(data.get('company', '')).strip()[:120],
             note=str(data.get('note', '')).strip()[:2000],
+            revises=original, owner=original.owner if original else None,
         )
         QuoteRequestItem.objects.bulk_create(
             QuoteRequestItem(request=req, producto_codigo=c, quantity=q) for c, q in items.items()
         )
+        if original:
+            _log(original, None, f'envió cambios desde el enlace del cliente: solicitud #{req.pk}')
     return req
 
 
@@ -171,23 +195,34 @@ def _total(rows):
     return sum((r['subtotal'] for r in rows if r['subtotal']), Decimal(0))
 
 
+def _expired(req):
+    return req.status == QuoteRequest.STATUS_APPROVED and bool(req.valid_until) and req.valid_until < timezone.localdate()
+
+
 def public_view(req):
     """What the customer sees at /solicitud/<token>: no live prices, no codes."""
     # Every product, not just what's in stock now, so names still resolve.
     by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
-    rows = scrub(_rows(req, by_code, live_prices=False))
+    # A hidden or out-of-stock product has no public page to link to; the key still goes in the cart.
+    public_keys = {p['key'] for p in _catalog(False)}
+    rows = [{**r, 'linked': r['key'] in public_keys} for r in scrub(_rows(req, by_code, live_prices=False))]
     approved = req.status == QuoteRequest.STATUS_APPROVED
+    revision = req.revisions.exclude(status=QuoteRequest.STATUS_REJECTED).order_by('-pk').first()
     return {
         # Contacted is internal: the customer's request is still in review.
         'number': req.pk, 'status': QuoteRequest.STATUS_NEW if req.status == QuoteRequest.STATUS_CONTACTED else req.status,
         'created_at': req.created_at, 'name': req.name, 'valid_until': req.valid_until if approved else None,
         'items': rows, 'total': _total(rows) if approved else None,
+        'expired': _expired(req), 'can_modify': _can_modify(req),
+        'contact_phone': settings.QUOTE_CONTACT_PHONE if _contacted(req) else None,
+        'revision': {'number': revision.pk, 'token': revision.token} if revision else None,
+        'revises': {'number': req.revises.pk, 'token': req.revises.token} if req.revises else None,
     }
 
 
 def staff_list():
     by_code = {p['CCODIGOPRODUCTO']: p for p in _catalog(True)}
-    now, today = timezone.now(), timezone.localdate()
+    now = timezone.now()
     rows = []
     # order_by is needed: a query with Max() drops the model's default ordering.
     newest = _with_activity(QuoteRequest.objects.select_related('owner').prefetch_related('items')).order_by('-created_at', '-pk')
@@ -196,7 +231,7 @@ def staff_list():
         rows.append({
             'id': r.pk, 'status': r.status, 'created_at': r.created_at, 'name': r.name, 'company': r.company,
             'phone': r.phone, 'owner': _display(r.owner), 'attention': _attention(r, now), 'to_send': _to_send(r),
-            'expired': r.status == QuoteRequest.STATUS_APPROVED and bool(r.valid_until) and r.valid_until < today,
+            'expired': _expired(r),
             'comparison': r.note.startswith('Comparando opciones'), 'area': area[1] if area else None,
             'items': [by_code.get(i.producto_codigo, {}).get('CNOMBREPRODUCTO', i.producto_codigo) for i in r.items.all()],
         })
@@ -216,8 +251,8 @@ def staff_view(req, user):
         'decided_at': req.decided_at, 'decided_by': req.decided_by.username if req.decided_by else None,
         'valid_until': req.valid_until, 'items': rows, 'total': _total(rows),
         'owner': _display(req.owner), 'mine': req.owner_id == user.pk, 'to_send': _to_send(req),
-        'expired': req.status == QuoteRequest.STATUS_APPROVED and bool(req.valid_until)
-        and req.valid_until < timezone.localdate(),
+        'expired': _expired(req), 'revises': req.revises_id,
+        'revisions': list(req.revisions.values_list('pk', flat=True)),
         'events': [{
             'id': e.pk, 'kind': e.kind, 'text': e.text, 'author': _display(e.author), 'created_at': e.created_at,
             'mine': e.author_id == user.pk,
@@ -287,11 +322,12 @@ def delete_note(req, user, pk):
 
 
 def set_items(req, items, user=None):
-    """Staff adjust quantities and prices before approving; quantity 0 removes the item.
-    A typed price overrides the catalog's and is kept when management approves."""
+    """Staff adjust the products, quantities and prices before approving; quantity 0 removes
+    an item, a code not on the request adds it. A typed price overrides the catalog's and is
+    kept when management approves."""
     _require_open(req)
-    by_code = {i.producto_codigo for i in req.items.all()}
-    cleaned = _clean_items(items, by_code)
+    known = {i.producto_codigo for i in req.items.all()} | {p['CCODIGOPRODUCTO'] for p in _catalog(True)}
+    cleaned = _clean_items(items, known)
     prices = {str(i['code']).strip(): _clean_price(i['unit_price'], i['code']) for i in items if 'unit_price' in i}
     with transaction.atomic():
         for code, qty in cleaned.items():
@@ -299,9 +335,9 @@ def set_items(req, items, user=None):
                 req.items.filter(producto_codigo=code).delete()
             else:
                 typed = {'unit_price': prices[code]} if code in prices else {}
-                req.items.filter(producto_codigo=code).update(quantity=qty, **typed)
-    if not req.items.exists():
-        raise QuoteError('La solicitud debe conservar al menos un producto.')
+                req.items.update_or_create(producto_codigo=code, defaults={'quantity': qty, **typed})
+        if not req.items.exists():  # inside the transaction: nothing is removed
+            raise QuoteError('La solicitud debe conservar al menos un producto.')
     _log(req, user, 'actualizó productos y precios')
 
 

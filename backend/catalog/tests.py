@@ -134,6 +134,82 @@ class QuoteRequestTests(TestCase):
         self.act(req, 'nota', text='esperando respuesta')
         self.assertEqual(self.badge(), 0)
 
+    def test_staff_add_and_remove_products(self, _):
+        req = quotes.create_request({'name': 'C', 'phone': '33 1234 5678', 'items': [{'key': '1', 'quantity': 1}]})
+        quotes.set_items(req, [{'code': 'B', 'quantity': 2}])
+        self.assertEqual({i.producto_codigo for i in req.items.all()}, {'A', 'B'})
+        quotes.set_items(req, [{'code': 'A', 'quantity': 0}])
+        self.assertEqual([i.producto_codigo for i in req.items.all()], ['B'])
+        with self.assertRaises(quotes.QuoteError):
+            quotes.set_items(req, [{'code': 'NOPE', 'quantity': 1}])
+        with self.assertRaises(quotes.QuoteError):
+            quotes.set_items(req, [{'code': 'B', 'quantity': 0}])
+        self.assertTrue(req.items.exists())  # the last one stays
+
+    def public(self, token):
+        return self.client.get(f'/api/solicitudes/publica/{token}/').json()
+
+    @override_settings(QUOTE_CONTACT_PHONE='3700000000')
+    def test_office_number_only_after_contact(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.assertIsNone(self.public(req.token)['contact_phone'])
+        req.contacted_at = timezone.now()
+        req.save()
+        self.assertEqual(self.public(req.token)['contact_phone'], '3700000000')
+        change = self.client.post('/api/solicitudes/', {
+            'revises': req.token, 'items': [{'key': '1', 'quantity': 3}],
+        }, content_type='application/json').json()
+        self.assertEqual(self.public(change['token'])['contact_phone'], '3700000000')
+
+    def test_a_change_is_a_new_request_linked_to_the_original(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        req.owner, req.company = self.seller, 'Rancho'
+        req.status, req.valid_until = QuoteRequest.STATUS_APPROVED, timezone.localdate() + timedelta(days=5)
+        req.save()
+        res = self.client.post('/api/solicitudes/', {
+            'revises': req.token, 'name': 'Otro', 'phone': '0', 'note': 'Sin la junta',
+            'items': [{'key': '1', 'quantity': 5}],
+        }, content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        change = QuoteRequest.objects.get(token=res.json()['token'])
+        # Who it is comes from the original, whatever the form sent; the original keeps its quote.
+        self.assertEqual((change.name, change.phone, change.company, change.owner), (req.name, req.phone, 'Rancho', self.seller))
+        self.assertEqual(change.status, QuoteRequest.STATUS_NEW)
+        req.refresh_from_db()
+        self.assertEqual(req.status, QuoteRequest.STATUS_APPROVED)
+        self.assertEqual(self.public(req.token)['revision']['number'], change.pk)
+        self.assertEqual(self.public(change.token)['revises']['number'], req.pk)
+        self.assertIn(f'#{change.pk}', req.events.get().text)
+        self.client.force_login(self.seller)
+        self.assertEqual(self.client.get(f'/api/solicitudes/{req.pk}/').json()['revisions'], [change.pk])
+        self.assertEqual(self.client.get(f'/api/solicitudes/{change.pk}/').json()['revises'], req.pk)
+
+    def test_closed_or_unknown_requests_cant_be_changed(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        req.status = QuoteRequest.STATUS_REJECTED
+        req.save()
+        self.assertFalse(self.public(req.token)['can_modify'])
+        for token in (req.token, 'nope'):
+            res = self.client.post('/api/solicitudes/', {
+                'revises': token, 'items': [{'key': '1', 'quantity': 1}],
+            }, content_type='application/json')
+            self.assertEqual(res.status_code, 400)
+
+    def test_expired_keeps_the_prices_and_is_marked(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        req.status, req.valid_until = QuoteRequest.STATUS_APPROVED, timezone.localdate() - timedelta(days=1)
+        req.save()
+        req.items.filter(producto_codigo='A').update(unit_price=Decimal('100'))
+        public = self.public(req.token)
+        self.assertTrue(public['expired'])
+        self.assertEqual(public['items'][0]['unit_price'], 100)
+
+    def test_items_keep_their_key_but_only_public_ones_link(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        with patch('catalog.quotes._catalog', side_effect=lambda w: CATALOG if w else CATALOG[:1]):
+            items = self.public(req.token)['items']
+        self.assertEqual([(i['key'], i['linked']) for i in items], [('1', True), ('2', False)])
+
     def test_whatsapp_contact_takes_it_and_can_be_undone(self, _):
         self.client.force_login(self.seller)
         req = QuoteRequest.objects.get(token=self.send().json()['token'])

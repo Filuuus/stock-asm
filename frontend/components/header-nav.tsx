@@ -3,8 +3,9 @@
 import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Menu, ShoppingCart, User } from "lucide-react";
+import { ChevronDown, FileText, LogOut, Menu, ShoppingCart, User } from "lucide-react";
 import { useCart } from "@/hooks/use-cart";
+import { noSavedQuotes, savedQuotes, subscribeSavedQuotes } from "@/lib/saved-quotes";
 import { useAuth } from "@/hooks/use-auth";
 import {
   DropdownMenu,
@@ -32,6 +33,7 @@ export default function HeaderNav() {
   const { count } = useCart();
   const staffSite = useIsStaffSite();
   const staff = !!user && staffSite;
+  const quotes = useSyncExternalStore(subscribeSavedQuotes, savedQuotes, noSavedQuotes);
   const pending = usePendingRequests(staff, pathname);
 
   const groups = [
@@ -88,6 +90,17 @@ export default function HeaderNav() {
         {!staff && (
           <Link href="/catalogo" className={cn(linkClass("/catalogo"), "hidden lg:block")}>
             Catálogo
+          </Link>
+        )}
+        {/* A customer's way back to their quotes; only once they have one. */}
+        {!staff && quotes.length > 0 && (
+          <Link
+            href="/mis-solicitudes"
+            aria-label="Mis solicitudes"
+            title="Mis solicitudes"
+            className="order-last rounded-md p-2 hover:bg-slate-800 lg:order-none"
+          >
+            <FileText className="h-6 w-6" />
           </Link>
         )}
         {/* The quote-request cart, on every screen size. */}
