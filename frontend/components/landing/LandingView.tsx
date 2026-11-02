@@ -18,7 +18,8 @@ const SOCIAL = [
 ];
 const LINK = "text-emerald-400 hover:underline";
 
-// Each one opens the catalog filtered to its category; the id is the anchor ads can link to.
+// Each one opens the catalog filtered to its category, or its own page (href, with cta as the
+// link text); the id is the anchor ads can link to.
 const SOLUTIONS = [
   {
     id: "ordeno",
@@ -38,6 +39,8 @@ const SOLUTIONS = [
     id: "tapetes",
     category: "R_NW",
     photo: "TAPETE",
+    href: "/comparar-tapetes",
+    cta: "Comparar y calcular cuántos necesita",
     title: "Tapetes de hule North West Rubber",
     text: "Tapetes para echaderos, pasillos y becerras, que ayudan a cuidar las pezuñas. Los instalamos en su establo.",
   },
@@ -177,7 +180,7 @@ export default function LandingView({ products, coverage }: { products: Product[
                 <Link
                   key={s.id}
                   id={s.id}
-                  href={catalogHref(s.category)}
+                  href={s.href ?? catalogHref(s.category)}
                   className="group flex scroll-mt-4 items-center gap-4 rounded-xl border border-gray-200 p-3 transition-shadow hover:shadow-md sm:gap-6 sm:p-4"
                 >
                   <div className="relative aspect-square w-20 flex-shrink-0 overflow-hidden rounded-lg bg-gray-50 sm:w-28">
@@ -193,7 +196,7 @@ export default function LandingView({ products, coverage }: { products: Product[
                     <h3 className="font-semibold text-slate-900 sm:text-lg">{s.title}</h3>
                     <p className="mt-1 text-sm text-slate-600 sm:text-base">{s.text}</p>
                     <p className="mt-2 text-sm font-medium text-emerald-700">
-                      Ver {count} productos
+                      {s.cta ?? `Ver ${count} productos`}
                     </p>
                   </div>
                   <ChevronRight className="h-6 w-6 flex-shrink-0 text-slate-400 group-hover:text-emerald-600" />
@@ -201,10 +204,6 @@ export default function LandingView({ products, coverage }: { products: Product[
               );
             })}
           </div>
-          <Link href="/comparar-tapetes" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">
-            ¿Buscas tapetes o colchones? Compáralos y calcula cuántos necesitas
-            <ChevronRight className="h-4 w-4" aria-hidden />
-          </Link>
         </div>
       </section>
 

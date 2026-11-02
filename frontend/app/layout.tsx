@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   // Absolute URLs for link previews and the sitemap; set it to the real domain on the server.
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: "Agropecuaria Santa María",
-  description: "Catálogo de Productos",
+  description: "Equipo de ordeño GEA, higiene, tapetes, nutrición Bionat y ventilación en Los Altos de Jalisco, con servicio en ruta.",
 };
 
 export default function RootLayout({
