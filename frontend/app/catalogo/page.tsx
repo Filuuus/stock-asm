@@ -4,7 +4,10 @@ import CatalogView from "@/components/catalog/CatalogView";
 import { API_URL } from "@/lib/api";
 import { Product } from "@/types/api";
 
-export const metadata: Metadata = { title: "Catálogo | Agropecuaria Santa María" };
+export const metadata: Metadata = {
+  title: "Catálogo de equipo de ordeño, higiene y tapetes | Agropecuaria Santa María",
+  description: "Refacciones y equipo de ordeño GEA, productos de higiene, tapetes para ganado y ventilación en Los Altos de Jalisco.",
+};
 
 async function getInventory(): Promise<Product[]> {
   // Forward the browser's session cookie so the backend knows who's
