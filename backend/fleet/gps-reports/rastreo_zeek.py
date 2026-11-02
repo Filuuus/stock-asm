@@ -1,4 +1,6 @@
 import os
+import re
+import math
 import json
 import requests
 from dotenv import load_dotenv
@@ -8,7 +10,9 @@ from datetime import datetime, timedelta, timezone
 load_dotenv()
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "TU_TOKEN_DE_NOTION")
-DATABASE_BITACORA_ID = os.getenv("DATABASE_BITACORA_ID", "TU_ID_DE_BASE_DE_DATOS")
+DATABASE_BITACORA_ID = os.getenv("DATABASE_BITACORA_ID", "TU_ID_BITACORAS")
+DATABASE_CLIENTES_ID = os.getenv("DATABASE_CLIENTES_ID", "3f7294800110803d9798c0b683ce61d5") # Reemplaza por tu ID real si difiere
+
 ZEEK_TOKEN = os.getenv("ZEEK_TOKEN", "TU_TOKEN_ZEEK")
 ZEEK_CLIENTE = os.getenv("ZEEK_CLIENTE", "TU_CLIENTE_ZEEK")
 ZEEK_LICENCIA = os.getenv("ZEEK_LICENCIA", "TU_LICENCIA_ZEEK")
@@ -28,17 +32,75 @@ flotilla = {
     "351340480032015": {"nombre": "Hilux 2", "notion_page_id": "3e029480011080429b83c37591a71d8a"}
 }
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES ESPACIALES Y DE NOTION ---
 def convertir_coordenadas(coord):
     if coord == 0: return 0
     absoluto = abs(coord) / 100000
     grados = int(absoluto)
     return (grados + ((absoluto - grados) * 100) / 60) * (1 if coord >= 0 else -1)
 
+def calcular_distancia(lat1, lon1, lat2, lon2):
+    """Calcula la distancia en metros entre dos coordenadas (Fórmula de Haversine)"""
+    R = 6371000.0 # Radio de la Tierra en metros
+    lat1_rad, lon1_rad, lat2_rad, lon2_rad = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlat, dlon = lat2_rad - lat1_rad, lon2_rad - lon1_rad
+    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
+def cargar_catalogo_clientes():
+    """Descarga los clientes y extrae lat/lon de sus URLs de Google Maps"""
+    print("🔍 Descargando catálogo de clientes desde Notion para cálculo de proximidad...")
+    clientes_loc = []
+    has_more = True
+    start_cursor = None
+    
+    while has_more:
+        body = {"start_cursor": start_cursor} if start_cursor else {}
+        try:
+            resp = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_CLIENTES_ID}/query", headers=notion_headers, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for p in data.get("results", []):
+                props = p.get("properties", {})
+                nom = props.get("Nombre", {}).get("title", [{}])
+                nombre = nom[0].get("text", {}).get("content", "").strip() if nom else ""
+                url = props.get("Ubicación", {}).get("url") or ""
+                
+                # Buscar coordenadas en la URL (ej: q=20.123,-102.123 o query=20.123,-102.123)
+                match = re.search(r'q(?:uery)?=(-?\d+\.\d+),(-?\d+\.\d+)', url)
+                if match and nombre:
+                    clientes_loc.append({
+                        "nombre": nombre,
+                        "lat": float(match.group(1)),
+                        "lng": float(match.group(2))
+                    })
+                    
+            has_more = data.get("has_more", False)
+            start_cursor = data.get("next_cursor")
+        except Exception as e:
+            print(f"⚠️ Error cargando base de clientes: {e}")
+            break
+            
+    print(f"✅ Se cargaron {len(clientes_loc)} clientes con coordenadas exactas.\n")
+    return clientes_loc
+
+def buscar_cliente_cercano(lat_parada, lon_parada, catalogo_clientes, limite_metros=100):
+    """Retorna el nombre del cliente más cercano si está a menos del límite estipulado"""
+    cliente_mas_cercano = None
+    distancia_min = limite_metros + 1 # Iniciamos un metro por encima del límite
+    
+    for c in catalogo_clientes:
+        d = calcular_distancia(lat_parada, lon_parada, c["lat"], c["lng"])
+        if d <= limite_metros and d < distancia_min:
+            distancia_min = d
+            cliente_mas_cercano = c["nombre"]
+            
+    return cliente_mas_cercano, distancia_min
+
 def obtener_km_notion(page_id):
     try:
         resp = requests.get(f"https://api.notion.com/v1/pages/{page_id}", headers=notion_headers)
-        resp.raise_for_status()
         return resp.json().get("properties", {}).get("Kilometraje", {}).get("number") or 0.0
     except: return 0.0
 
@@ -55,6 +117,9 @@ fecha_fin = fin_ayer.astimezone(timezone.utc).strftime("%m/%d/%Y %H:%M:%S")
 fecha_iso = inicio_ayer.strftime("%Y-%m-%d")
 
 print(f"🚀 Iniciando registro automático de bitácoras para el {fecha_iso}")
+
+# Precargamos los clientes en memoria una sola vez para no quemar la API de Notion
+catalogo_clientes = cargar_catalogo_clientes()
 
 # --- PROCESAMIENTO ---
 for unidad_id, datos in flotilla.items():
@@ -83,16 +148,31 @@ for unidad_id, datos in flotilla.items():
             lat, lon = convertir_coordenadas(fin["Latitud"]), convertir_coordenadas(fin["Longitud"])
             coords.append(f"{lat},{lon}")
             
+            # --- EVALUACIÓN DE PROXIMIDAD ---
+            cliente_coincidente, dist = buscar_cliente_cercano(lat, lon, catalogo_clientes, limite_metros=100)
+            
+            # Construcción de la interfaz de Notion
             geo = fin.get("ng")
+            rich_text_array = [
+                {"type": "text", "text": {"content": f"🟢 {h_ini}  ➔  🔴 {h_fin}\nDestino: "}},
+                {"type": "text", "text": {"content": f"{geo if geo else 'Ver mapa'}", "link": {"url": f"https://www.google.com/maps?q={lat},{lon}"}}}
+            ]
+            
+            # Si se encontró un cliente a <100m, lo incrustamos en la tarjeta
+            if cliente_coincidente:
+                rich_text_array.append(
+                    {"type": "text", "text": {"content": f"\n👤 Posible Cliente: {cliente_coincidente} (~{int(dist)}m)"}}
+                )
+                
+            rich_text_array.append(
+                {"type": "text", "text": {"content": f"\n⏱️ {v.get('recorrido','0m')} en {v.get('tiempo','0m')}"}}
+            )
+
             bloques.append({
                 "object": "block", "type": "callout",
                 "callout": {
                     "icon": {"emoji": "📍"}, "color": "gray_background",
-                    "rich_text": [
-                        {"type": "text", "text": {"content": f"🟢 {h_ini}  ➔  🔴 {h_fin}\nDestino: "}},
-                        {"type": "text", "text": {"content": f"{geo if geo else 'Ver mapa'}", "link": {"url": f"https://www.google.com/maps?q={lat},{lon}"}}},
-                        {"type": "text", "text": {"content": f"\n⏱️ {v.get('recorrido','0m')} en {v.get('tiempo','0m')}"}}
-                    ]
+                    "rich_text": rich_text_array
                 }
             })
 
