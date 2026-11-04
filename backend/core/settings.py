@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'fleet',
     'profitability',
     'clients',
+    'maintenance',
 ]
 
 MIDDLEWARE = [
