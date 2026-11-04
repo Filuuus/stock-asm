@@ -6,7 +6,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from .models import VehicleDayKm, VehicleStop
-from .services import LOCAL_TZ, close_month, notion_stops, store_km, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
+from .services import LOCAL_TZ, close_month, notion_stops, store_km, sync_day, parse_zeek_trips, summarize_day, summarize_month, zeek_coord, zeek_time
 
 
 def point(odo, fecha='/Date(1759363200000)/', lat=2053123, lon=-10275000, ng=None):
@@ -100,6 +100,19 @@ class CloseMonthTests(TestCase):
         close_month(date(2026, 9, 1), date(2026, 9, 30), lambda msg: None)
         archived = [c.args[1] for c in notion.call_args_list if c.args[0] == 'PATCH']
         self.assertEqual(archived, ['pages/Hilux-2026-09-01'])
+
+
+class SyncDayTests(SimpleTestCase):
+    @patch('fleet.services.fetch_zeek_trips')
+    @patch('fleet.services.notion')
+    @patch('fleet.services.notion_query')
+    def test_skips_a_day_whose_month_is_already_closed(self, query, notion, fetch):
+        # Oct 31 re-checked on Nov 2, after the Nov 1 close archived October's daily entries.
+        query.return_value = [log_page('Reporte Mensual - Hilux', '2026-10-01', 900, 1000)]
+        sync_day(date(2026, 10, 31), lambda msg: None)
+        self.assertEqual(query.call_args.args[1]['and'][0]['date'], {'equals': '2026-10-01'})
+        notion.assert_not_called()
+        fetch.assert_not_called()
 
 
 @override_settings(ZEEK_FLEET={'111': 'card-a', '222': 'card-b', '333': 'card-c'})

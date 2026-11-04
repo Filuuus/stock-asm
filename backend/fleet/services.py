@@ -146,7 +146,16 @@ def summarize_day(trips):
 
 def sync_day(day, log):
     """Writes one log entry per vehicle that moved on `day` and adds its km to the vehicle
-    card's odometer. Skips vehicles already logged for that day, so re-running is safe."""
+    card's odometer. Skips vehicles already logged for that day, so re-running is safe.
+    Skips a day whose month is already closed: its daily entries are archived, so they would look
+    missing and be written (and added to the odometer) a second time."""
+    if notion_query(settings.NOTION_FLEET_LOG_DB, {'and': [
+        {'property': 'Fecha', 'date': {'equals': day.replace(day=1).isoformat()}},
+        {'property': 'Vehículo', 'title': {'starts_with': MONTHLY_TITLE_PREFIX}},
+    ]}):
+        log(f'{day:%Y-%m} ya tiene reporte mensual: no se registra el {day}.')
+        return
+
     start = datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
     end = start + timedelta(hours=23, minutes=59, seconds=59)
 
