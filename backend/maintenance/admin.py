@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import OrderLine, Parlor, ParlorPart, Visit
+from .models import Parlor, ParlorPart
 
 
 class ParlorPartInline(admin.TabularInline):
@@ -12,7 +12,3 @@ class ParlorPartInline(admin.TabularInline):
 class ParlorAdmin(admin.ModelAdmin):
     list_display = ('client_code', 'label', 'stalls', 'cows', 'milking_hours_per_day', 'active')
     inlines = [ParlorPartInline]
-
-
-admin.site.register(Visit)
-admin.site.register(OrderLine)

@@ -43,6 +43,7 @@ export default function HeaderNav() {
         { href: "/solicitudes", label: "Solicitudes", show: staff, badge: pending },
         { href: "/catalogo", label: "Catálogo", show: true },
         { href: "/fotos", label: "Fotos", show: staff },
+        { href: "/servicios", label: "Servicios", show: staff },
       ],
     },
     {

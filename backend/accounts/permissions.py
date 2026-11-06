@@ -19,13 +19,6 @@ def is_accounting(user):
     return bool(profile and profile.role == Profile.ROLE_ACCOUNTING)
 
 
-def is_purchasing(user):
-    if not user or not user.is_authenticated:
-        return False
-    profile = getattr(user, 'profile', None)
-    return bool(profile and profile.role == Profile.ROLE_PURCHASING)
-
-
 class IsWorker(BasePermission):
     """Any logged-in account - salesperson, accounting, or management. All
     accounts are workers (no customer accounts exist yet), so this is just
@@ -51,10 +44,3 @@ class IsAccountingOrManagement(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return is_accounting(user) or is_management(user)
-
-
-class IsPurchasingOrManagement(BasePermission):
-    """GEA orders for the service plan: the purchasing account places them, management oversees."""
-
-    def has_permission(self, request, view):
-        return is_purchasing(request.user) or is_management(request.user)

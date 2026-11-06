@@ -94,6 +94,9 @@ class QuoteRequest(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)  # the quote went out to the customer
     # Sent from the customer's link to change an earlier request; that one stays as it is.
     revises = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='revisions')
+    # A discount on the whole request (El Buen Fin, a deal to win a client back), in percent; staff set it while
+    # the request is open, and the customer sees it with the prices.
+    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
     class Meta:
         ordering = ['-created_at']

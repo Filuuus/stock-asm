@@ -1,7 +1,7 @@
-"""Clients' milking parlors, the wear parts each one has, and what the service plan needs to remember:
-part changes staff confirm, visits proposed to the service calendar, and the GEA orders placed.
-Clients are bare ERP codes (admClientes.CCODIGOCLIENTE); names are resolved live (the repo is public)."""
+"""Clients' milking parlors and the wear parts each one has (part changes come from the invoices). Clients are bare ERP codes (admClientes.CCODIGOCLIENTE); names are resolved live (the repo is
+public)."""
 
+from django.conf import settings
 from django.db import models
 
 
@@ -12,6 +12,8 @@ class Parlor(models.Model):
     cows = models.PositiveIntegerField(null=True, blank=True)
     milking_hours_per_day = models.FloatField(null=True, blank=True)  # converts GEA's hours into months
     active = models.BooleanField(default=True)
+    # Codes staff removed ("No aplica"), so sync_parlors doesn't add them back from the invoices.
+    dismissed = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f'{self.client_code} {self.label}'.strip()
@@ -21,38 +23,31 @@ class ParlorPart(models.Model):
     parlor = models.ForeignKey(Parlor, on_delete=models.CASCADE, related_name='parts')
     code = models.CharField(max_length=30)  # ERP product code without GEA's letter suffix
     quantity = models.PositiveIntegerField()
+    group = models.CharField(max_length=60, blank=True)  # where it goes, as the calendar groups it (Colectores...)
+    sheet_months = models.PositiveIntegerField(null=True, blank=True)  # the calendar's RECAMBIO, last resort
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=['parlor', 'code'], name='unique_parlor_part')]
+        # A part can be in two places of a parlor (the same hose on the claws and on the LECC): a row per place.
+        constraints = [models.UniqueConstraint(fields=['parlor', 'code', 'group'], name='unique_parlor_part_place')]
 
 
-class PartChange(models.Model):
-    """A change staff confirmed (or corrected); invoices supply the rest, read live from the ERP."""
-    parlor = models.ForeignKey(Parlor, on_delete=models.CASCADE, related_name='changes')
-    code = models.CharField(max_length=30)
-    date = models.DateField()
-    visit = models.ForeignKey('Visit', null=True, blank=True, on_delete=models.SET_NULL, related_name='changes')
 
+class ServiceQuote(models.Model):
+    """A quote request made from a parlor's detail (catalog.QuoteRequest) and the parts it covers, so the agenda
+    shows them as quoted until they're invoiced."""
 
-class Visit(models.Model):
-    """One service visit to a parlor: the parts due in its month. Proposed by the monthly plan,
-    moved to a workable date by staff, confirmed once done."""
-    STATUS_CHOICES = [('proposed', 'Propuesta'), ('scheduled', 'Agendada'), ('done', 'Realizada'),
-                      ('cancelled', 'Cancelada')]
-    parlor = models.ForeignKey(Parlor, on_delete=models.CASCADE, related_name='visits')
-    month = models.DateField()  # first day of the month the parts fall due
-    date = models.DateField(null=True, blank=True)  # the agreed day
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='proposed')
-    parts = models.JSONField(default=list)  # [{"code": "...", "quantity": 32}] at proposal time
+    parlor = models.ForeignKey(Parlor, on_delete=models.CASCADE, related_name='quotes')
+    request = models.OneToOneField('catalog.QuoteRequest', on_delete=models.CASCADE, related_name='service_quote')
+    places = models.JSONField(default=list)  # [[code, group], ...]
     created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        constraints = [models.UniqueConstraint(fields=['parlor', 'month'], name='unique_parlor_visit_month')]
 
+class ExternalChange(models.Model):
+    """A part changed by someone else (another dealer, the client's own crew): no invoice of ours records it, but
+    it restarts the part's interval, so the client can be contacted before the next change."""
 
-class OrderLine(models.Model):
-    """A part ordered from GEA (the ERP has no purchase orders, only the purchase once it arrives)."""
-    month = models.DateField()  # first day of the month it was ordered
-    code = models.CharField(max_length=30)
-    quantity = models.PositiveIntegerField()
-    received_on = models.DateField(null=True, blank=True)
+    part = models.ForeignKey(ParlorPart, on_delete=models.CASCADE, related_name='external_changes')
+    day = models.DateField()
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)

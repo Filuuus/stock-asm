@@ -191,6 +191,13 @@ def _rows(req, by_code, live_prices):
     return rows
 
 
+def _totals(req, rows):
+    """{'subtotal', 'discount' (percent), 'discount_amount', 'total'}: the request's discount on its priced rows."""
+    subtotal = _total(rows)
+    off = (subtotal * req.discount / 100).quantize(Decimal('0.01'))
+    return {'subtotal': subtotal, 'discount': req.discount, 'discount_amount': off, 'total': subtotal - off}
+
+
 def _total(rows):
     return sum((r['subtotal'] for r in rows if r['subtotal']), Decimal(0))
 
@@ -212,7 +219,7 @@ def public_view(req):
         # Contacted is internal: the customer's request is still in review.
         'number': req.pk, 'status': QuoteRequest.STATUS_NEW if req.status == QuoteRequest.STATUS_CONTACTED else req.status,
         'created_at': req.created_at, 'name': req.name, 'valid_until': req.valid_until if approved else None,
-        'items': rows, 'total': _total(rows) if approved else None,
+        'items': rows, **(_totals(req, rows) if approved else {'total': None, 'discount': req.discount}),
         'expired': _expired(req), 'can_modify': _can_modify(req),
         'contact_phone': settings.QUOTE_CONTACT_PHONE if _contacted(req) else None,
         'revision': {'number': revision.pk, 'token': revision.token} if revision else None,
@@ -249,7 +256,7 @@ def staff_view(req, user):
         'id': req.pk, 'token': req.token, 'status': req.status, 'created_at': req.created_at,
         'name': req.name, 'phone': req.phone, 'company': req.company, 'note': req.note,
         'decided_at': req.decided_at, 'decided_by': req.decided_by.username if req.decided_by else None,
-        'valid_until': req.valid_until, 'items': rows, 'total': _total(rows),
+        'valid_until': req.valid_until, 'items': rows, **_totals(req, rows),
         'owner': _display(req.owner), 'mine': req.owner_id == user.pk, 'to_send': _to_send(req),
         'expired': _expired(req), 'revises': req.revises_id,
         'revisions': list(req.revisions.values_list('pk', flat=True)),
@@ -305,6 +312,34 @@ def mark_sent(req, user):
     req.sent_at = timezone.now()
     req.save()
     _log(req, user, 'envió la cotización')
+
+
+def set_discount(req, user, value):
+    """A discount on the whole request, in percent (El Buen Fin, a deal to win a client back): set while it's
+    open, so management approves it with the prices."""
+    _require_open(req)
+    try:
+        discount = Decimal(str(value)).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError):
+        raise QuoteError('Descuento no válido.')
+    if not 0 <= discount < 100:
+        raise QuoteError('El descuento va de 0 a 99 %.')
+    if discount != req.discount:
+        req.discount = discount
+        req.save(update_fields=['discount'])
+        _log(req, user, f'puso un descuento de {discount.normalize():f} %' if discount else 'quitó el descuento')
+
+
+def set_phone(req, user, phone):
+    """Staff fix the customer's phone (a request made from Servicios takes Contpaqi's, which can be missing or a
+    landline), so WhatsApp reaches them."""
+    phone = str(phone or '').strip()
+    if len(phone) > 30 or sum(c.isdigit() for c in phone) < 10:
+        raise QuoteError('Revisa el teléfono (10 dígitos).')
+    if phone != req.phone:
+        req.phone = phone
+        req.save(update_fields=['phone'])
+        _log(req, user, f'cambió el teléfono a {phone}')
 
 
 def add_note(req, user, text):

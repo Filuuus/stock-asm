@@ -42,7 +42,6 @@ const ROLE_OPTIONS: { value: Role; label: string }[] = [
   { value: "SALESPERSON", label: "Vendedor" },
   { value: "ACCOUNTING", label: "Contabilidad" },
   { value: "MANAGEMENT", label: "Gerencia" },
-  { value: "PURCHASING", label: "Compras" },
 ];
 
 const ZONE_OPTIONS: { value: Zone | ""; label: string }[] = [

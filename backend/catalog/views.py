@@ -71,6 +71,8 @@ STAFF_ACTIONS = {
     'soltar': lambda req, user, data: quotes.release(req, user),
     'enviada': lambda req, user, data: quotes.mark_sent(req, user),
     'nota': lambda req, user, data: quotes.add_note(req, user, data.get('text')),
+    'telefono': lambda req, user, data: quotes.set_phone(req, user, data.get('phone')),
+    'descuento': lambda req, user, data: quotes.set_discount(req, user, data.get('discount')),
     'cerrar': lambda req, user, data: quotes.close(req, user, data.get('reason')),
 }
 MANAGEMENT_ACTIONS = {

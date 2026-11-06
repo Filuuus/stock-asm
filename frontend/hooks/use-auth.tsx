@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import { apiFetch } from "@/lib/api";
 
-export type Role = "SALESPERSON" | "ACCOUNTING" | "MANAGEMENT" | "PURCHASING";
+export type Role = "SALESPERSON" | "ACCOUNTING" | "MANAGEMENT";
 
 interface AuthUser {
   username: string;

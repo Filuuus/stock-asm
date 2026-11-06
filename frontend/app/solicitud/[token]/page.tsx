@@ -23,6 +23,9 @@ interface PublicRequest {
   name: string;
   valid_until: string | null;
   total: number | null;
+  subtotal?: number;
+  discount: number; // percent
+  discount_amount?: number;
   expired: boolean;
   can_modify: boolean;
   contact_phone: string | null;
@@ -158,6 +161,13 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
 
       {approved && Number(req.total) > 0 && (
         <p className="mt-4 text-right text-lg font-semibold text-gray-900">
+          {Number(req.discount) > 0 && (
+            <span className="block text-sm font-normal text-gray-600">
+              Subtotal: <span className="num">{formatMoney(req.subtotal!)}</span>
+              <br />
+              Descuento {Number(req.discount)} %: <span className="num">−{formatMoney(req.discount_amount!)}</span>
+            </span>
+          )}
           Total: <span className="num">{formatMoney(req.total!)}</span>
           <span className="block text-xs font-normal text-gray-500">IVA incluido</span>
           {unpriced > 0 && (

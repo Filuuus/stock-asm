@@ -122,6 +122,24 @@ class QuoteRequestTests(TestCase):
         self.act(req, 'enviada')
         self.assertEqual(self.badge(), 0)
 
+    def test_a_discount_comes_off_the_total_and_only_while_open(self, _):
+        self.client.force_login(self.manager)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.assertEqual(self.act(req, 'descuento', discount=100).status_code, 400)
+        view = self.act(req, 'descuento', discount=10).json()
+        self.assertEqual(Decimal(view['discount_amount']), (Decimal(view['subtotal']) / 10).quantize(Decimal('0.01')))
+        self.assertEqual(Decimal(view['total']), Decimal(view['subtotal']) - Decimal(view['discount_amount']))
+        self.act(req, 'aprobar')
+        self.assertEqual(self.act(req, 'descuento', discount=20).status_code, 400)
+        public = self.client.get(f'/api/solicitudes/publica/{req.token}/').json()
+        self.assertEqual(Decimal(public['discount']), 10)
+
+    def test_staff_fix_the_phone(self, _):
+        self.client.force_login(self.seller)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.assertEqual(self.act(req, 'telefono', phone='123').status_code, 400)
+        self.assertEqual(self.act(req, 'telefono', phone='33 1234 5678').json()['phone'], '33 1234 5678')
+
     def test_contacted_with_no_activity_returns_to_the_badge_until_a_note(self, _):
         self.client.force_login(self.manager)
         req = QuoteRequest.objects.get(token=self.send().json()['token'])
