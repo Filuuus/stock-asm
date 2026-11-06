@@ -87,6 +87,13 @@ BOVIFIT_NAME_MARKER = 'BOVIFIT'
 # signal.
 FAN_NAME_MARKER = 'VENTILADOR'
 SERVICE_PRODUCT_TYPE = 3
+# Chemicals the maintenance crew sells to one client (both of its ERP client
+# records) start at 2% instead of R_CHEM's 4% (management 2026-11-06).
+SERVICE_CHEM_CLIENT_IDS = {966, 1133}
+SERVICE_CHEM_RATE_CODE = 'S_CHEM_CLIENT'
+# Both that rate and the crew's late drop to 4% (S_SERVICIOS late_penalty)
+# apply to lines paid from this date on; earlier months stay as they were paid.
+SERVICE_RATES_FROM = date(2026, 10, 1)
 
 # Zones in scope for v1 (confirmed by management, 2026-09-15): BIONAT and
 # ZONA3 no longer have active salespeople and SUPERVISOR is a shared/generic
@@ -644,9 +651,11 @@ def _classify_line(producto, brand_names, zero_codes):
     return 'R'
 
 
-def _rate_code_for(category, zone_code):
+def _rate_code_for(category, zone_code, client_id=None):
     if category == 'ZERO':
         return None
+    if category == 'R_CHEM' and zone_code == 'SERVICIOS' and client_id in SERVICE_CHEM_CLIENT_IDS:
+        return SERVICE_CHEM_RATE_CODE
     if category == 'S':
         # Service items structurally only ever come from a route salesperson
         # or the maintenance crew (confirmed: OFICINA/PUNTOVENTA can't
@@ -906,16 +915,19 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
         category = _classify_line(producto, brand_names, zero_codes)
         zone_code = puntoventa_zone_override.get(m['CIDDOCUMENTO']) or agent_codes.get(factura['CIDAGENTE'])
         pv_client = puntoventa_client_of.get(m['CIDDOCUMENTO'])
+        paid_date = paid_dates[m['CIDDOCUMENTO']]
+        new_service_rates = paid_date.date() >= SERVICE_RATES_FROM
         if pv_client and pv_client.applies_to(producto['CCODIGOPRODUCTO']):
             # Flat Punto de Venta rate overrides the usual per-category one -
             # category is still shown in the drilldown for transparency,
             # just not used for the rate.
             rate_code = None if category == 'ZERO' else PUNTOVENTA_RATE_CODE
         else:
-            rate_code = _rate_code_for(category, zone_code)
+            rate_code = _rate_code_for(category, zone_code,
+                                       factura['CIDCLIENTEPROVEEDOR'] if new_service_rates else None)
         rate_row = rates_by_code.get(rate_code) if rate_code else None
-
-        paid_date = paid_dates[m['CIDDOCUMENTO']]
+        if rate_code == 'S_SERVICIOS' and rate_row and not new_service_rates:
+            rate_row = CommissionCategoryRate(base_rate=rate_row.base_rate, decay_rate_per_week=rate_row.decay_rate_per_week)
         due_date = factura['CFECHAVENCIMIENTO']
         days_late = (paid_date - due_date).days if due_date else 0
 
