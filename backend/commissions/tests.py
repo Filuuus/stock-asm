@@ -177,6 +177,10 @@ class RateTests(SimpleTestCase):
         self.assertEqual(_rate_code_for('S', 'ZONA2'), 'S_SALESPERSON')
         self.assertEqual(_rate_code_for('S', 'SERVICIOS'), 'S_SERVICIOS')
         self.assertEqual(_rate_code_for('R_NW', 'OFICINA'), 'R_NW')
+        self.assertEqual(_rate_code_for('R_CHEM', 'SERVICIOS', 966), 'S_CHEM_CLIENT')
+        self.assertEqual(_rate_code_for('R_CHEM', 'SERVICIOS', 1133), 'S_CHEM_CLIENT')
+        self.assertEqual(_rate_code_for('R_CHEM', 'ZONA1', 966), 'R_CHEM')
+        self.assertEqual(_rate_code_for('R_CHEM', 'SERVICIOS', 1), 'R_CHEM')
 
 
 class FolioTokenTests(SimpleTestCase):
