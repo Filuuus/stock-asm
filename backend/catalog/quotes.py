@@ -492,6 +492,13 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
         _log(req, user, 'compartió la cotización con precios')
 
 
+def _notion_task(action, req, *args):
+    """A Servicios quote's task in the crew's Notion calendar (maintenance.notion_tasks), once the change is saved and
+    in the background."""
+    from maintenance import notion_tasks
+    transaction.on_commit(lambda: notion_tasks.in_background(getattr(notion_tasks, action), req.pk, *args))
+
+
 def accept(req):
     """The customer approves the shared quote from their link (no account: the link is the access)."""
     if req.status != QuoteRequest.STATUS_APPROVED:
@@ -503,6 +510,7 @@ def accept(req):
     req.accepted_at = timezone.now()
     req.save(update_fields=['accepted_at'])
     _log(req, None, 'aprobó la cotización')  # no author: the customer
+    _notion_task('create_task', req)
 
 
 def reopen(req, user):
@@ -523,6 +531,7 @@ def reopen(req, user):
         req.contacted_at = req.contacted_at or timezone.now()
         req.save()
         _log(req, user, 'reabrió la cotización')
+    _notion_task('withdraw_task', req, 'se reabrió')
 
 
 def close(req, user, reason):
@@ -540,3 +549,4 @@ def close(req, user, reason):
         req.decided_by = user
         req.save()
         _log(req, user, f'cerró la solicitud: {reason}')
+    _notion_task('withdraw_task', req, 'se cerró')

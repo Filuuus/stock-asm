@@ -514,3 +514,49 @@ class EndpointTests(TestCase):
         self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', later, None)]), [])  # B changed by someone else
         self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', date(2020, 1, 1), 2)]), [])  # B's is older
         self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', later, 2)]), [req.pk])
+
+
+class NotionTaskTests(TestCase):
+    """Approved Servicios quotes -> the crew's Notion calendar (notion_tasks); Notion itself is mocked."""
+
+    def test_task_reads_like_the_crews_and_is_prioritaria_when_a_part_was_overdue(self):
+        from .notion_tasks import task_values, to_children
+        args = dict(number=23, client='JUAN PEREZ', categories=['Colectores', 'Pulsadores'], total=31715.52,
+                    owner='Liz', accepted_on=date(2026, 11, 7), link='https://interno/solicitudes/23', stalls=12)
+        values = task_values(items=[(48, '7025', 'PEZONERA', '2026-11-26'), (12, '7051', 'KIT', None)], **args)
+        self.assertEqual(values['Actividad'], 'Cambio de colectores y pulsadores Juan Perez')
+        self.assertEqual(values['icon'], '🐄')  # its first category's
+        self.assertEqual((values['Estado'], values['Prioridad'], values['Solicita']), ('Sin empezar', 'Regular', 'Liz'))
+        self.assertEqual(values['materiales'], [('48', '7025', 'PEZONERA', 'Toca 26 nov 2026'), ('12', '7051', 'KIT', '')])
+        self.assertEqual(values['info'][1], [('Total: $31,715.52 IVA incluido', None)])
+        blocks = to_children(values)
+        self.assertEqual([b['type'] for b in blocks],
+                         ['paragraph', 'paragraph', 'heading_1', 'table', 'heading_1', 'paragraph', 'paragraph'])
+        self.assertEqual(blocks[0]['paragraph']['rich_text'][0]['text']['content'], 'Tipo de sala: 12 unidades')
+        link = blocks[5]['paragraph']['rich_text'][1]['text']  # "ver cotización", clickable
+        self.assertEqual((link['content'], link['link']['url']), ('ver cotización', 'https://interno/solicitudes/23'))
+        self.assertEqual(len(blocks[3]['table']['children']), 4)  # header, two parts, one blank row
+        overdue = task_values(items=[(48, '7025', 'PEZONERA', '2026-01-21')], **args)
+        self.assertEqual((overdue['Prioridad'], overdue['materiales'][0][3]), ('Prioritaria', 'Vencía 21 ene 2026'))
+
+    @patch('maintenance.notion_tasks.notion')
+    def test_withdraw_trashes_an_unscheduled_task_and_only_notes_a_scheduled_one(self, notion):
+        from catalog.models import QuoteRequest
+        from .models import Parlor, ServiceQuote
+        from .notion_tasks import withdraw_task
+        req = QuoteRequest.objects.create(name='C', phone='3312345678', from_staff=True)
+        service = ServiceQuote.objects.create(parlor=Parlor.objects.create(client_code='1', stalls=8), request=req,
+                                              notion_page='p1')
+        page = lambda status, day: {'properties': {'Estado': {'status': {'name': status}},  # noqa: E731
+                                                   'Fecha': {'date': day and {'start': day}},
+                                                   'Descripción': {'rich_text': [{'plain_text': 'x'}]}}}
+        notion.return_value = page('Sin empezar', None)
+        withdraw_task(service, 'se reabrió')
+        self.assertEqual(notion.call_args.args, ('PATCH', 'pages/p1', {'archived': True}))
+        self.assertEqual(service.notion_page, '')
+        service.notion_page = 'p2'
+        notion.return_value = page('Esta semana', '2026-11-10')
+        withdraw_task(service, 'se cerró')
+        method, path, body = notion.call_args.args
+        self.assertEqual((method, path), ('PATCH', 'blocks/p2/children'))
+        self.assertIn('se cerró', body['children'][0]['paragraph']['rich_text'][0]['text']['content'])
