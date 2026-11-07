@@ -45,3 +45,8 @@ export function formatDayShort(iso: string) {
 export function formatMonth(month: string) {
   return format(isoToDate(month), "MMMM yyyy", { locale: es });
 }
+
+// "miércoles 4 de noviembre"
+export function formatDayLong(iso: string) {
+  return format(isoToDate(iso.slice(0, 10)), "EEEE d 'de' MMMM", { locale: es });
+}

@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/use-auth";
 import { CartProvider } from "@/hooks/use-cart";
 import SearchBar from "@/components/search-bar";
 import HeaderNav from "@/components/header-nav";
+import SiteHeader from "@/components/site-header";
 import { InvoiceDialogProvider } from "@/components/facturas/InvoiceDialog";
 import "./globals.css";
 
@@ -41,14 +42,16 @@ export default function RootLayout({
         <AuthProvider>
           <CartProvider>
             <SearchQueryProvider>
-              <header className="print:hidden bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
-                {/* White backing: the logo's black "AGROPECUARIA" disappears on the dark header. */}
-                <Link href="/" className="flex-shrink-0 rounded-md bg-white px-2 py-1">
-                  <Image src="/logo.png" alt="Agropecuaria Santa María" width={1500} height={601} priority className="h-10 w-auto" />
-                </Link>
-                <SearchBar />
-                <HeaderNav />
-              </header>
+              <SiteHeader>
+                <header className="print:hidden bg-slate-900 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-white border-b border-slate-800">
+                  {/* White backing: the logo's black "AGROPECUARIA" disappears on the dark header. */}
+                  <Link href="/" className="flex-shrink-0 rounded-md bg-white px-2 py-1">
+                    <Image src="/logo.png" alt="Agropecuaria Santa María" width={1500} height={601} priority className="h-10 w-auto" />
+                  </Link>
+                  <SearchBar />
+                  <HeaderNav />
+                </header>
+              </SiteHeader>
               <InvoiceDialogProvider>
                 <div className="flex-1 flex flex-col">{children}</div>
               </InvoiceDialogProvider>

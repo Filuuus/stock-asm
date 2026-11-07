@@ -573,19 +573,23 @@ function Description({ product }: { product: ProductDetail }) {
   );
 }
 
-// mat: set on full-size mat pages, with the nails to count alongside.
+// mat: set on full-size mat pages, with the nails to count alongside. embedded: shown inside a dialog
+// (ProductDialog), so no way back to the catalog.
 export default function ProductDetailView({
   product,
   highlight,
   mat,
+  embedded = false,
 }: {
   product: ProductDetail;
   highlight?: string;
   mat?: { spec: MatSpec; nail: Product | null };
+  embedded?: boolean;
 }) {
   const router = useRouter();
   // Marked on this page's own history entry, so it survives a reload and moving back and forward.
   useEffect(() => {
+    if (embedded) return;
     try {
       if (!sessionStorage.getItem(CATALOG_OPENED_KEY)) return;
       sessionStorage.removeItem(CATALOG_OPENED_KEY);
@@ -593,7 +597,7 @@ export default function ProductDetailView({
     } catch {
       // storage blocked: the link goes to the catalog the plain way
     }
-  }, [product.key]);
+  }, [product.key, embedded]);
   const gea = product.gea;
   // Arriving from a part's "Aparece en" (our product's key) or the staff GEA
   // part search (a GEA code): start with that part selected.
@@ -613,8 +617,8 @@ export default function ProductDetailView({
   const replacement = note?.replacement;
 
   return (
-    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-      <Link
+    <main className={cn("mx-auto w-full max-w-7xl", !embedded && "p-4 sm:p-6")}>
+      {!embedded && <Link
         href="/catalogo"
         scroll={false}
         onClick={(e) => {
@@ -639,8 +643,8 @@ export default function ProductDetailView({
       >
         <ChevronLeft className="h-4 w-4" />
         Catálogo
-      </Link>
-      <Breadcrumb product={product} />
+      </Link>}
+      {!embedded && <Breadcrumb product={product} />}
 
       <div className="grid gap-6 md:grid-cols-2">
         <Gallery images={product.images} alt={product.CNOMBREPRODUCTO} />

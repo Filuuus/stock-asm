@@ -1,7 +1,8 @@
 """Quote requests: the public cart sent for pricing (see QuoteRequest).
 
-Prices only ever leave the server for an approved request, and then only the
-prices frozen at approval - never the live catalog price.
+Prices only ever leave the server once staff share the quote (status
+APPROVED), and then only the prices frozen at that moment - never the live
+catalog price. The customer approves it from their link (accept).
 """
 import re
 from datetime import timedelta
@@ -23,6 +24,10 @@ MAX_NOTE = 2000
 # Business days a request can wait before it stands out: a new one with nobody contacting it,
 # a contacted one with no activity at all (nothing here can see WhatsApp).
 NEW_AMBER_DAYS, NEW_RED_DAYS, STALE_DAYS = 1, 2, 3
+# A sent quote the customer hasn't approved: chase it after this many business days, or this close to expiring.
+NO_ANSWER_DAYS, EXPIRING_DAYS = 3, 2
+# An expired quote the customer never approved counts as closed this many days after it expired.
+EXPIRED_CLOSE_DAYS = 7
 OPEN_STATUSES = (QuoteRequest.STATUS_NEW, QuoteRequest.STATUS_CONTACTED)
 AREA_RE = re.compile(r'Área: ([^,]+)')
 
@@ -107,7 +112,7 @@ def create_request(data):
             QuoteRequestItem(request=req, producto_codigo=c, quantity=q) for c, q in items.items()
         )
         if original:
-            _log(original, None, f'envió cambios desde el enlace del cliente: solicitud #{req.pk}')
+            _log(original, None, f'envió cambios desde su enlace: solicitud #{req.pk}')
     return req
 
 
@@ -142,8 +147,55 @@ def _attention(req, now):
     return None
 
 
+def _lapsed(req):
+    """Expired a week ago without the customer approving it: closed, without anyone closing it."""
+    return (_expired(req) and not req.accepted_at
+            and req.valid_until + timedelta(days=EXPIRED_CLOSE_DAYS) < timezone.localdate())
+
+
+def _closed_as(req):
+    """'vendida', 'vencida' or 'cerrada' (by hand) for a closed request, None for an open one."""
+    if req.status == QuoteRequest.STATUS_REJECTED:
+        return 'vendida' if req.sold_at else 'cerrada'
+    return 'vencida' if _lapsed(req) else None
+
+
+def _stage(req):
+    """The Solicitudes tab: por_cotizar, por_enviar, esperando (sent), aprobada (by the customer) or cerrada."""
+    if _closed_as(req):
+        return 'cerrada'
+    if _accepted(req):
+        return 'aprobada'
+    if req.sent_at:
+        return 'esperando'
+    return 'por_enviar' if _to_send(req) else 'por_cotizar'
+
+
 def _to_send(req):
-    return req.status == QuoteRequest.STATUS_APPROVED and req.sent_at is None
+    """Shared and not sent yet; or made by staff, from the start (the customer didn't ask, so nothing reminds
+    anyone otherwise). Approved by the customer: it reached them, whatever way it went."""
+    if req.sent_at or req.accepted_at or _lapsed(req):
+        return False
+    return req.status == QuoteRequest.STATUS_APPROVED or (req.from_staff and req.status in OPEN_STATUSES)
+
+
+def _no_phone(req):
+    """No number WhatsApp can reach (a request from Servicios takes Contpaqi's, often missing)."""
+    return req.status != QuoteRequest.STATUS_REJECTED and sum(c.isdigit() for c in req.phone) < 10
+
+
+def _accepted(req):
+    """The customer approved it and it's still open: staff have a sale to close (then they close the request)."""
+    return req.status == QuoteRequest.STATUS_APPROVED and req.accepted_at is not None
+
+
+def _follow_up(req, now):
+    """'expiring' or 'no_answer' for a sent quote the customer hasn't approved, None otherwise."""
+    if req.status != QuoteRequest.STATUS_APPROVED or req.accepted_at or not req.sent_at or _expired(req):
+        return None
+    if req.valid_until and (req.valid_until - timezone.localdate()).days <= EXPIRING_DAYS:
+        return 'expiring'
+    return 'no_answer' if business_days_since(req.sent_at, now) >= NO_ANSWER_DAYS else None
 
 
 def _with_activity(requests):
@@ -155,8 +207,8 @@ def pending_count():
     now = timezone.now()
     return sum(
         1 for r in _with_activity(QuoteRequest.objects.exclude(status=QuoteRequest.STATUS_REJECTED))
-        if (r.status == QuoteRequest.STATUS_NEW and r.owner_id is None) or _to_send(r)
-        or _attention(r, now) == 'stale'
+        if (r.status == QuoteRequest.STATUS_NEW and r.owner_id is None) or _to_send(r) or _accepted(r)
+        or _attention(r, now) == 'stale' or _follow_up(r, now)
     )
 
 
@@ -168,7 +220,10 @@ def _image(product):
 
 def _rows(req, by_code, live_prices):
     """One row per item. live_prices: the staff view (current catalog price and
-    stock). Otherwise only the price frozen at approval, if any."""
+    stock). Otherwise only the price frozen at approval, if any. A Servicios quote's
+    items also carry when each part was due ('due', None for one added later)."""
+    service = getattr(req, 'service_quote', None)
+    due = service.due if service else {}
     rows = []
     for item in req.items.all():
         p = by_code.get(item.producto_codigo, {})
@@ -183,12 +238,20 @@ def _rows(req, by_code, live_prices):
             'name': p.get('CNOMBREPRODUCTO', item.producto_codigo),
             'image': _image(p),
             'quantity': item.quantity,
+            'due': due.get(item.producto_codigo),
             'unit_price': price,
             **({'typed_price': item.unit_price, 'catalog_price': p.get('price') or None} if live_prices else {}),
             'subtotal': (price * item.quantity).quantize(Decimal('0.01')) if price else None,
             **({'stock': p.get('stock'), 'in_stock': p.get('in_stock')} if live_prices else {}),
         })
     return rows
+
+
+def _totals(req, rows):
+    """{'subtotal', 'discount' (percent), 'discount_amount', 'total'}: the request's discount on its priced rows."""
+    subtotal = _total(rows)
+    off = (subtotal * req.discount / 100).quantize(Decimal('0.01'))
+    return {'subtotal': subtotal, 'discount': req.discount, 'discount_amount': off, 'total': subtotal - off}
 
 
 def _total(rows):
@@ -212,8 +275,9 @@ def public_view(req):
         # Contacted is internal: the customer's request is still in review.
         'number': req.pk, 'status': QuoteRequest.STATUS_NEW if req.status == QuoteRequest.STATUS_CONTACTED else req.status,
         'created_at': req.created_at, 'name': req.name, 'valid_until': req.valid_until if approved else None,
-        'items': rows, 'total': _total(rows) if approved else None,
+        'items': rows, **(_totals(req, rows) if approved else {'total': None, 'discount': req.discount}),
         'expired': _expired(req), 'can_modify': _can_modify(req),
+        'accepted_at': req.accepted_at if approved else None,
         'contact_phone': settings.QUOTE_CONTACT_PHONE if _contacted(req) else None,
         'revision': {'number': revision.pk, 'token': revision.token} if revision else None,
         'revises': {'number': req.revises.pk, 'token': req.revises.token} if req.revises else None,
@@ -231,7 +295,9 @@ def staff_list():
         rows.append({
             'id': r.pk, 'status': r.status, 'created_at': r.created_at, 'name': r.name, 'company': r.company,
             'phone': r.phone, 'owner': _display(r.owner), 'attention': _attention(r, now), 'to_send': _to_send(r),
+            'accepted': _accepted(r), 'follow_up': _follow_up(r, now), 'no_phone': _no_phone(r),
             'expired': _expired(r),
+            'stage': _stage(r), 'closed_as': _closed_as(r), 'from_staff': r.from_staff,
             'comparison': r.note.startswith('Comparando opciones'), 'area': area[1] if area else None,
             'items': [by_code.get(i.producto_codigo, {}).get('CNOMBREPRODUCTO', i.producto_codigo) for i in r.items.all()],
         })
@@ -249,9 +315,11 @@ def staff_view(req, user):
         'id': req.pk, 'token': req.token, 'status': req.status, 'created_at': req.created_at,
         'name': req.name, 'phone': req.phone, 'company': req.company, 'note': req.note,
         'decided_at': req.decided_at, 'decided_by': req.decided_by.username if req.decided_by else None,
-        'valid_until': req.valid_until, 'items': rows, 'total': _total(rows),
+        'valid_until': req.valid_until, 'accepted_at': req.accepted_at, 'items': rows, **_totals(req, rows),
+        'follow_up': _follow_up(req, timezone.now()), 'no_phone': _no_phone(req),
         'owner': _display(req.owner), 'mine': req.owner_id == user.pk, 'to_send': _to_send(req),
         'expired': _expired(req), 'revises': req.revises_id,
+        'stage': _stage(req), 'closed_as': _closed_as(req), 'from_staff': req.from_staff, 'sent_at': req.sent_at,
         'revisions': list(req.revisions.values_list('pk', flat=True)),
         'events': [{
             'id': e.pk, 'kind': e.kind, 'text': e.text, 'author': _display(e.author), 'created_at': e.created_at,
@@ -299,12 +367,68 @@ def release(req, user):
         _log(req, user, 'soltó la solicitud')
 
 
-def mark_sent(req, user):
-    if not _to_send(req):
-        return
-    req.sent_at = timezone.now()
+def send(req, user, valid_days=DEFAULT_VALID_DAYS):
+    """One step from the WhatsApp or copy button: shares the quote if it's still open (prices freeze), and marks it
+    sent. It can't see whether the message went out; a quote nobody answers shows up as 'Sin respuesta'."""
+    if req.status in OPEN_STATUSES:
+        approve(req, user, valid_days)
+    elif req.status != QuoteRequest.STATUS_APPROVED:
+        raise QuoteError('Esta solicitud está cerrada.')
+    if not req.sent_at:
+        req.sent_at = timezone.now()
+        req.save(update_fields=['sent_at'])
+        _log(req, user, 'envió la cotización')
+
+
+def mark_sold(req, user):
+    """Staff close a shared quote as a sale (the customer paid or it was invoiced in Contpaqi)."""
+    if req.status != QuoteRequest.STATUS_APPROVED:
+        raise QuoteError('Solo una cotización compartida se puede marcar como vendida.')
+    req.status, req.sold_at, req.decided_at, req.decided_by = QuoteRequest.STATUS_REJECTED, timezone.now(), timezone.now(), user
     req.save()
-    _log(req, user, 'envió la cotización')
+    _log(req, user, 'marcó la cotización como vendida')
+
+
+def close_invoiced(ids):
+    """Servicios quotes whose parts the ERP now shows invoiced to the client: closed as sold (the nightly sync)."""
+    now = timezone.now()
+    for req in QuoteRequest.objects.filter(pk__in=ids, status=QuoteRequest.STATUS_APPROVED):
+        req.status, req.sold_at, req.decided_at = QuoteRequest.STATUS_REJECTED, now, now
+        req.save()
+        _log(req, None, 'se cerró como vendida: las piezas ya se facturaron')
+
+
+def set_discount(req, user, value):
+    """A discount on the whole request, in percent (El Buen Fin, a deal to win a client back): set while it's
+    open, so management approves it with the prices."""
+    _require_open(req)
+    try:
+        discount = Decimal(str(value)).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError):
+        raise QuoteError('Descuento no válido.')
+    if not 0 <= discount < 100:
+        raise QuoteError('El descuento va de 0 a 99 %.')
+    if discount != req.discount:
+        req.discount = discount
+        req.save(update_fields=['discount'])
+        _log(req, user, f'puso un descuento de {discount.normalize():f} %' if discount else 'quitó el descuento')
+
+
+def set_phone(req, user, phone):
+    """Staff fix the customer's phone (a request made from Servicios takes Contpaqi's, which can be missing or a
+    landline), so WhatsApp reaches them."""
+    phone = str(phone or '').strip()
+    if len(phone) > 30 or sum(c.isdigit() for c in phone) < 10:
+        raise QuoteError('Revisa el teléfono (10 dígitos).')
+    if phone != req.phone:
+        req.phone = phone
+        req.save(update_fields=['phone'])
+        _log(req, user, f'cambió el teléfono a {phone}')
+    service = getattr(req, 'service_quote', None)
+    if service:  # the client's phone for their next quotes too (Servicios)
+        from maintenance.models import ClientPhone
+        ClientPhone.objects.update_or_create(client_code=service.parlor.client_code,
+                                             defaults={'phone': phone, 'updated_by': user})
 
 
 def add_note(req, user, text):
@@ -342,6 +466,7 @@ def set_items(req, items, user=None):
 
 
 def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
+    """Any staff member shares the quote: prices freeze and show on the customer's link until valid_until."""
     _require_open(req)
     try:
         valid_days = int(valid_days)
@@ -364,13 +489,27 @@ def approve(req, user, valid_days=DEFAULT_VALID_DAYS):
         req.decided_by = user
         req.valid_until = timezone.localdate() + timedelta(days=valid_days)
         req.save()
-        _log(req, user, 'aprobó la cotización')
+        _log(req, user, 'compartió la cotización con precios')
+
+
+def accept(req):
+    """The customer approves the shared quote from their link (no account: the link is the access)."""
+    if req.status != QuoteRequest.STATUS_APPROVED:
+        raise QuoteError('Esta cotización no se puede aprobar.')
+    if _expired(req):
+        raise QuoteError('Esta cotización venció. Solicita una actualización.')
+    if req.accepted_at:
+        return
+    req.accepted_at = timezone.now()
+    req.save(update_fields=['accepted_at'])
+    _log(req, None, 'aprobó la cotización')  # no author: the customer
 
 
 def reopen(req, user):
-    """Gerencia fixes an approved quote: back to contacted, prices off the customer's link until approved again."""
-    if req.status != QuoteRequest.STATUS_APPROVED:
-        raise QuoteError('Solo se puede reabrir una cotización aprobada.')
+    """Staff fix a shared quote, or take back a closed one: back to contacted, prices off the customer's link (and
+    its approval undone) until it's sent again."""
+    if req.status not in (QuoteRequest.STATUS_APPROVED, QuoteRequest.STATUS_REJECTED):
+        raise QuoteError('Esta solicitud ya está abierta.')
     prices = {p['CCODIGOPRODUCTO']: p['price'] for p in _catalog(True)}
     with transaction.atomic():
         for item in req.items.all():
@@ -378,7 +517,8 @@ def reopen(req, user):
             if live and item.unit_price == Decimal(str(live)).quantize(Decimal('0.01')):  # frozen, not typed
                 item.unit_price = None
                 item.save(update_fields=['unit_price'])
-        req.status, req.valid_until, req.sent_at = QuoteRequest.STATUS_CONTACTED, None, None
+        req.status, req.valid_until, req.sent_at, req.accepted_at = QuoteRequest.STATUS_CONTACTED, None, None, None
+        req.sold_at = None
         req.decided_at, req.decided_by = None, None
         req.contacted_at = req.contacted_at or timezone.now()
         req.save()

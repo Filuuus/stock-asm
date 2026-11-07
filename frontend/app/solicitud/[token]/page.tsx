@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { Notice } from "@/components/notice";
 import QuoteActions from "@/components/quote/QuoteActions";
 import { API_URL } from "@/lib/api";
-import { formatDay } from "@/lib/dates";
+import { formatDay, formatMonth, todayISO } from "@/lib/dates";
 import { formatMoney, plural, productHref } from "@/lib/utils";
 
 // Personal links: keep them out of search engines.
@@ -23,7 +23,11 @@ interface PublicRequest {
   name: string;
   valid_until: string | null;
   total: number | null;
+  subtotal?: number;
+  discount: number; // percent
+  discount_amount?: number;
   expired: boolean;
+  accepted_at: string | null; // the customer approved it here
   can_modify: boolean;
   contact_phone: string | null;
   revision: LinkedQuote | null;
@@ -36,6 +40,7 @@ interface PublicRequest {
     quantity: number;
     unit_price: number | null;
     subtotal: number | null;
+    due: string | null; // a service quote's part: when it was due to be changed
   }[];
 }
 
@@ -47,9 +52,9 @@ const PRINT_PAGE = `@media print {
   }
 }`;
 
-// The customer's personal link: status while it's reviewed; once approved, the
-// prices frozen at approval. Knowing the link is the only access, like a
-// shared document - it isn't listed or guessable.
+// The customer's personal link: status while it's reviewed; once staff share the
+// quote, the prices frozen then, and a button to approve it. Knowing the link is
+// the only access, like a shared document - it isn't listed or guessable.
 export default async function RequestPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const res = await fetch(`${API_URL}/api/solicitudes/publica/${encodeURIComponent(token)}/`, { cache: "no-store" });
@@ -59,6 +64,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
   const approved = req.status === "APPROVED";
   const qty = (n: number) => Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 });
   const unpriced = req.items.filter((i) => i.subtotal === null).length;
+  const today = todayISO();
 
   return (
     <main className="mx-auto w-full max-w-3xl p-4 sm:p-6">
@@ -91,14 +97,21 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
           <Notice
             tone="info"
             title="Recibimos tu solicitud"
-            summary={`Estamos revisando precios y existencias.${req.contact_phone ? "" : " Te contactaremos por WhatsApp."} Aquí verás los precios en cuanto la aprobemos.`}
+            summary={`Estamos revisando precios y existencias.${req.contact_phone ? "" : " Te contactaremos por WhatsApp."} Aquí verás los precios en cuanto esté lista.`}
           />
         )}
-        {approved && !req.expired && (
+        {approved && !req.expired && !req.accepted_at && (
           <Notice
             tone="ok"
             title="Tu cotización está lista"
-            summary={req.valid_until ? `Precios válidos hasta el ${formatDay(req.valid_until)}.` : undefined}
+            summary={`Revisa los productos y precios; si estás de acuerdo, apruébala abajo.${req.valid_until ? ` Precios válidos hasta el ${formatDay(req.valid_until)}.` : ""}`}
+          />
+        )}
+        {approved && req.accepted_at && (
+          <Notice
+            tone="ok"
+            title={`Aprobaste esta cotización el ${formatDay(req.accepted_at)}`}
+            summary="Te contactaremos para coordinar la entrega y la factura."
           />
         )}
         {req.expired && (
@@ -146,6 +159,11 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
                 {qty(item.quantity)} {Number(item.quantity) === 1 ? "pieza" : "piezas"}
                 {approved && item.unit_price !== null && ` × ${formatMoney(item.unit_price)}`}
               </p>
+              {item.due && (
+                <p className={item.due < today ? "text-xs font-medium text-red-700" : "text-xs text-gray-600"}>
+                  {item.due < today ? "Cambio pendiente desde" : "Cambio recomendado:"} {formatMonth(item.due.slice(0, 7))}
+                </p>
+              )}
             </div>
             {approved && (
               <span className="num shrink-0 text-sm font-medium text-gray-900">
@@ -158,6 +176,13 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
 
       {approved && Number(req.total) > 0 && (
         <p className="mt-4 text-right text-lg font-semibold text-gray-900">
+          {Number(req.discount) > 0 && (
+            <span className="block text-sm font-normal text-gray-600">
+              Subtotal: <span className="num">{formatMoney(req.subtotal!)}</span>
+              <br />
+              Descuento {Number(req.discount)} %: <span className="num">−{formatMoney(req.discount_amount!)}</span>
+            </span>
+          )}
           Total: <span className="num">{formatMoney(req.total!)}</span>
           <span className="block text-xs font-normal text-gray-500">IVA incluido</span>
           {unpriced > 0 && (
@@ -175,6 +200,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
         items={req.items}
         approved={approved}
         expired={req.expired}
+        accepted={Boolean(req.accepted_at)}
         canModify={req.can_modify}
         contactPhone={req.contact_phone}
       />

@@ -30,6 +30,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     }
   }
 
+  // The Servicios view embedded in Notion signs in with its link's key (/embed/...?k=): inside Notion's frame the
+  // browser doesn't send our session cookie. Office-only: nginx drops the header on the public host.
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/embed")) {
+    const key = new URLSearchParams(window.location.search).get("k");
+    if (key) headers.set("X-Embed-Key", key);
+  }
+
   return fetch(`${API_URL}${path}`, {
     ...options,
     headers,

@@ -1,0 +1,10 @@
+[Unit]
+Description=Grow the Servicios parlor registry from the invoices every morning
+
+[Timer]
+# After the nightly backup (00:40), before the office opens: yesterday's invoices are in by then.
+OnCalendar=*-*-* 05:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
