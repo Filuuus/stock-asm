@@ -43,6 +43,9 @@ class ServiceQuote(models.Model):
     parlor = models.ForeignKey(Parlor, on_delete=models.CASCADE, related_name='quotes')
     request = models.OneToOneField('catalog.QuoteRequest', on_delete=models.CASCADE, related_name='service_quote')
     places = models.JSONField(default=list)  # [[code, group], ...]
+    # {code: 'YYYY-MM-DD'}: when each part was due when it was quoted (its earliest place), shown on the quote to
+    # staff and the client; kept as it was, so it doesn't move once the parts are invoiced.
+    due = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

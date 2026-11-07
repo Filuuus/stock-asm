@@ -220,7 +220,10 @@ def _image(product):
 
 def _rows(req, by_code, live_prices):
     """One row per item. live_prices: the staff view (current catalog price and
-    stock). Otherwise only the price frozen at approval, if any."""
+    stock). Otherwise only the price frozen at approval, if any. A Servicios quote's
+    items also carry when each part was due ('due', None for one added later)."""
+    service = getattr(req, 'service_quote', None)
+    due = service.due if service else {}
     rows = []
     for item in req.items.all():
         p = by_code.get(item.producto_codigo, {})
@@ -235,6 +238,7 @@ def _rows(req, by_code, live_prices):
             'name': p.get('CNOMBREPRODUCTO', item.producto_codigo),
             'image': _image(p),
             'quantity': item.quantity,
+            'due': due.get(item.producto_codigo),
             'unit_price': price,
             **({'typed_price': item.unit_price, 'catalog_price': p.get('price') or None} if live_prices else {}),
             'subtotal': (price * item.quantity).quantize(Decimal('0.01')) if price else None,

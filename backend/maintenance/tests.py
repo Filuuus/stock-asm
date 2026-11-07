@@ -450,12 +450,19 @@ class EndpointTests(TestCase):
         client = self.login(Profile.ROLE_SALESPERSON)
         url = f'/api/servicios/salas/{parlor.pk}/cotizar/'
         self.assertEqual(client.post(url, {'items': []}, format='json').status_code, 400)
-        r = client.post(url, {'items': [{'key': '11', 'quantity': 2, 'code': '7049-1703-000', 'group': 'Regulador'}]},
+        # The same part in two places: the quote keeps the earlier due date.
+        r = client.post(url, {'items': [{'key': '11', 'quantity': 2, 'code': '7049-1703-000', 'group': 'Regulador',
+                                         'due': '2026-12-01'},
+                                        {'key': '11', 'quantity': 0, 'code': '7049-1703-000', 'group': 'Otros',
+                                         'due': '2026-01-21'}]},
                         format='json')
         self.assertEqual(r.status_code, 201)
         req = QuoteRequest.objects.get(pk=r.json()['id'])
         self.assertEqual((req.name, req.owner.username, req.items.get().producto_codigo, req.items.get().quantity),
                          ('Cliente', Profile.ROLE_SALESPERSON, '7049-1703-000', 2))
+        self.assertEqual(req.service_quote.due, {'7049-1703-000': '2026-01-21'})
+        from catalog.quotes import _rows
+        self.assertEqual(_rows(req, {}, live_prices=False)[0]['due'], '2026-01-21')
         from .services import quoted_places
         self.assertEqual(quoted_places([parlor.pk])[(parlor.pk, '7049-1703-000', 'Regulador')][1],
                          {'id': req.pk, 'status': 'cotizado'})

@@ -2,6 +2,7 @@
 Local database only (databases = {'default'}); every test gets a fresh in-memory cache so
 login attempts never count against the dev Redis or leak between tests."""
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.cache import cache
@@ -257,3 +258,35 @@ class UserAdminTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.worker.refresh_from_db()
         self.assertTrue(self.worker.check_password(PASSWORD))
+
+
+class EmbedLinkTests(TestCase):
+    """The Notion embed signs in with its link (X-Embed-Key), only on the Servicios paths."""
+
+    def setUp(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('embed_link', 'notion', stdout=out)
+        self.key = out.getvalue().strip().split('k=')[1]
+        self.client = APIClient()
+
+    def get(self, path, key=None):
+        return self.client.get(path, HTTP_X_EMBED_KEY=key or self.key)
+
+    @patch('catalog.quotes._catalog', return_value=[])
+    def test_the_link_signs_in_only_where_the_embed_needs_it(self, _):
+        me = self.get('/api/auth/me/').json()
+        self.assertEqual((me['username'], me['role']), ('notion', Profile.ROLE_SALESPERSON))
+        self.assertEqual(self.get('/api/solicitudes/').status_code, 200)
+        self.assertEqual(self.get('/api/commissions/summary/').status_code, 403)  # not signed in outside Servicios
+
+    @patch('catalog.quotes._catalog', return_value=[])
+    def test_a_revoked_or_wrong_link_is_refused(self, _):
+        from io import StringIO
+
+        from django.core.management import call_command
+        self.assertEqual(self.get('/api/solicitudes/', key='nope').status_code, 403)
+        call_command('embed_link', 'notion', '--revoke', stdout=StringIO())
+        self.assertEqual(self.get('/api/solicitudes/').status_code, 403)

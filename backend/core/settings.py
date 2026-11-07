@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
+
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -167,6 +169,8 @@ CORS_ALLOWED_ORIGINS = [
 # Needed for the frontend's session cookie (login) to be sent/received on
 # cross-origin requests during local dev (Next.js on :3000, Django on :8000).
 CORS_ALLOW_CREDENTIALS = True
+# The Notion embed's key (accounts.authentication); dev only: production serves one origin through nginx.
+CORS_ALLOW_HEADERS = (*default_headers, 'x-embed-key')
 # Django's CSRF middleware checks the request's Origin header against the
 # target host for any unsafe method once a session exists (not just for
 # login itself - also logout, and the commission override POST/DELETE) -
@@ -183,6 +187,7 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'accounts.authentication.EmbedLinkAuthentication',  # the Servicios view embedded in Notion
         'rest_framework.authentication.SessionAuthentication',
     ],
     # Public quote-request form (catalog.views.QuoteCreateThrottle).

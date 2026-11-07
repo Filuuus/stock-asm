@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Notice } from "@/components/notice";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
-import { formatDay } from "@/lib/dates";
+import { formatDay, todayISO } from "@/lib/dates";
 import ProductDialog from "@/components/catalog/ProductDialog";
 import AddProduct from "@/components/quote/AddProduct";
 import { CLOSED_AS, QUOTE_STATUS, type ClosedAs, type QuoteStatus, type Stage } from "@/lib/quote-status";
@@ -26,6 +26,7 @@ interface QuoteItem {
   catalog_price?: number | null;
   subtotal: number | null;
   stock: number | null;
+  due: string | null; // a Servicios quote's part: when it was due when quoted
 }
 
 interface QuoteEvent {
@@ -411,6 +412,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
                         <span className="font-medium text-gray-800">{i.name}</span>
                       )}
                       <p className="text-xs text-gray-400">SKU: {i.code}</p>
+                      {i.due && <DueLine due={i.due} />}
                       {/* Phones: quantity, price and amount under the name instead of in their columns. */}
                       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
                         {quantity(i)}
@@ -553,4 +555,10 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
       {opened && <ProductDialog productKey={opened.key} fallbackName={opened.name} onClose={() => setOpened(null)} />}
     </Shell>
   );
+}
+
+// A Servicios quote's part: overdue (red) or when it's due, compared with today.
+function DueLine({ due }: { due: string }) {
+  const past = due < todayISO();
+  return <p className={cn("text-xs", past ? "font-medium text-red-700" : "text-green-700")}>{past ? "Vencido" : "Toca"} {formatDay(due)}</p>;
 }

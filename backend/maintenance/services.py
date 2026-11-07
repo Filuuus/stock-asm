@@ -29,6 +29,7 @@ from datetime import date, timedelta
 from django.core.cache import cache
 from django.db import connections, transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 
 from api.services import FACTURA_DOC_TYPE, GENERAL_WAREHOUSE_ID, _gea_products
 
@@ -1028,6 +1029,11 @@ def create_service_quote(parlor, items, user):
         _log(req, user, 'creó la solicitud desde Servicios')
         # Quoting a client is reaching out to them (a prospect's "contacted" mark).
         Parlor.objects.filter(pk=parlor.pk).update(contacted_at=timezone.now(), contacted_by=user)
-        ServiceQuote.objects.create(parlor=parlor, request=req, places=[
+        due = {}
+        for i in items:
+            day = parse_date(str(i.get('due') or ''))  # sent by the agenda, from the part's row
+            if i.get('code') and day:
+                due[str(i['code'])] = min(due.get(str(i['code']), day.isoformat()), day.isoformat())
+        ServiceQuote.objects.create(parlor=parlor, request=req, due=due, places=[
             [str(i.get('code', '')), str(i.get('group', ''))] for i in items if i.get('code')])
     return req

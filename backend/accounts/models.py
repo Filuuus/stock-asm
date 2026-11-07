@@ -80,3 +80,13 @@ class AccountAuditLogEntry(models.Model):
 
     def __str__(self):
         return f'{self.actor_username} -> {self.get_action_display()} ({self.target_username})'
+
+
+class EmbedLink(models.Model):
+    """A secret link that signs in as one account without a cookie: the Servicios view embedded in Notion, where the
+    browser doesn't send our session cookie (third-party frame). Anyone who has the link acts as `user`, only on the
+    paths EmbedLinkAuthentication allows; deleting the row revokes it (manage.py embed_link)."""
+
+    token = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='embed_links')
+    created_at = models.DateTimeField(auto_now_add=True)

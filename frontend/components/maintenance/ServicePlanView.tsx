@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Pencil, Printer } from "lucide-react";
 import ProductDialog from "@/components/catalog/ProductDialog";
 import ClientLink from "@/components/facturas/ClientLink";
+import RequestsList from "@/components/quote/RequestsList";
 import RequestDetail from "@/components/quote/RequestDetail";
 import InvoiceLink from "@/components/facturas/InvoiceLink";
 import { Notice } from "@/components/notice";
@@ -25,7 +26,7 @@ import type { EventKind, ParlorPartRow, PlanParlor, ServicePlan } from "@/types/
 // a client's name opens all its parts by category, the most relevant first, and a cell opens that month. Pedido:
 // the next GEA order. Dates come from the invoices: an invoice for the parts is the record of the service.
 
-const TABS = ["Agenda", "Pedido"] as const;
+const TABS = ["Agenda", "Pedido", "Solicitudes"] as const; // Solicitudes only when embedded
 type Tab = (typeof TABS)[number];
 
 const SOON_DAYS = 60;
@@ -108,13 +109,16 @@ function categoriesOf(parlor: PlanParlor, order: string[]): Category[] {
 // Opens a quote request in a dialog over the page, from anywhere in it (QuoteChip).
 const OpenRequest = createContext<(id: number) => void>(() => {});
 
-export default function ServicePlanView() {
+// embedded: the Notion embed (/embed/servicios), where leaving the page isn't an option: Solicitudes is a tab here,
+// with its requests opening in the same dialog as the agenda's quotes.
+export default function ServicePlanView({ embedded = false }: { embedded?: boolean } = {}) {
   const { user, loading } = useAuth();
   const [plan, setPlan] = useState<ServicePlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("Agenda");
   const [opened, setOpened] = useState<{ key: string; name: string } | null>(null);
   const [requestId, setRequestId] = useState<number | null>(null);
+  const [requestChanges, setRequestChanges] = useState(0); // reloads the Solicitudes tab after its dialog closes
   const [today] = useState(() => new Date());
   // Prospects come without their parts until the prospects list is opened or searched: they're most of the data.
   const [withProspects, setWithProspects] = useState(false);
@@ -135,7 +139,11 @@ export default function ServicePlanView() {
   if (!loading && !user) {
     return (
       <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-        <Notice tone="info" title="Inicia sesión para ver los servicios." action={<Link href="/login" className="underline">Iniciar sesión</Link>} />
+        {embedded ? (
+          <Notice tone="error" title="Este enlace no es válido o fue revocado." summary="Pide un enlace nuevo a quien administra el sitio." />
+        ) : (
+          <Notice tone="info" title="Inicia sesión para ver los servicios." action={<Link href="/login" className="underline">Iniciar sesión</Link>} />
+        )}
       </main>
     );
   }
@@ -157,7 +165,7 @@ export default function ServicePlanView() {
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <h1 className="text-2xl font-semibold text-gray-900">Servicios</h1>
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1" role="tablist">
-          {TABS.map((t) => (
+          {TABS.filter((t) => embedded || t !== "Solicitudes").map((t) => (
             <button
               key={t}
               type="button"
@@ -175,7 +183,9 @@ export default function ServicePlanView() {
 
       <OpenRequest.Provider value={setRequestId}>
       <div className="mt-4">
-        {plan === null ? (
+        {tab === "Solicitudes" ? (
+          <RequestsList onOpen={setRequestId} reloadKey={requestChanges} />
+        ) : plan === null ? (
           <p className="text-sm text-gray-500">{error ? "" : "Cargando…"}</p>
         ) : tab === "Agenda" ? (
           <AgendaTab
@@ -199,6 +209,7 @@ export default function ServicePlanView() {
             if (open) return;
             setRequestId(null);
             load(); // its status shows on the parts it quotes
+            setRequestChanges((n) => n + 1);
           }}
         >
           <DialogContent className="max-h-[90vh] w-[calc(100%-2rem)] max-w-6xl overflow-y-auto">
@@ -703,7 +714,9 @@ function QuoteDialog({
       body: JSON.stringify({
         items: chosen.map(([place, q]) => {
           const [code, group] = place.split("|");
-          return { key: plan.keys[code], quantity: Number(q), code, group };
+          // When it was due: the quote shows it to staff and the client.
+          const due = parlor.parts.find((r) => placeKey(r) === place)?.due ?? null;
+          return { key: plan.keys[code], quantity: Number(q), code, group, due };
         }),
       }),
     }).catch(() => null);

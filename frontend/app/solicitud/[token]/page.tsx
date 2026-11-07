@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { Notice } from "@/components/notice";
 import QuoteActions from "@/components/quote/QuoteActions";
 import { API_URL } from "@/lib/api";
-import { formatDay } from "@/lib/dates";
+import { formatDay, formatMonth, todayISO } from "@/lib/dates";
 import { formatMoney, plural, productHref } from "@/lib/utils";
 
 // Personal links: keep them out of search engines.
@@ -40,6 +40,7 @@ interface PublicRequest {
     quantity: number;
     unit_price: number | null;
     subtotal: number | null;
+    due: string | null; // a service quote's part: when it was due to be changed
   }[];
 }
 
@@ -63,6 +64,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
   const approved = req.status === "APPROVED";
   const qty = (n: number) => Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 });
   const unpriced = req.items.filter((i) => i.subtotal === null).length;
+  const today = todayISO();
 
   return (
     <main className="mx-auto w-full max-w-3xl p-4 sm:p-6">
@@ -157,6 +159,11 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
                 {qty(item.quantity)} {Number(item.quantity) === 1 ? "pieza" : "piezas"}
                 {approved && item.unit_price !== null && ` × ${formatMoney(item.unit_price)}`}
               </p>
+              {item.due && (
+                <p className={item.due < today ? "text-xs font-medium text-red-700" : "text-xs text-gray-600"}>
+                  {item.due < today ? "Cambio pendiente desde" : "Cambio recomendado:"} {formatMonth(item.due.slice(0, 7))}
+                </p>
+              )}
             </div>
             {approved && (
               <span className="num shrink-0 text-sm font-medium text-gray-900">
