@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { ChevronLeft, Copy, MessageCircle, Trash2 } from "lucide-react";
+import { ChevronLeft, Copy, ExternalLink, Link2, MessageCircle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -104,7 +104,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"mensaje" | "enlace" | null>(null); // for two seconds after copying
   // The phone being fixed (a request made from Servicios takes Contpaqi's, which can be missing or a landline).
   const [phone, setPhone] = useState<string | null>(null);
   const [discount, setDiscount] = useState<string | null>(null); // being typed
@@ -203,6 +203,13 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
     ) : (
       <span className="text-gray-400">Sin precio</span>
     );
+  // Sending is for an open quote, or a shared one the client hasn't approved yet.
+  const canSend = isOpen || (req.status === "APPROVED" && !req.accepted_at);
+  const copy = async (text: string, what: "mensaje" | "enlace") => {
+    await navigator.clipboard.writeText(text);
+    setCopied(what);
+    setTimeout(() => setCopied(null), 2000);
+  };
   // Shares it if it's still open and marks it sent (once): the message is already on its way.
   const sendQuote = () => (isOpen || !req.sent_at ? act("enviar", { valid_days: Number(validDays) }) : Promise.resolve(true));
   const addNote = async (e: FormEvent) => {
@@ -247,72 +254,85 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
       </div>
 
       {/* The next step for this stage, always on top. */}
-      <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg border border-gray-200 bg-white p-3">
-        {isOpen && (
-          <Button asChild variant="outline">
-            <WhatsAppLink phone={req.phone} onClick={() => act("contactar")}>
-              <MessageCircle className="mr-1.5 h-4 w-4" />
-              Escribir
-            </WhatsAppLink>
-          </Button>
-        )}
-        {req.status === "NEW" && <Button variant="outline" disabled={busy} onClick={() => act("contactar")}>Marcar contactada</Button>}
-        {req.status === "CONTACTED" && <Button variant="outline" disabled={busy} onClick={() => act("deshacer-contacto")}>Deshacer contacto</Button>}
-        {req.status === "APPROVED" && (
-          <>
-            <Button variant={req.accepted_at ? "default" : "outline"} disabled={busy} onClick={() => act("vendida")}>
-              Marcar como vendida
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>
-          </>
-        )}
-        {req.status === "REJECTED" && <Button variant="outline" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>}
-        {req.status !== "REJECTED" && (
-          <>
-            {req.mine ? (
-              <Button variant="outline" disabled={busy} onClick={() => act("soltar")}>Soltar</Button>
-            ) : (
-              <Button variant="outline" disabled={busy} onClick={() => act("tomar")}>Tomar</Button>
-            )}
-            <Button variant="outline" disabled={busy} onClick={() => setClosing(!closing)}>Cerrar</Button>
-          </>
-        )}
-        {/* One step: shares the quote (prices freeze) if it's still open, marks it sent, and opens or copies the
-            message with the client's link. */}
-        {(isOpen || (req.status === "APPROVED" && !req.accepted_at)) && (
-          <div className="ml-auto flex flex-wrap items-end gap-2">
-            {isOpen && (
-              <label className="text-xs text-gray-600">
-                Vigencia (días)
-                <Input type="number" min="1" max="365" value={validDays} onChange={(e) => setValidDays(e.target.value)} className="mt-1 w-20" />
-              </label>
-            )}
-            <Button asChild>
-              <WhatsAppLink
-                phone={req.phone}
-                text={message}
+      <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-white p-3">
+        {/* The quote: one step to send it (shares it if it's still open, so prices freeze, and marks it sent),
+            and the client's link to copy or open. */}
+        <div className="flex flex-wrap items-end gap-2">
+          {canSend && isOpen && (
+            <label className="text-xs text-gray-600">
+              Vigencia (días)
+              <Input type="number" min="1" max="365" value={validDays} onChange={(e) => setValidDays(e.target.value)} className="mt-1 w-20" />
+            </label>
+          )}
+          {canSend && (
+            <>
+              <Button asChild>
+                <WhatsAppLink
+                  phone={req.phone}
+                  text={message}
+                  disabled={busy || edited || req.no_phone}
+                  title={req.no_phone ? "Escribe el teléfono del cliente primero" : isOpen ? "Congela los precios, la marca como enviada y abre el chat con el enlace" : undefined}
+                  onClick={sendQuote}
+                >
+                  <MessageCircle className="mr-1.5 h-4 w-4" />
+                  {req.sent_at ? "Reenviar por WhatsApp" : "Enviar por WhatsApp"}
+                </WhatsAppLink>
+              </Button>
+              <Button
+                variant="outline"
                 disabled={busy || edited}
-                title={isOpen ? "Congela los precios, la marca como enviada y abre el chat con el enlace" : undefined}
-                onClick={sendQuote}
+                onClick={async () => {
+                  await copy(message, "mensaje");
+                  await sendQuote();
+                }}
               >
+                <Copy className="mr-1.5 h-4 w-4" />
+                {copied === "mensaje" ? "Mensaje copiado" : "Copiar mensaje"}
+              </Button>
+            </>
+          )}
+          <Button variant="outline" onClick={() => copy(link, "enlace")}>
+            <Link2 className="mr-1.5 h-4 w-4" />
+            {copied === "enlace" ? "Enlace copiado" : "Copiar enlace"}
+          </Button>
+          <Button variant="outline" asChild>
+            <a href={link} target="_blank" rel="noopener noreferrer" title="La página que ve el cliente">
+              <ExternalLink className="mr-1.5 h-4 w-4" />
+              Ver cotización
+            </a>
+          </Button>
+        </div>
+        {/* The request: who has it, and closing or reopening it. */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+          {isOpen && (
+            <Button asChild variant="outline" size="sm">
+              <WhatsAppLink phone={req.phone} disabled={req.no_phone} onClick={() => act("contactar")}>
                 <MessageCircle className="mr-1.5 h-4 w-4" />
-                {req.status === "APPROVED" && req.sent_at ? "Reenviar por WhatsApp" : "Enviar por WhatsApp"}
+                Escribir
               </WhatsAppLink>
             </Button>
-            <Button
-              variant="outline"
-              disabled={busy || edited}
-              onClick={async () => {
-                await navigator.clipboard.writeText(message);
-                setCopied(true);
-                await sendQuote();
-              }}
-            >
-              <Copy className="mr-1.5 h-4 w-4" />
-              {copied ? "Mensaje copiado" : "Copiar mensaje"}
+          )}
+          {req.status === "NEW" && <Button variant="outline" size="sm" disabled={busy} onClick={() => act("contactar")}>Marcar contactada</Button>}
+          {req.status === "CONTACTED" && <Button variant="outline" size="sm" disabled={busy} onClick={() => act("deshacer-contacto")}>Deshacer contacto</Button>}
+          {req.status === "APPROVED" && (
+            <Button variant={req.accepted_at ? "default" : "outline"} size="sm" disabled={busy} onClick={() => act("vendida")}>
+              Marcar como vendida
             </Button>
-          </div>
-        )}
+          )}
+          {(req.status === "APPROVED" || req.status === "REJECTED") && (
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>
+          )}
+          {req.status !== "REJECTED" && (
+            <>
+              {req.mine ? (
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => act("soltar")}>Soltar</Button>
+              ) : (
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => act("tomar")}>Tomar</Button>
+              )}
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setClosing(!closing)}>Cerrar</Button>
+            </>
+          )}
+        </div>
         {closing && (
           <form onSubmit={close} className="flex w-full gap-2">
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="¿Por qué se cierra?" aria-label="Motivo de cierre" />
