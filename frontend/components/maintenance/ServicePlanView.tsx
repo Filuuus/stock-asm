@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Pencil, Printer } from "lucide-react";
 import ProductDialog from "@/components/catalog/ProductDialog";
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
+import { WhatsAppLink } from "@/components/whatsapp-link";
 import { formatDay, formatDayLong, formatMonth, isoToDate, todayISO } from "@/lib/dates";
 import { cn, formatMoney, plural } from "@/lib/utils";
 import type { EventKind, ParlorPartRow, PlanParlor, ServicePlan } from "@/types/maintenance";
@@ -28,6 +29,7 @@ const TABS = ["Agenda", "Pedido"] as const;
 type Tab = (typeof TABS)[number];
 
 const SOON_DAYS = 60;
+const PROSPECT_OVERDUE_DAYS = 90; // a prospect's part overdue longer than this was likely changed elsewhere
 const DAY_MS = 86_400_000;
 const BASIS_LABEL: Record<string, string> = {
   GEA: "GEA",
@@ -50,12 +52,20 @@ const SHORT: Record<string, string> = {
   "Sistema de vacío": "Vacío",
   Enfriamiento: "Enfr.",
 };
-const KIND: Record<EventKind, { label: string; className: string }> = {
-  done: { label: "Realizado (facturado)", className: "bg-sky-100 text-sky-800" },
-  external: { label: "Realizado por otro", className: "bg-stone-200 text-stone-700" },
-  missed: { label: "Venció sin realizar", className: "bg-red-100 text-red-800" },
-  due: { label: "Por realizar", className: "bg-green-100 text-green-800" },
+// What a cell shows: the plan's events, plus the next change of a part with an open quote (quoted: being priced or
+// sent; accepted: the client approved it), so the agenda shows who was already offered the service.
+type CellKind = EventKind | "quoted" | "accepted";
+const KIND: Record<CellKind, { label: string; className: string }> = {
+  missed: { label: "Vencido", className: "bg-red-100 text-red-800" },
+  quoted: { label: "Cotizado", className: "bg-violet-200 text-violet-900" },
+  accepted: { label: "Aprobado", className: "bg-green-600 text-white" },
+  done: { label: "Realizado", className: "bg-sky-100 text-sky-800" },
+  external: { label: "Externo", className: "bg-stone-200 text-stone-700" },
+  due: { label: "Pendiente", className: "bg-green-100 text-green-800" },
 };
+const CELL_ORDER: CellKind[] = ["missed", "quoted", "accepted", "done", "external", "due"];
+// Pending changes: what a crew sheet lists and a month's dialog can quote.
+const PENDING: CellKind[] = ["missed", "quoted", "accepted", "due"];
 
 const units = (n: number) => n.toLocaleString("es-MX", { maximumFractionDigits: 2 });
 const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
@@ -106,15 +116,17 @@ export default function ServicePlanView() {
   const [opened, setOpened] = useState<{ key: string; name: string } | null>(null);
   const [requestId, setRequestId] = useState<number | null>(null);
   const [today] = useState(() => new Date());
+  // Prospects come without their parts until the prospects list is opened or searched: they're most of the data.
+  const [withProspects, setWithProspects] = useState(false);
 
   // Again after a part's quantity is fixed or it's removed.
   const load = useCallback(
     () =>
-      apiFetch("/api/servicios/plan/")
+      apiFetch(`/api/servicios/plan/${withProspects ? "?prospectos=1" : ""}`)
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then(setPlan)
         .catch(() => setError("No se pudo cargar el plan de servicios.")),
-    [],
+    [withProspects],
   );
   useEffect(() => {
     if (user) load();
@@ -166,7 +178,14 @@ export default function ServicePlanView() {
         {plan === null ? (
           <p className="text-sm text-gray-500">{error ? "" : "Cargando…"}</p>
         ) : tab === "Agenda" ? (
-          <AgendaTab plan={plan} name={name} today={today} onChanged={load} onQuoted={(id) => (load(), setRequestId(id))} />
+          <AgendaTab
+            plan={plan}
+            name={name}
+            today={today}
+            onChanged={load}
+            onQuoted={(id) => (load(), setRequestId(id))}
+            onShowProspects={() => setWithProspects(true)}
+          />
         ) : (
           <OrderTab plan={plan} name={name} />
         )}
@@ -203,7 +222,8 @@ function DueDate({ due, today, className }: { due: string; today: Date; classNam
 }
 
 // A part's open service quote, linking to its request.
-const QUOTE_LABEL = { cotizado: "Cotizado", aprobado: "Aprobado", enviado: "Enviado" };
+// cotizado: being priced; aprobado: shared on the client's link; aceptado: the client approved it.
+const QUOTE_LABEL = { cotizado: "Cotizando", aprobado: "Cotizado", enviado: "Enviado", aceptado: "Aprobado" };
 function QuoteChip({ quote }: { quote: ParlorPartRow["quote"] }) {
   const open = useContext(OpenRequest);
   if (!quote) return null;
@@ -211,7 +231,10 @@ function QuoteChip({ quote }: { quote: ParlorPartRow["quote"] }) {
     <button
       type="button"
       onClick={() => open(quote.id)}
-      className="whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 hover:underline"
+      className={cn(
+        "whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium hover:underline",
+        quote.status === "aceptado" ? "bg-green-600 text-white" : "bg-violet-100 text-violet-800", // as the agenda's cells
+      )}
     >
       {QUOTE_LABEL[quote.status]} #{quote.id}
     </button>
@@ -386,7 +409,7 @@ function ClientDetail({
             {c.together} de {plural(c.parts.length, "pieza", "piezas")}
           </span>
         </summary>
-        <div className="bg-gray-50/60 pb-2 pl-8 pr-4">
+        <div className="bg-gray-50/60 pb-2 pl-2 pr-2 sm:pl-8 sm:pr-4">
           <Table>
             <TableHeader>
               <TableRow>
@@ -394,7 +417,7 @@ function ClientDetail({
                 <TableHead>Pieza</TableHead>
                 <TableHead className={cn(HIDE_BELOW_SM, "text-right")}>Cant.</TableHead>
                 <TableHead className={HIDE_BELOW_MD}>Última factura</TableHead>
-                <TableHead>Próximo cambio</TableHead>
+                <TableHead className={HIDE_BELOW_SM}>Próximo cambio</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -412,6 +435,10 @@ function ClientDetail({
                     {r.registered_as && (
                       <span className="block text-xs text-gray-400">en el calendario: {r.registered_as} (compra este modelo)</span>
                     )}
+                    {/* Phones: the next change under the name instead of in its column. */}
+                    <span className="mt-1 block text-xs sm:hidden">
+                      Próximo cambio: <DueDate due={r.due!} today={today} />
+                    </span>
                   </TableCell>
                   <TableCell className={cn(HIDE_BELOW_SM, "text-right tabular-nums")}>
                     <PartQuantity row={r} onChanged={onChanged} />
@@ -419,7 +446,7 @@ function ClientDetail({
                   <TableCell className={HIDE_BELOW_MD}>
                     {r.last_invoice ? <InvoiceLink invoiceId={r.last_invoice} label={formatDay(r.last_change)} /> : formatDay(r.last_change)}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={HIDE_BELOW_SM}>
                     <DueDate due={r.due!} today={today} />
                     <span className="block text-xs text-gray-400">
                       cada {units(r.months!)} meses ({BASIS_LABEL[r.basis ?? ""] ?? r.basis})
@@ -475,6 +502,72 @@ function summaryOf(categories: Category[], today: Date) {
   };
 }
 
+// The client's phone for WhatsApp: Contpaqi's is often missing or a landline, so staff type it here (kept locally,
+// and filled into the client's open quotes from Servicios that had none).
+function ClientPhone({ parlor, onChanged }: { parlor: PlanParlor; onChanged: () => void }) {
+  const [value, setValue] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const valid = parlor.phone.replace(/\D/g, "").length >= 10;
+  if (value === null) {
+    return (
+      <span className="flex items-center gap-1.5">
+        {valid ? (
+          <WhatsAppLink phone={parlor.phone} className="text-blue-600 hover:underline">
+            {parlor.phone}
+          </WhatsAppLink>
+        ) : (
+          <Chip className="bg-amber-100 text-amber-800">{parlor.phone ? `Teléfono incompleto: ${parlor.phone}` : "Sin teléfono"}</Chip>
+        )}
+        <button type="button" onClick={() => setValue(parlor.phone)} className="text-gray-400 hover:text-blue-700" aria-label="Cambiar teléfono">
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    );
+  }
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    const res = await apiFetch(`/api/servicios/clientes/${encodeURIComponent(parlor.client)}/telefono/`, {
+      method: "PUT",
+      body: JSON.stringify({ phone: value }),
+    });
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error ?? "No se pudo guardar.");
+      return;
+    }
+    setValue(null);
+    setError(null);
+    onChanged();
+  };
+  return (
+    <form onSubmit={save} className="flex items-center gap-1.5">
+      <Input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder="Celular, 10 dígitos" className="h-8 w-40" aria-label="Teléfono" />
+      <Button type="submit" size="sm">Guardar</Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => (setValue(null), setError(null))}>Cancelar</Button>
+      {error && <span className="text-xs text-red-700">{error}</span>}
+    </form>
+  );
+}
+
+// A prospect someone reached out to, so two people don't call the same farm (quoting them marks it too).
+function ProspectContact({ parlor, onChanged }: { parlor: PlanParlor; onChanged: () => void }) {
+  const toggle = async () => {
+    if ((await apiFetch(`/api/servicios/salas/${parlor.id}/contactado/`, { method: parlor.contacted_at ? "DELETE" : "POST" })).ok) {
+      onChanged();
+    }
+  };
+  return parlor.contacted_at ? (
+    <span className="flex items-center gap-1.5">
+      <Chip className="bg-violet-100 text-violet-800">
+        Contactado {new Date(parlor.contacted_at).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
+        {parlor.contacted_by && ` · ${parlor.contacted_by}`}
+      </Chip>
+      <button type="button" onClick={toggle} className="text-xs text-gray-400 hover:text-red-700 hover:underline">Deshacer</button>
+    </span>
+  ) : (
+    <Button size="sm" variant="outline" onClick={toggle}>Marcar contactado</Button>
+  );
+}
+
 // Everything about one client: what's overdue or coming, then its categories and parts, most relevant first.
 function ClientDialog({
   parlor,
@@ -516,6 +609,10 @@ function ClientDialog({
             <Button size="sm" className="ml-auto" onClick={() => onQuote()}>
               Cotizar servicio
             </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
+            <ClientPhone parlor={parlor} onChanged={onChanged} />
+            {!parlor.attended && <ProspectContact parlor={parlor} onChanged={onChanged} />}
           </div>
         </DialogHeader>
         <div className="rounded-lg border border-gray-200">
@@ -745,7 +842,7 @@ const compactMoney = (n: number) =>
 // (invoiced), missed or due that month. "Atrasado" (current year only) holds what came due before January and
 // is still undone. A cell opens that month for that client in a dialog, with the client's full detail below.
 type CellPart = { row: ParlorPartRow; date: string; invoice?: number | null; external?: number | null };
-type Cell = Partial<Record<EventKind, Record<string, CellPart[]>>>; // kind -> category -> parts
+type Cell = Partial<Record<CellKind, Record<string, CellPart[]>>>; // kind -> category -> parts
 
 function AgendaTab({
   plan,
@@ -753,17 +850,20 @@ function AgendaTab({
   today,
   onChanged,
   onQuoted,
+  onShowProspects,
 }: {
   plan: ServicePlan;
   name: (code: string) => ReactNode;
   today: Date;
   onChanged: () => void;
   onQuoted: (id: number) => void;
+  onShowProspects: () => void;
 }) {
   const [year, setYear] = useState(today.getFullYear());
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState(""); // one category, or all
   const [sort, setSort] = useState<SortKey>("ventas");
+  const [approvedOnly, setApprovedOnly] = useState(false); // only clients with a quote they approved, not invoiced
   const [printMonth, setPrintMonth] = useState(today.getMonth() + 1);
   const [month, setMonth] = useState<{ parlor: PlanParlor; month: number; cell: Cell } | null>(null);
   // By id, so an open dialog shows the plan as reloaded after an edit.
@@ -777,33 +877,51 @@ function AgendaTab({
     const words = fold(query).split(/\s+/).filter(Boolean);
     return plan.parlors
       .filter((p) => words.every((w) => fold(`${clientName(p)} ${p.client}`).includes(w)))
+      .filter((p) => !approvedOnly || p.accepted_quotes.length > 0)
       .sort((a, b) => SORTS[sort].compare(a, b) || clientName(a).localeCompare(clientName(b), "es"))
       .map((p) => {
         const cells: Record<number, Cell> = {}; // month 1-12; 0 = Atrasado
-        const add = (month: number, kind: EventKind, row: ParlorPartRow, date: string, invoice?: number | null, external?: number | null) => {
+        const add = (month: number, kind: CellKind, row: ParlorPartRow, date: string, invoice?: number | null, external?: number | null) => {
           const byCat = ((cells[month] ??= {})[kind] ??= {});
           (byCat[row.group] ??= []).push({ row, date, invoice, external });
         };
         const parts = p.parts.filter((r) => isDated(r) && (!only || r.group === only));
         for (const r of parts) {
+          // A part's open quote covers its next change: the first one missed or due after its last change.
+          const quoted: CellKind | null = r.quote ? (r.quote.status === "aceptado" ? "accepted" : "quoted") : null;
+          const next = r.events.find((e) => (e.kind === "missed" || e.kind === "due") && (!r.last_change || e.date > r.last_change));
           for (const e of r.events) {
             // A due date that was missed but replaced later only clutters the sheet: the change shows on its own.
             // (The events keep it for the on-time share, services.relevance.)
             if (e.kind === "missed" && r.events.some((d) => (d.kind === "done" || d.kind === "external") && d.date > e.date)) continue;
             const [y, m] = e.date.split("-").map(Number);
-            if (y === year) add(m, e.kind, r, e.date, e.invoice, e.external);
+            if (y === year) add(m, quoted && e === next ? quoted : e.kind, r, e.date, e.invoice, e.external);
           }
-          if (current && r.status === "overdue" && Number(r.due!.slice(0, 4)) < year) add(0, "missed", r, r.due!);
+          if (current && r.status === "overdue" && Number(r.due!.slice(0, 4)) < year) add(0, quoted ?? "missed", r, r.due!);
         }
-        // With one category, only the clients that have it this year.
-        return { parlor: p, cells, active: only ? Object.keys(cells).length > 0 : parts.length > 0 };
+        // With one category, only the clients that have it this year. A folded prospect (sent without its parts)
+        // counts if it has any dated part.
+        const active = p.folded ? p.next_due !== null : only ? Object.keys(cells).length > 0 : parts.length > 0;
+        return { parlor: p, cells, active };
       })
       .filter((r) => r.active || query);
-  }, [plan, query, year, current, only, sort]);
+  }, [plan, query, year, current, only, sort, approvedOnly]);
+  // Sales waiting: quotes clients approved that nobody has invoiced yet.
+  const approvedCount = plan.parlors.reduce((n, p) => n + p.accepted_quotes.length, 0);
   // Clients our crew served this year; the rest (calendar clients we didn't serve, parts buyers who install them
   // themselves) are prospects, folded under the table so they don't bury the clients.
-  const clients = rows.filter((r) => r.parlor.attended);
-  const prospects = rows.filter((r) => !r.parlor.attended);
+  // Filtered to approved quotes: prospects too, in the one table.
+  const clients = approvedOnly ? rows : rows.filter((r) => r.parlor.attended);
+  // The ones worth calling first: a part overdue lately or due soon, by date; then the rest, by date.
+  const worthCalling = (p: PlanParlor) => {
+    if (!p.next_due) return false;
+    const days = (isoToDate(p.next_due).getTime() - today.getTime()) / DAY_MS;
+    return days >= -PROSPECT_OVERDUE_DAYS && days <= SOON_DAYS;
+  };
+  const prospects = rows
+    .filter((r) => !r.parlor.attended)
+    .sort((a, b) => Number(worthCalling(b.parlor)) - Number(worthCalling(a.parlor)) || (a.parlor.next_due ?? "9").localeCompare(b.parlor.next_due ?? "9"));
+  const callable = prospects.filter((r) => worthCalling(r.parlor)).length;
   // Categories any client has, in the page's order.
   const categories = useMemo(() => {
     const present = new Set(plan.parlors.flatMap((p) => p.parts.filter(isDated).map((r) => r.group)));
@@ -813,14 +931,14 @@ function AgendaTab({
   const thisMonth = today.getMonth() + 1;
   const table = (list: typeof rows) => (
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white print:hidden">
-        <table className="w-full min-w-[56rem] table-fixed border-collapse text-xs">
+        <table className="w-full min-w-[48rem] sm:min-w-[56rem] table-fixed border-collapse text-xs">
           <thead>
             <tr className="border-b border-gray-200 text-gray-500">
-              <th className="sticky left-0 w-44 bg-white px-3 py-2 text-left font-medium">Cliente</th>
+              <th className="sticky left-0 w-32 bg-white px-3 py-2 text-left font-medium sm:w-44">Cliente</th>
               {months.map((m) => (
                 <th
                   key={m}
-                  className={cn("px-1 py-2 text-center font-medium", current && m === thisMonth && "bg-blue-50 text-blue-800")}
+                  className={cn("px-1 py-2 text-center font-medium", m === 0 && "w-16", current && m === thisMonth && "bg-blue-50 text-blue-800")}
                 >
                   {m === 0 ? "Atrasado" : MONTHS[m - 1]}
                 </th>
@@ -841,6 +959,16 @@ function AgendaTab({
                   <span className="block text-[11px] text-gray-400" title="Facturado en los últimos 12 meses en refacciones y servicio de la sala de ordeña (sin higiene, ventiladores, alimento ni otras líneas)">
                     {p.sales_12m ? `${compactMoney(p.sales_12m)} al año` : "sin servicio en 12 meses"}
                   </span>
+                  {!p.attended && p.next_due && (
+                    <span className={cn("block text-[11px]", worthCalling(p) ? "font-medium text-green-700" : "text-gray-400")}>
+                      Próxima pieza: {formatDay(p.next_due)}
+                    </span>
+                  )}
+                  {!p.attended && p.contacted_at && (
+                    <span className="block text-[11px] text-violet-700">
+                      Contactado {new Date(p.contacted_at).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
+                    </span>
+                  )}
                 </td>
                 {months.map((m) => {
                   const cell = cells[m];
@@ -853,7 +981,7 @@ function AgendaTab({
                           aria-label={`${clientName(p)}, ${m === 0 ? "atrasado" : MONTHS[m - 1]}`}
                           className="flex w-full flex-col gap-0.5 rounded hover:ring-2 hover:ring-blue-300"
                         >
-                          {(["missed", "done", "external", "due"] as EventKind[]).map((k) => {
+                          {CELL_ORDER.map((k) => {
                             const byCat = cell[k];
                             if (!byCat) return null;
                             const cats = Object.keys(byCat);
@@ -891,7 +1019,10 @@ function AgendaTab({
         </div>
         <Input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onShowProspects(); // a match may be a prospect
+          }}
           placeholder="Buscar cliente o número"
           aria-label="Buscar cliente"
           className="w-full sm:w-64"
@@ -934,21 +1065,46 @@ function AgendaTab({
           </Button>
         </span>
         <span className="flex flex-wrap gap-1.5 text-xs">
-          {(Object.keys(KIND) as EventKind[]).map((k) => (
+          {CELL_ORDER.map((k) => (
             <Chip key={k} className={KIND[k].className}>{KIND[k].label}</Chip>
           ))}
         </span>
       </div>
 
+      {approvedCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            if (!approvedOnly) onShowProspects(); // a prospect's approved parts come with its parts
+            setApprovedOnly(!approvedOnly);
+          }}
+          className={cn(
+            "self-start rounded-full px-3 py-1 text-sm font-medium print:hidden",
+            approvedOnly ? "bg-gray-100 text-gray-700 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700",
+          )}
+        >
+          {approvedOnly ? "Mostrar todos los clientes" : `${plural(approvedCount, "cotización aprobada", "cotizaciones aprobadas")} por facturar`}
+        </button>
+      )}
       {table(clients)}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 print:hidden">
         <p>Haz clic en un cliente para ver todas sus piezas, o en una casilla para ver ese mes.</p>
       </div>
-      {prospects.length > 0 && (
+      {prospects.length > 0 && !approvedOnly && (
         // Open while searching, so a match among the prospects shows.
-        <details key={query ? "search" : "folded"} open={!!query} className="group print:hidden">
+        <details
+          key={query ? "search" : "folded"}
+          open={!!query}
+          onToggle={(e) => e.currentTarget.open && onShowProspects()}
+          className="group print:hidden"
+        >
           <summary className="cursor-pointer select-none text-sm font-medium text-gray-700">
             Prospectos ({prospects.length})
+            {callable > 0 && (
+              <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+                {plural(callable, "con pieza por cambiar", "con piezas por cambiar")} pronto
+              </span>
+            )}
             <span className="ml-2 text-xs font-normal text-gray-500">
               sin mano de obra nuestra en {today.getFullYear()}: compran refacciones o los atendimos antes
             </span>
@@ -1029,8 +1185,8 @@ function MonthSheet({
     .map(({ parlor, cells }) => {
       const parts = new Map<string, CellPart & { late: boolean }>();
       const take = (cell: Cell | undefined, late: boolean) =>
-        (["missed", "due"] as EventKind[]).forEach((k) =>
-          Object.values(cell?.[k] ?? {}).flat().forEach((c) => parts.set(placeKey(c.row), { ...c, late: late || k === "missed" })),
+        PENDING.forEach((k) =>
+          Object.values(cell?.[k] ?? {}).flat().forEach((c) => parts.set(placeKey(c.row), { ...c, late: late || k === "missed" || (k !== "due" && c.date < todayISO()) })),
         );
       if (withOverdue) take(cells[0], true);
       take(cells[month], false);
@@ -1095,12 +1251,13 @@ function MonthDialog({
   onChanged: () => void;
   onQuote: (parts: ParlorPartRow[]) => void;
 }) {
-  // What's overdue or coming this month starts selected: quoting it, or noting someone else did it, is one click.
-  const cellParts = (kinds: EventKind[]) => [
+  // What's overdue or coming this month and not quoted yet starts selected: quoting it, or noting someone else did
+  // it, is one click.
+  const cellParts = (kinds: CellKind[]) => [
     ...new Map(kinds.flatMap((k) => Object.values(cell[k] ?? {}).flat()).map((c) => [placeKey(c.row), c.row])).values(),
   ];
   const selection = useSelection(cellParts(["missed", "due"]));
-  const selected = cellParts(["missed", "done", "external", "due"]).filter(selection.has);
+  const selected = cellParts(CELL_ORDER).filter(selection.has);
   // Categories and parts in the client's order of relevance, as in its full detail.
   const order = categoriesOf(parlor, plan.categories).map((c) => c.name);
   const rank = (c: string) => (order.includes(c) ? order.indexOf(c) : order.length);
@@ -1117,7 +1274,7 @@ function MonthDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
-          {(["missed", "done", "external", "due"] as EventKind[]).map((k) => {
+          {CELL_ORDER.map((k) => {
             const byCat = cell[k];
             if (!byCat) return null;
             return (
@@ -1209,7 +1366,7 @@ function OrderTab({ plan, name }: { plan: ServicePlan; name: (code: string) => R
               <TableHead className={cn(HIDE_BELOW_SM, "text-right")}>Para servicios</TableHead>
               <TableHead className={cn(HIDE_BELOW_MD, "text-right")}>Extra mostrador</TableHead>
               <TableHead className={cn(HIDE_BELOW_SM, "text-right whitespace-nowrap")}>Existencia</TableHead>
-              <TableHead className="text-right">Pedir</TableHead>
+              <TableHead className="whitespace-nowrap text-right">Pedir</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1228,7 +1385,7 @@ function OrderTab({ plan, name }: { plan: ServicePlan; name: (code: string) => R
                   <TableCell className={cn(HIDE_BELOW_SM, "text-right tabular-nums")}>{units(l.services)}</TableCell>
                   <TableCell className={cn(HIDE_BELOW_MD, "text-right tabular-nums")}>{units(l.buffer)}</TableCell>
                   <TableCell className={cn(HIDE_BELOW_SM, "text-right tabular-nums", l.stock <= 0 && "text-red-700")}>{units(l.stock)}</TableCell>
-                  <TableCell className="text-right font-semibold tabular-nums">{units(l.order)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">{units(l.order)}</TableCell>
                 </TableRow>
               ))
             )}

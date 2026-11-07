@@ -794,6 +794,8 @@ def infer_parlors(purchases, labor, liners, registry, covered, today):
 def build_plan(today):
     from .models import Parlor
 
+    contacted = {p.id: (p.contacted_at, p.contacted_by) for p in Parlor.objects.filter(contacted_at__isnull=False)
+                 .select_related('contacted_by')}
     parlors = [{'id': p.id, 'client': p.client_code, 'label': p.label, 'hours_per_day': p.milking_hours_per_day,
                 'parts': [(x.code, x.quantity, x.group) for x in p.parts.all()],
                 'sheet_months': {(x.code, x.group): x.sheet_months for x in p.parts.all() if x.sheet_months},
@@ -838,6 +840,7 @@ def build_plan(today):
             spent[(client, code)] += total
 
     clients = fetch_clients({p['client'] for p in parlors})
+    phones = fetch_client_phones({p['client'] for p in parlors})
     sales = fetch_client_sales({p['client'] for p in parlors}, today - timedelta(days=365), gea,
                                {code for p in parlors for code, *_ in p['parts']})
     quoted = quoted_places([p['id'] for p in parlors])
@@ -864,16 +867,94 @@ def build_plan(today):
                      'name': clients.get(p['client'], (None, ''))[1],
                      'sales_12m': sales.get(p['client'], 0),
                      'attended': p['client'] in attended,
+                     'phone': phones.get(p['client'], ''),
+                     # A prospect someone reached out to: by hand, or by quoting them.
+                     'contacted_at': contacted.get(p['id'], (None,))[0],
+                     'contacted_by': (lambda u: u and (u.get_full_name() or u.username))(contacted.get(p['id'], (None, None))[1]),
+                     # The prospects list puts the ones with a part due soon first.
+                     # Quotes the client approved that aren't invoiced yet (kept when a prospect's parts are left out).
+                     'accepted_quotes': sorted({r['quote']['id'] for r in by_parlor[p['id']]
+                                                if r['quote'] and r['quote']['status'] == 'aceptado'}),
+                     'next_due': min((r['due'] for r in by_parlor[p['id']] if r['status'] in ('ok', 'overdue')), default=None),
                      'parts': sorted(by_parlor[p['id']], key=lambda r: (r['due'] is None, r['due'] or today))}
                     for p in parlors],
         'order': {'day': next_order, 'lines': order},
+        'invoiced_quotes': invoiced_quotes(rows),
     }
+
+
+def invoiced_quotes(rows):
+    """Ids of shared Servicios quotes whose every part has an invoice of ours (with or without our labor) on or after
+    the day it was quoted: the sale went through, so the nightly sync closes them."""
+    from .models import ServiceQuote
+
+    done = defaultdict(list)
+    for r in rows:
+        done[(r['parlor'], r['code'], r['group'])] += [e['date'] for e in r['events'] if e['invoice']]
+    out = []
+    for q in ServiceQuote.objects.filter(request__status='APPROVED'):
+        day = timezone.localdate(q.created_at)
+        if q.places and all(any(d >= day for d in done[(q.parlor_id, code, group)]) for code, group in q.places):
+            out.append(q.request_id)
+    return out
 
 
 # ---------- a service quote: the parts staff pick in a client's detail, as a quote request (catalog.quotes)
 
+def valid_phone(phone):
+    return sum(c.isdigit() for c in phone or '') >= 10
+
+
+def fetch_client_phones(codes):
+    """{client code: phone}: the one staff typed (ClientPhone), else Contpaqi's first on file."""
+    from .models import ClientPhone
+
+    codes = sorted(codes)
+    if not codes:
+        return {}
+    phones = {}
+    with connections['erp'].cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT c.CCODIGOCLIENTE, d.CTELEFONO1, d.CTELEFONO2
+            FROM admClientes c
+            JOIN admDomicilios d ON d.CIDCATALOGO = c.CIDCLIENTEPROVEEDOR AND d.CTIPOCATALOGO = 1
+            WHERE c.CCODIGOCLIENTE IN ({', '.join(['%s'] * len(codes))})
+            ORDER BY d.CTIPODIRECCION
+            """,
+            codes,
+        )
+        for code, *numbers in cursor.fetchall():
+            phones.setdefault(code.strip(), next((n.strip()[:30] for n in numbers if n and n.strip()), None))
+    phones = {c: p for c, p in phones.items() if p}
+    phones.update(ClientPhone.objects.filter(client_code__in=codes).values_list('client_code', 'phone'))
+    return phones
+
+
+def save_client_phone(client_code, phone, user):
+    """Keeps a client's phone and fixes it on their open quotes from Servicios that have none that works."""
+    from catalog.models import QuoteRequest
+    from catalog.quotes import QuoteError, _log
+
+    from .models import ClientPhone
+
+    phone = str(phone or '').strip()
+    if len(phone) > 30 or not valid_phone(phone):
+        raise QuoteError('Revisa el teléfono (10 dígitos).')
+    ClientPhone.objects.update_or_create(client_code=client_code, defaults={'phone': phone, 'updated_by': user})
+    for req in QuoteRequest.objects.filter(service_quote__parlor__client_code=client_code,
+                                           status__in=(QuoteRequest.STATUS_NEW, QuoteRequest.STATUS_CONTACTED,
+                                                       QuoteRequest.STATUS_APPROVED)):
+        if not valid_phone(req.phone):
+            req.phone = phone
+            req.save(update_fields=['phone'])
+            _log(req, user, f'puso el teléfono del cliente: {phone}')
+    return phone
+
+
 def fetch_client_contact(client_code):
-    """(name, first phone on file) of an ERP client, read live."""
+    """(name, phone) of an ERP client: the phone staff typed (ClientPhone), else the first on file."""
+    from .models import ClientPhone
     with connections['erp'].cursor() as cursor:
         cursor.execute(
             """
@@ -889,7 +970,8 @@ def fetch_client_contact(client_code):
     if not rows:
         return None, ''
     phone = next((p.strip() for r in rows for p in r[1:] if p and p.strip()), '')
-    return rows[0][0].strip(), phone[:30]
+    local = ClientPhone.objects.filter(client_code=client_code).values_list('phone', flat=True).first()
+    return rows[0][0].strip(), (local or phone)[:30]
 
 
 def catalog_prices(keys):
@@ -905,13 +987,14 @@ QUOTE_STATUS = {'NEW': 'cotizado', 'CONTACTED': 'cotizado', 'APPROVED': 'aprobad
 
 def quoted_places(parlor_ids):
     """{(parlor id, code, group): (day quoted, {'id', 'status'})}: each part's latest service quote that wasn't
-    closed (status: cotizado, aprobado, enviado)."""
+    closed (status: cotizado, aprobado = shared on the client's link, enviado, aceptado = the client approved it)."""
     from .models import ServiceQuote
 
     out = {}
     for q in (ServiceQuote.objects.filter(parlor_id__in=parlor_ids).exclude(request__status='REJECTED')
               .select_related('request').order_by('created_at')):
-        status = 'enviado' if q.request.sent_at else QUOTE_STATUS[q.request.status]
+        r = q.request
+        status = 'aceptado' if r.accepted_at else 'enviado' if r.sent_at else QUOTE_STATUS[r.status]
         for code, group in q.places:
             out[(q.parlor_id, code, group)] = (timezone.localdate(q.created_at), {'id': q.request_id, 'status': status})
     return out
@@ -926,7 +1009,7 @@ def create_service_quote(parlor, items, user):
     from catalog.models import QuoteRequest, QuoteRequestItem
     from catalog.quotes import QuoteError, _clean_items, _log
 
-    from .models import ServiceQuote
+    from .models import Parlor, ServiceQuote
 
     code_by_key = {p['key']: p['CCODIGOPRODUCTO'] for p in _catalog(True)}
     cleaned = {code_by_key[k]: q for k, q in _clean_items(items, code_by_key, 'key').items() if q > 0}
@@ -937,12 +1020,14 @@ def create_service_quote(parlor, items, user):
         raise QuoteError('No se encontró el cliente en Contpaqi.')
     with transaction.atomic():
         req = QuoteRequest.objects.create(
-            name=name[:120], phone=phone, company=parlor.label, owner=user,
+            name=name[:120], phone=phone, company=parlor.label, owner=user, from_staff=True,
             note=f'Servicio programado ({parlor.client_code}).',
         )
         QuoteRequestItem.objects.bulk_create(QuoteRequestItem(request=req, producto_codigo=c, quantity=q)
                                              for c, q in cleaned.items())
         _log(req, user, 'creó la solicitud desde Servicios')
+        # Quoting a client is reaching out to them (a prospect's "contacted" mark).
+        Parlor.objects.filter(pk=parlor.pk).update(contacted_at=timezone.now(), contacted_by=user)
         ServiceQuote.objects.create(parlor=parlor, request=req, places=[
             [str(i.get('code', '')), str(i.get('group', ''))] for i in items if i.get('code')])
     return req

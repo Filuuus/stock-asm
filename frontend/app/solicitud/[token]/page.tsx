@@ -27,6 +27,7 @@ interface PublicRequest {
   discount: number; // percent
   discount_amount?: number;
   expired: boolean;
+  accepted_at: string | null; // the customer approved it here
   can_modify: boolean;
   contact_phone: string | null;
   revision: LinkedQuote | null;
@@ -50,9 +51,9 @@ const PRINT_PAGE = `@media print {
   }
 }`;
 
-// The customer's personal link: status while it's reviewed; once approved, the
-// prices frozen at approval. Knowing the link is the only access, like a
-// shared document - it isn't listed or guessable.
+// The customer's personal link: status while it's reviewed; once staff share the
+// quote, the prices frozen then, and a button to approve it. Knowing the link is
+// the only access, like a shared document - it isn't listed or guessable.
 export default async function RequestPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const res = await fetch(`${API_URL}/api/solicitudes/publica/${encodeURIComponent(token)}/`, { cache: "no-store" });
@@ -94,14 +95,21 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
           <Notice
             tone="info"
             title="Recibimos tu solicitud"
-            summary={`Estamos revisando precios y existencias.${req.contact_phone ? "" : " Te contactaremos por WhatsApp."} Aquí verás los precios en cuanto la aprobemos.`}
+            summary={`Estamos revisando precios y existencias.${req.contact_phone ? "" : " Te contactaremos por WhatsApp."} Aquí verás los precios en cuanto esté lista.`}
           />
         )}
-        {approved && !req.expired && (
+        {approved && !req.expired && !req.accepted_at && (
           <Notice
             tone="ok"
             title="Tu cotización está lista"
-            summary={req.valid_until ? `Precios válidos hasta el ${formatDay(req.valid_until)}.` : undefined}
+            summary={`Revisa los productos y precios; si estás de acuerdo, apruébala abajo.${req.valid_until ? ` Precios válidos hasta el ${formatDay(req.valid_until)}.` : ""}`}
+          />
+        )}
+        {approved && req.accepted_at && (
+          <Notice
+            tone="ok"
+            title={`Aprobaste esta cotización el ${formatDay(req.accepted_at)}`}
+            summary="Te contactaremos para coordinar la entrega y la factura."
           />
         )}
         {req.expired && (
@@ -185,6 +193,7 @@ export default async function RequestPage({ params }: { params: Promise<{ token:
         items={req.items}
         approved={approved}
         expired={req.expired}
+        accepted={Boolean(req.accepted_at)}
         canModify={req.can_modify}
         contactPhone={req.contact_phone}
       />

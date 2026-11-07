@@ -67,11 +67,12 @@ def _new_token():
 
 
 class QuoteRequest(models.Model):
-    """A customer's cart sent for pricing (management, 2026-10-01): prices stay
-    private, staff review the request and management approves it, which
-    freezes the prices; the customer follows it through their own link
-    (/solicitud/<token>). Customer details live only in this local database,
-    never in the repo or the ERP.
+    """A customer's cart sent for pricing: staff review the request and share
+    it (status APPROVED: the prices freeze and show on the customer's link,
+    /solicitud/<token>); the customer approves it from that link (accepted_at)
+    and staff close the sale in Contpaqi. Until 2026-11-07 management approved
+    every quote before the customer saw prices. Customer details live only in
+    this local database, never in the repo or the ERP.
     """
 
     STATUS_NEW, STATUS_CONTACTED, STATUS_APPROVED, STATUS_REJECTED = 'NEW', 'CONTACTED', 'APPROVED', 'REJECTED'
@@ -97,6 +98,11 @@ class QuoteRequest(models.Model):
     # A discount on the whole request (El Buen Fin, a deal to win a client back), in percent; staff set it while
     # the request is open, and the customer sees it with the prices.
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    accepted_at = models.DateTimeField(null=True, blank=True)  # the customer approved it from their link
+    # Made by staff (Servicios) rather than asked for by the customer: nobody is waiting on the other end, so it
+    # stays "to send" until it reaches them.
+    from_staff = models.BooleanField(default=False)
+    sold_at = models.DateTimeField(null=True, blank=True)  # closed as a sale (by hand, or invoiced for Servicios)
 
     class Meta:
         ordering = ['-created_at']

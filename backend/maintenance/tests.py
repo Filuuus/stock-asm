@@ -418,6 +418,29 @@ class EndpointTests(TestCase):
         self.assertEqual(APIClient().get('/api/servicios/plan/').status_code, 403)
         self.assertEqual(self.login(Profile.ROLE_SALESPERSON).get('/api/servicios/plan/').status_code, 200)
 
+    def test_a_clients_phone_is_kept_and_fixes_their_open_service_quotes(self):
+        from catalog.models import QuoteRequest
+        from .models import ClientPhone, Parlor, ServiceQuote
+        parlor = Parlor.objects.create(client_code='103-1', stalls=8)
+        req = QuoteRequest.objects.create(name='Cliente', phone='', from_staff=True)
+        ServiceQuote.objects.create(parlor=parlor, request=req, places=[])
+        client = self.login(Profile.ROLE_SALESPERSON)
+        url = '/api/servicios/clientes/103-1/telefono/'
+        self.assertEqual(client.put(url, {'phone': '123'}, format='json').status_code, 400)
+        self.assertEqual(client.put('/api/servicios/clientes/999/telefono/', {'phone': '3312345678'}, format='json').status_code, 404)
+        self.assertEqual(client.put(url, {'phone': '33 1234 5678'}, format='json').status_code, 200)
+        self.assertEqual(ClientPhone.objects.get().phone, '33 1234 5678')
+        req.refresh_from_db()
+        self.assertEqual(req.phone, '33 1234 5678')
+
+    def test_a_prospect_can_be_marked_contacted(self):
+        from .models import Parlor
+        parlor = Parlor.objects.create(client_code='103-1', stalls=8)
+        client = self.login(Profile.ROLE_SALESPERSON)
+        url = f'/api/servicios/salas/{parlor.pk}/contactado/'
+        self.assertIsNotNone(client.post(url).json()['contacted_at'])
+        self.assertIsNone(client.delete(url).json()['contacted_at'])
+
     @patch('maintenance.services.fetch_client_contact', return_value=('Cliente', '3330000000'))
     @patch('api.services._catalog', return_value=[{'key': '11', 'CCODIGOPRODUCTO': '7049-1703-000'}])
     def test_service_quote_becomes_a_request_owned_by_its_author(self, *_):
@@ -470,3 +493,17 @@ class EndpointTests(TestCase):
         self.assertEqual([(e['kind'], e['external']) for e in row['events'] if e['date'] == date(2026, 10, 1)],
                          [('external', change.pk)])
         self.assertEqual(client.delete(f'/api/servicios/externos/{change.pk}/').status_code, 204)
+
+    def test_a_shared_service_quote_counts_as_invoiced_once_every_part_has_a_later_invoice(self):
+        from catalog.models import QuoteRequest
+        from .models import Parlor, ServiceQuote
+        from .services import invoiced_quotes
+        parlor = Parlor.objects.create(client_code='103-1', stalls=8)
+        req = QuoteRequest.objects.create(name='Cliente', phone='3312345678', status='APPROVED', from_staff=True)
+        ServiceQuote.objects.create(parlor=parlor, request=req, places=[['A', 'G'], ['B', 'G']])
+        later = date(2099, 1, 1)
+        row = lambda code, d, inv: {'parlor': parlor.pk, 'code': code, 'group': 'G',  # noqa: E731
+                                    'events': [{'date': d, 'invoice': inv}]}
+        self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', later, None)]), [])  # B changed by someone else
+        self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', date(2020, 1, 1), 2)]), [])  # B's is older
+        self.assertEqual(invoiced_quotes([row('A', later, 1), row('B', later, 2)]), [req.pk])

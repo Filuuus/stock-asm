@@ -5,6 +5,8 @@ the ERP is only read).
 
     manage.py sync_parlors [--apply]
 
+With --apply it also closes, as sold, the Servicios quotes whose parts were invoiced since they were quoted.
+
 Nothing is taken out: parts staff removed ("No aplica") stay out, a deactivated parlor is left alone, and a
 client with two parlors only gets its stall count checked by hand.
 """
@@ -17,8 +19,9 @@ from django.utils import timezone
 
 from api.services import _gea_products
 from clients.services import WALK_IN_CLIENT
+from catalog.quotes import close_invoiced
 from maintenance.models import Parlor, ParlorPart
-from maintenance.services import (HISTORY_DAYS, LINERS_PER_STALL, base_code, fetch_all_names, fetch_clients,
+from maintenance.services import (HISTORY_DAYS, build_plan, LINERS_PER_STALL, base_code, fetch_all_names, fetch_clients,
                                   fetch_invoice_lines, fetch_labor_days, infer_parlors, merge_purchases, part_family,
                                   product_key, same_part_other_model)
 
@@ -80,6 +83,10 @@ class Command(BaseCommand):
                           f'{len(found["stalls"])} stall counts changed' + ('' if apply else ' (dry run)'))
         if apply:
             self.save(found, by_id, liners, group, sheet)
+            # Servicios quotes whose parts were invoiced since: closed as sold.
+            invoiced = build_plan(today)['invoiced_quotes']
+            close_invoiced(invoiced)
+            self.stdout.write(f'{len(invoiced)} service quotes closed as sold (invoiced)')
 
     @transaction.atomic
     def save(self, found, by_id, liners, group, sheet):

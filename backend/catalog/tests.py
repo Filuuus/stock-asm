@@ -1,6 +1,6 @@
 """Quote requests. These use the local database only (databases = {'default'}),
 so no test database is created on the ERP server; the ERP catalog is mocked."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -48,7 +48,7 @@ class QuoteRequestTests(TestCase):
             'items': [{'key': '1', 'quantity': 2}, {'key': '2', 'quantity': 1}],
         }, content_type='application/json')
 
-    def test_prices_only_after_approval_and_frozen(self, _):
+    def test_prices_only_once_shared_and_frozen(self, _):
         token = self.send().json()['token']
         public = self.client.get(f'/api/solicitudes/publica/{token}/').json()
         self.assertEqual([i['unit_price'] for i in public['items']], [None, None])
@@ -57,10 +57,8 @@ class QuoteRequestTests(TestCase):
         self.assertEqual([(i['code'], i['name']) for i in public['items']], [(None, 'PEZONERA'), (None, 'JUNTA')])
 
         req = QuoteRequest.objects.get(token=token)
-        self.client.force_login(self.seller)
-        self.assertEqual(self.client.post(f'/api/solicitudes/{req.pk}/aprobar/').status_code, 403)
-        self.client.force_login(self.manager)
-        self.client.post(f'/api/solicitudes/{req.pk}/aprobar/', {'valid_days': 10}, content_type='application/json')
+        self.client.force_login(self.seller)  # any staff member shares it, no management approval first
+        self.client.post(f'/api/solicitudes/{req.pk}/enviar/', {'valid_days': 10}, content_type='application/json')
 
         CATALOG[0]['price'] = 999.0  # a later price change doesn't touch the quote
         try:
@@ -117,10 +115,59 @@ class QuoteRequestTests(TestCase):
         self.assertEqual(self.badge(), 1)  # new, no owner
         self.act(req, 'contactar')
         self.assertEqual(self.badge(), 0)  # someone has it
-        self.act(req, 'aprobar')
-        self.assertEqual(self.badge(), 1)  # approved, not sent
-        self.act(req, 'enviada')
+        self.act(req, 'enviar')
+        self.assertEqual(self.badge(), 0)  # shared and sent in one step
+
+    def test_a_quote_staff_made_is_to_send_until_it_reaches_the_customer(self, _):
+        self.client.force_login(self.seller)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        QuoteRequest.objects.filter(pk=req.pk).update(owner=self.seller, from_staff=True)  # as Servicios makes it
+        self.assertEqual(self.badge(), 1)
+        view = self.client.get(f'/api/solicitudes/{req.pk}/').json()
+        self.assertEqual((view['to_send'], view['stage']), (True, 'por_enviar'))
+        view = self.act(req, 'enviar').json()
+        self.assertEqual((view['status'], view['stage'], view['to_send']), ('APPROVED', 'esperando', False))
         self.assertEqual(self.badge(), 0)
+
+    def test_sold_lapsed_and_reopened(self, _):
+        self.client.force_login(self.seller)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.assertEqual(self.client.get(f'/api/solicitudes/{req.pk}/').json()['stage'], 'por_cotizar')
+        self.assertEqual(self.act(req, 'vendida').status_code, 400)  # nothing shared yet
+        self.act(req, 'enviar', valid_days=1)
+        QuoteRequest.objects.filter(pk=req.pk).update(valid_until=timezone.localdate() - timedelta(days=3))
+        self.assertEqual(self.client.get(f'/api/solicitudes/{req.pk}/').json()['stage'], 'esperando')  # expired, not lapsed
+        QuoteRequest.objects.filter(pk=req.pk).update(valid_until=timezone.localdate() - timedelta(days=8))
+        view = self.client.get(f'/api/solicitudes/{req.pk}/').json()
+        self.assertEqual((view['stage'], view['closed_as']), ('cerrada', 'vencida'))
+        self.assertEqual(self.badge(), 0)
+        view = self.act(req, 'vendida').json()
+        self.assertEqual((view['status'], view['closed_as']), ('REJECTED', 'vendida'))
+        view = self.act(req, 'reabrir').json()
+        self.assertEqual((view['status'], view['stage'], view['closed_as']), ('CONTACTED', 'por_cotizar', None))
+
+    def test_invoiced_service_quotes_close_as_sold(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        quotes.send(req, self.seller)
+        quotes.close_invoiced([req.pk])
+        req.refresh_from_db()
+        self.assertEqual(quotes._closed_as(req), 'vendida')
+
+    def test_a_sent_quote_without_an_answer_comes_back_for_follow_up(self, _):
+        self.client.force_login(self.seller)
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.act(req, 'tomar')
+        self.act(req, 'enviar', valid_days=30)
+        self.assertIsNone(self.client.get(f'/api/solicitudes/{req.pk}/').json()['follow_up'])
+        QuoteRequest.objects.filter(pk=req.pk).update(sent_at=timezone.now() - timedelta(days=7))
+        self.assertEqual(self.client.get(f'/api/solicitudes/{req.pk}/').json()['follow_up'], 'no_answer')
+        self.assertEqual(self.badge(), 1)
+        QuoteRequest.objects.filter(pk=req.pk).update(valid_until=timezone.localdate() + timedelta(days=1))
+        self.assertEqual(self.client.get(f'/api/solicitudes/{req.pk}/').json()['follow_up'], 'expiring')
+        self.client.logout()
+        self.client.post(f'/api/solicitudes/publica/{req.token}/aprobar/')
+        self.client.force_login(self.seller)
+        self.assertIsNone(self.client.get(f'/api/solicitudes/{req.pk}/').json()['follow_up'])
 
     def test_a_discount_comes_off_the_total_and_only_while_open(self, _):
         self.client.force_login(self.manager)
@@ -129,10 +176,35 @@ class QuoteRequestTests(TestCase):
         view = self.act(req, 'descuento', discount=10).json()
         self.assertEqual(Decimal(view['discount_amount']), (Decimal(view['subtotal']) / 10).quantize(Decimal('0.01')))
         self.assertEqual(Decimal(view['total']), Decimal(view['subtotal']) - Decimal(view['discount_amount']))
-        self.act(req, 'aprobar')
+        self.act(req, 'enviar')
         self.assertEqual(self.act(req, 'descuento', discount=20).status_code, 400)
         public = self.client.get(f'/api/solicitudes/publica/{req.token}/').json()
         self.assertEqual(Decimal(public['discount']), 10)
+
+    def test_the_customer_approves_a_shared_quote_from_the_link(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        accept = lambda: self.client.post(f'/api/solicitudes/publica/{req.token}/aprobar/')  # noqa: E731
+        self.assertEqual(accept().status_code, 400)  # nothing shared yet
+        self.client.force_login(self.seller)
+        self.act(req, 'enviar')
+        self.assertEqual(self.badge(), 0)
+        self.client.logout()
+        self.assertIsNotNone(accept().json()['accepted_at'])
+        self.client.force_login(self.seller)
+        self.assertEqual(self.badge(), 1)  # a sale to close
+        self.assertTrue(self.client.get('/api/solicitudes/').json()[0]['accepted'])
+        self.act(req, 'cerrar', reason='Facturada')
+        self.assertEqual(self.badge(), 0)
+        req.refresh_from_db()
+        self.assertTrue(req.events.filter(text='aprobó la cotización', author=None).exists())
+
+    def test_an_expired_quote_cant_be_approved_by_the_customer(self, _):
+        req = QuoteRequest.objects.get(token=self.send().json()['token'])
+        self.client.force_login(self.seller)
+        self.act(req, 'enviar', valid_days=1)
+        QuoteRequest.objects.filter(pk=req.pk).update(valid_until=date(2020, 1, 1))
+        self.client.logout()
+        self.assertEqual(self.client.post(f'/api/solicitudes/publica/{req.token}/aprobar/').status_code, 400)
 
     def test_staff_fix_the_phone(self, _):
         self.client.force_login(self.seller)
@@ -280,15 +352,13 @@ class QuoteRequestTests(TestCase):
         self.client.logout()
         self.assertEqual(self.client.get(f'/api/solicitudes/publica/{token}/').json()['status'], 'NEW')
 
-    def test_reopening_is_managements_and_takes_prices_off_the_link(self, _):
+    def test_reopening_takes_prices_off_the_link(self, _):
         token = self.send().json()['token']
         req = QuoteRequest.objects.get(token=token)
         self.client.force_login(self.manager)
         quotes.set_items(req, [{'code': 'B', 'quantity': 1, 'unit_price': 500}], self.manager)
-        self.act(req, 'aprobar')
+        self.act(req, 'enviar')
         self.client.force_login(self.seller)
-        self.assertEqual(self.act(req, 'reabrir').status_code, 403)
-        self.client.force_login(self.manager)
         view = self.act(req, 'reabrir').json()
         self.assertEqual(view['status'], 'CONTACTED')
         self.assertEqual({i['code']: i['typed_price'] for i in view['items']}, {'A': None, 'B': 500.0})  # the catalog's freeze is gone, a typed one stays

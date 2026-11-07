@@ -12,7 +12,8 @@ import { apiFetch } from "@/lib/api";
 import { formatDay } from "@/lib/dates";
 import ProductDialog from "@/components/catalog/ProductDialog";
 import AddProduct from "@/components/quote/AddProduct";
-import { QUOTE_STATUS, type QuoteStatus, whatsappUrl } from "@/lib/quote-status";
+import { CLOSED_AS, QUOTE_STATUS, type ClosedAs, type QuoteStatus, type Stage } from "@/lib/quote-status";
+import { WhatsAppLink } from "@/components/whatsapp-link";
 import { cn, formatMoney } from "@/lib/utils";
 
 interface QuoteItem {
@@ -48,6 +49,9 @@ interface Detail {
   decided_at: string | null;
   decided_by: string | null;
   valid_until: string | null;
+  accepted_at: string | null; // the customer approved it from their link
+  follow_up: "no_answer" | "expiring" | null; // sent, the customer hasn't approved it
+  no_phone: boolean; // no number WhatsApp can reach
   subtotal: number;
   discount: number; // percent, on the whole request
   discount_amount: number;
@@ -55,6 +59,9 @@ interface Detail {
   owner: string | null;
   mine: boolean;
   to_send: boolean;
+  sent_at: string | null;
+  stage: Stage;
+  closed_as: ClosedAs | null;
   expired: boolean;
   revises: number | null;
   revisions: number[];
@@ -68,8 +75,8 @@ const moment = (iso: string) =>
   new Date(iso).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 // One request: the customer, what they asked for and everyone's notes. While it's open staff
-// adjust products, quantities and prices; management approves, which freezes the prices, and the
-// customer's link then shows them. Its own page (/solicitudes/<id>), or a dialog over another page
+// adjust products, quantities and prices, then share it, which freezes the prices and shows them on the
+// customer's link, where the customer approves it. Its own page (/solicitudes/<id>), or a dialog over another page
 // (Servicios): onOpenRequest then shows a linked request in place instead of navigating.
 export default function RequestDetail({ id, onOpenRequest }: { id: string | number; onOpenRequest?: (id: number) => void }) {
   const embedded = Boolean(onOpenRequest);
@@ -86,7 +93,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
         {label}
       </Link>
     );
-  const { user, loading, isManagement } = useAuth();
+  const { user, loading } = useAuth();
   const [req, setReq] = useState<Detail | null>(null);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [prices, setPrices] = useState<Record<string, string>>({});
@@ -160,8 +167,43 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
   const isOpen = req.status === "NEW" || req.status === "CONTACTED";
   const edited = req.items.some((i) => quantities[i.code] !== String(Number(i.quantity)) || (prices[i.code] ?? "") !== typed(i));
   const link = typeof window === "undefined" ? "" : `${process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin}/solicitud/${req.token}`;
-  const message = `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista: ${link}`;
+  const message = `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista. Ahí puedes revisarla y aprobarla: ${link}`;
 
+  // A row's quantity and price: inputs while open, text after (in their columns, or under the name on phones).
+  const quantity = (i: QuoteItem) =>
+    isOpen ? (
+      <Input
+        type="number"
+        min="0"
+        inputMode="decimal"
+        value={quantities[i.code] ?? ""}
+        onChange={(e) => setQuantities((q) => ({ ...q, [i.code]: e.target.value }))}
+        aria-label={`Cantidad de ${i.name}`}
+        className="w-20"
+      />
+    ) : (
+      units(i.quantity)
+    );
+  const price = (i: QuoteItem) =>
+    isOpen ? (
+      <Input
+        type="number"
+        min="0"
+        step="0.01"
+        inputMode="decimal"
+        value={prices[i.code] ?? ""}
+        placeholder={i.catalog_price ? String(i.catalog_price) : "Sin precio"}
+        onChange={(e) => setPrices((p) => ({ ...p, [i.code]: e.target.value }))}
+        aria-label={`Precio de ${i.name}`}
+        className="w-28 text-right sm:ml-auto"
+      />
+    ) : i.unit_price !== null ? (
+      formatMoney(i.unit_price)
+    ) : (
+      <span className="text-gray-400">Sin precio</span>
+    );
+  // Shares it if it's still open and marks it sent (once): the message is already on its way.
+  const sendQuote = () => (isOpen || !req.sent_at ? act("enviar", { valid_days: Number(validDays) }) : Promise.resolve(true));
   const addNote = async (e: FormEvent) => {
     e.preventDefault();
     if (await act("nota", { text: note })) setNote("");
@@ -187,8 +229,18 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
         <span className={cn("rounded-full px-2.5 py-0.5 text-sm font-medium", QUOTE_STATUS[req.status].className)}>
           {QUOTE_STATUS[req.status].label}
         </span>
+        {req.accepted_at && (
+          <span className="rounded-full bg-green-600 px-2.5 py-0.5 text-sm font-medium text-white">Aprobada por el cliente</span>
+        )}
+        {req.follow_up === "no_answer" && (
+          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-sm font-medium text-amber-800">Sin respuesta</span>
+        )}
+        {req.follow_up === "expiring" && (
+          <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-800">Vence pronto</span>
+        )}
         {req.to_send && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-sm font-medium text-amber-800">Por enviar</span>}
-        {req.expired && <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-sm font-medium text-gray-600">Vencida</span>}
+        {req.expired && !req.closed_as && <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-sm font-medium text-gray-600">Vencida</span>}
+        {req.closed_as && <span className={cn("rounded-full px-2.5 py-0.5 text-sm font-medium", CLOSED_AS[req.closed_as].className)}>{CLOSED_AS[req.closed_as].label}</span>}
         {req.revises && requestLink(req.revises, `Cambios a la solicitud #${req.revises}`)}
         {req.revisions.map((other) => requestLink(other, `Cambios en la solicitud #${other}`))}
       </div>
@@ -196,37 +248,24 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
       {/* The next step for this stage, always on top. */}
       <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg border border-gray-200 bg-white p-3">
         {isOpen && (
-          <Button asChild>
-            <a href={whatsappUrl(req.phone)} target="_blank" rel="noopener noreferrer" onClick={() => act("contactar")}>
+          <Button asChild variant="outline">
+            <WhatsAppLink phone={req.phone} onClick={() => act("contactar")}>
               <MessageCircle className="mr-1.5 h-4 w-4" />
-              WhatsApp
-            </a>
+              Escribir
+            </WhatsAppLink>
           </Button>
         )}
         {req.status === "NEW" && <Button variant="outline" disabled={busy} onClick={() => act("contactar")}>Marcar contactada</Button>}
         {req.status === "CONTACTED" && <Button variant="outline" disabled={busy} onClick={() => act("deshacer-contacto")}>Deshacer contacto</Button>}
         {req.status === "APPROVED" && (
           <>
-            <Button asChild>
-              <a href={whatsappUrl(req.phone, message)} target="_blank" rel="noopener noreferrer" onClick={() => act("enviada")}>
-                <MessageCircle className="mr-1.5 h-4 w-4" />
-                Enviar por WhatsApp
-              </a>
+            <Button variant={req.accepted_at ? "default" : "outline"} disabled={busy} onClick={() => act("vendida")}>
+              Marcar como vendida
             </Button>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                await navigator.clipboard.writeText(link);
-                setCopied(true);
-              }}
-            >
-              <Copy className="mr-1.5 h-4 w-4" />
-              {copied ? "Enlace copiado" : "Copiar enlace"}
-            </Button>
-            {req.to_send && <Button variant="outline" disabled={busy} onClick={() => act("enviada")}>Marcar enviada</Button>}
-            {isManagement && <Button variant="outline" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>}
+            <Button variant="outline" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>
           </>
         )}
+        {req.status === "REJECTED" && <Button variant="outline" disabled={busy} onClick={() => act("reabrir")}>Reabrir</Button>}
         {req.status !== "REJECTED" && (
           <>
             {req.mine ? (
@@ -237,17 +276,42 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
             <Button variant="outline" disabled={busy} onClick={() => setClosing(!closing)}>Cerrar</Button>
           </>
         )}
-        {isOpen && (isManagement ? (
-          <div className="ml-auto flex items-end gap-2">
-            <label className="text-xs text-gray-600">
-              Vigencia (días)
-              <Input type="number" min="1" max="365" value={validDays} onChange={(e) => setValidDays(e.target.value)} className="mt-1 w-20" />
-            </label>
-            <Button disabled={busy || edited} onClick={() => act("aprobar", { valid_days: Number(validDays) })}>Aprobar</Button>
+        {/* One step: shares the quote (prices freeze) if it's still open, marks it sent, and opens or copies the
+            message with the client's link. */}
+        {(isOpen || (req.status === "APPROVED" && !req.accepted_at)) && (
+          <div className="ml-auto flex flex-wrap items-end gap-2">
+            {isOpen && (
+              <label className="text-xs text-gray-600">
+                Vigencia (días)
+                <Input type="number" min="1" max="365" value={validDays} onChange={(e) => setValidDays(e.target.value)} className="mt-1 w-20" />
+              </label>
+            )}
+            <Button asChild>
+              <WhatsAppLink
+                phone={req.phone}
+                text={message}
+                disabled={busy || edited}
+                title={isOpen ? "Congela los precios, la marca como enviada y abre el chat con el enlace" : undefined}
+                onClick={sendQuote}
+              >
+                <MessageCircle className="mr-1.5 h-4 w-4" />
+                {req.status === "APPROVED" && req.sent_at ? "Reenviar por WhatsApp" : "Enviar por WhatsApp"}
+              </WhatsAppLink>
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy || edited}
+              onClick={async () => {
+                await navigator.clipboard.writeText(message);
+                setCopied(true);
+                await sendQuote();
+              }}
+            >
+              <Copy className="mr-1.5 h-4 w-4" />
+              {copied ? "Mensaje copiado" : "Copiar mensaje"}
+            </Button>
           </div>
-        ) : (
-          <p className="ml-auto self-center text-sm text-gray-500">Solo gerencia puede aprobar.</p>
-        ))}
+        )}
         {closing && (
           <form onSubmit={close} className="flex w-full gap-2">
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="¿Por qué se cierra?" aria-label="Motivo de cierre" />
@@ -255,6 +319,33 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
           </form>
         )}
       </div>
+      {req.no_phone && (
+        <div className="mt-4">
+          <Notice
+            tone="warning"
+            title="Sin teléfono para WhatsApp"
+            summary="Escribe el celular del cliente en Teléfono (Cambiar) para poder enviarle la cotización. Si viene de Servicios, queda guardado para sus siguientes cotizaciones."
+          />
+        </div>
+      )}
+      {req.follow_up && (
+        <div className="mt-4">
+          <Notice
+            tone="warning"
+            title={req.follow_up === "expiring" ? `Vence el ${formatDay(req.valid_until!)} y el cliente no la ha aprobado` : "El cliente no ha respondido"}
+            summary="Escríbele por WhatsApp para darle seguimiento; si ya no le interesa, cierra la solicitud con el motivo."
+          />
+        </div>
+      )}
+      {req.accepted_at && req.status === "APPROVED" && (
+        <div className="mt-4">
+          <Notice
+            tone="ok"
+            title={`El cliente aprobó la cotización el ${moment(req.accepted_at)}`}
+            summary="Coordina la entrega por WhatsApp, factura en Contpaqi y márcala como vendida."
+          />
+        </div>
+      )}
       {error && <div className="mt-4"><Notice tone="error" title={error} /></div>}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
@@ -296,18 +387,18 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-left text-xs text-gray-500">
                 <tr>
-                  <th className="min-w-44 px-4 py-2 font-medium">Producto</th>
-                  <th className="px-4 py-2 font-medium">Cantidad</th>
+                  <th className="px-3 py-2 font-medium sm:min-w-44 sm:px-4">Producto</th>
+                  <th className="hidden px-4 py-2 font-medium sm:table-cell">Cantidad</th>
                   <th className="hidden whitespace-nowrap px-4 py-2 text-right font-medium sm:table-cell">Existencia</th>
-                  <th className="px-4 py-2 text-right font-medium">Precio</th>
-                  <th className="px-4 py-2 text-right font-medium">Importe</th>
+                  <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Precio</th>
+                  <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Importe</th>
                   {isOpen && <th className="w-10 px-2 py-2"><span className="sr-only">Quitar</span></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {req.items.map((i) => (
                   <tr key={i.code} className="align-top">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 sm:px-4">
                       {i.key ? (
                         <button
                           type="button"
@@ -320,45 +411,24 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
                         <span className="font-medium text-gray-800">{i.name}</span>
                       )}
                       <p className="text-xs text-gray-400">SKU: {i.code}</p>
+                      {/* Phones: quantity, price and amount under the name instead of in their columns. */}
+                      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
+                        {quantity(i)}
+                        <span className="text-gray-400">×</span>
+                        {price(i)}
+                        <span className="num ml-auto font-medium text-gray-900">{i.subtotal !== null ? formatMoney(i.subtotal) : "-"}</span>
+                      </div>
                     </td>
-                    <td className="px-4 py-3">
-                      {isOpen ? (
-                        <Input
-                          type="number"
-                          min="0"
-                          inputMode="decimal"
-                          value={quantities[i.code] ?? ""}
-                          onChange={(e) => setQuantities((q) => ({ ...q, [i.code]: e.target.value }))}
-                          aria-label={`Cantidad de ${i.name}`}
-                          className="w-20"
-                        />
-                      ) : (
-                        units(i.quantity)
-                      )}
+                    <td className="hidden px-4 py-3 sm:table-cell">
+                      {quantity(i)}
                     </td>
                     <td className={cn("hidden px-4 py-3 text-right sm:table-cell", i.stock !== null && i.stock <= 0 && "text-red-600")}>
                       {units(i.stock)}
                     </td>
-                    <td className="num px-4 py-3 text-right">
-                      {isOpen ? (
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={prices[i.code] ?? ""}
-                          placeholder={i.catalog_price ? String(i.catalog_price) : "Sin precio"}
-                          onChange={(e) => setPrices((p) => ({ ...p, [i.code]: e.target.value }))}
-                          aria-label={`Precio de ${i.name}`}
-                          className="ml-auto w-28 text-right"
-                        />
-                      ) : i.unit_price !== null ? (
-                        formatMoney(i.unit_price)
-                      ) : (
-                        <span className="text-gray-400">Sin precio</span>
-                      )}
+                    <td className="num hidden px-4 py-3 text-right sm:table-cell">
+                      {price(i)}
                     </td>
-                    <td className="num px-4 py-3 text-right">{i.subtotal !== null ? formatMoney(i.subtotal) : "-"}</td>
+                    <td className="num hidden px-4 py-3 text-right sm:table-cell">{i.subtotal !== null ? formatMoney(i.subtotal) : "-"}</td>
                     {isOpen && (
                       <td className="px-2 py-3">
                         <button
@@ -421,7 +491,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
             <>
               <AddProduct exclude={req.items.map((i) => i.code)} disabled={busy} onAdd={(code) => saveItems({ [code]: "1" })} />
               <p className="mt-2 text-xs text-gray-500">
-                Escribe el precio con IVA para poner o cambiar el de un producto; en blanco usa el del catálogo. Los precios se congelan al aprobar. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
+                Escribe el precio con IVA para poner o cambiar el de un producto; en blanco usa el del catálogo. Los precios se congelan al compartir la cotización. &quot;Sin precio&quot; aparece al cliente como &quot;Se cotiza aparte&quot;.
               </p>
               {edited && (
                 <div className="mt-3 flex items-center gap-3">
@@ -434,7 +504,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
                   >
                     Guardar cambios
                   </Button>
-                  <p className="text-xs text-gray-500">Guarda los cambios antes de aprobar.</p>
+                  <p className="text-xs text-gray-500">Guarda los cambios antes de compartir.</p>
                 </div>
               )}
             </>
@@ -469,7 +539,7 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
                 </li>
               ) : (
                 <li key={e.id} className="px-2.5 text-xs text-gray-500">
-                  {e.author ?? "Alguien"} {e.text} · {moment(e.created_at)}
+                  {e.author ?? "El cliente"} {e.text} · {moment(e.created_at)}
                 </li>
               ),
             )}

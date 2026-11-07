@@ -22,7 +22,7 @@ export interface ParlorPartRow {
   per_year: number; // changes a year, last 3 years
   on_time: number | null; // share of the times it came due that it was changed that month
   score: number; // relevance: pesos a year weighted by on_time
-  quote: { id: number; status: "cotizado" | "aprobado" | "enviado" } | null; // a service quote since its last change
+  quote: { id: number; status: "cotizado" | "aprobado" | "enviado" | "aceptado" } | null; // a service quote since its last change
 }
 
 export interface PlanParlor {
@@ -33,6 +33,12 @@ export interface PlanParlor {
   name: string;
   sales_12m: number; // parlor service invoiced over the last 12 months (services.parlor_product + labor)
   attended: boolean; // our crew billed labor this year; the rest are prospects
+  folded?: boolean; // a prospect sent without its parts (the page asks for them when the prospects open)
+  phone: string; // staff's (kept locally) or Contpaqi's
+  contacted_at: string | null; // a prospect someone reached out to (by hand, or by quoting them)
+  contacted_by: string | null;
+  accepted_quotes: number[]; // quotes the client approved, not invoiced yet
+  next_due: string | null; // earliest due date of a dated part
   hours_per_day: number | null;
   parts: ParlorPartRow[];
 }

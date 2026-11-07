@@ -14,6 +14,10 @@ class Parlor(models.Model):
     active = models.BooleanField(default=True)
     # Codes staff removed ("No aplica"), so sync_parlors doesn't add them back from the invoices.
     dismissed = models.JSONField(default=list, blank=True)
+    # A prospect someone reached out to (a call, a visit), so two people don't call the same farm.
+    contacted_at = models.DateTimeField(null=True, blank=True)
+    contacted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name='+')
 
     def __str__(self):
         return f'{self.client_code} {self.label}'.strip()
@@ -51,3 +55,13 @@ class ExternalChange(models.Model):
     note = models.CharField(max_length=200, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ClientPhone(models.Model):
+    """A client's phone as staff typed it, over Contpaqi's (often missing or a landline), for WhatsApp. Lives only
+    in this local database: the ERP is read-only and the repo public."""
+
+    client_code = models.CharField(max_length=30, unique=True)
+    phone = models.CharField(max_length=30)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)

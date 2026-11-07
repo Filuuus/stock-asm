@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, MessageCircle, Pencil, Phone, Printer } from "lucide-react";
+import { Check, CircleCheck, Copy, MessageCircle, Pencil, Phone, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/hooks/use-cart";
+import { apiFetch } from "@/lib/api";
 import { setQuoteRevision } from "@/lib/quote-revision";
+import { WhatsAppLink } from "@/components/whatsapp-link";
 import { whatsappUrl } from "@/lib/quote-status";
 import { rememberQuote } from "@/lib/saved-quotes";
 
@@ -23,16 +25,35 @@ interface Props {
   items: Item[];
   approved: boolean;
   expired: boolean;
+  accepted: boolean;
   canModify: boolean;
   contactPhone: string | null;
 }
 
-// Everything a customer can do from their quote: all of it ends in WhatsApp or the cart,
-// because the sale itself is closed by staff in Contpaqi.
-export default function QuoteActions({ token, number, createdAt, items, approved, expired, canModify, contactPhone }: Props) {
+// Everything a customer can do from their quote: approve it (staff then close the sale in Contpaqi),
+// ask on WhatsApp, or change it through the cart.
+export default function QuoteActions({ token, number, createdAt, items, approved, expired, accepted, canModify, contactPhone }: Props) {
   const router = useRouter();
   const { items: cart, replace } = useCart();
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const approve = async () => {
+    if (!window.confirm(`¿Aprobar la cotización #${number} con estos productos y precios?`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/solicitudes/publica/${encodeURIComponent(token)}/aprobar/`, { method: "POST" });
+      if (!res.ok) {
+        setError((await res.json().catch(() => ({}))).error ?? "No se pudo aprobar. Intenta de nuevo.");
+        return;
+      }
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     rememberQuote({ token, number, created_at: createdAt, products: items.length });
@@ -49,12 +70,18 @@ export default function QuoteActions({ token, number, createdAt, items, approved
   return (
     <div className="mt-6 space-y-4 print:hidden">
       <div className="flex flex-wrap gap-2">
-        {approved && !expired && contactPhone && (
+        {approved && !expired && !accepted && (
+          <Button disabled={busy} onClick={approve}>
+            <CircleCheck className="mr-1.5 h-4 w-4" />
+            Aprobar cotización
+          </Button>
+        )}
+        {approved && accepted && contactPhone && (
           <Button asChild>
-            <a href={whatsappUrl(contactPhone, `Hola, quiero avanzar con la cotización #${number}.`)} target="_blank" rel="noopener noreferrer">
+            <WhatsAppLink phone={contactPhone} text={`Hola, aprobé la cotización #${number}. ¿Cómo coordinamos la entrega?`}>
               <MessageCircle className="mr-1.5 h-4 w-4" />
-              Quiero avanzar con esta cotización
-            </a>
+              Coordinar entrega
+            </WhatsAppLink>
           </Button>
         )}
         {canModify && (
@@ -71,6 +98,8 @@ export default function QuoteActions({ token, number, createdAt, items, approved
         )}
       </div>
 
+      {error && <p className="text-sm text-red-700">{error}</p>}
+
       {contactPhone && (
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
           ¿Dudas?
@@ -78,15 +107,14 @@ export default function QuoteActions({ token, number, createdAt, items, approved
             <Phone className="h-3.5 w-3.5" />
             {contactPhone}
           </a>
-          <a
-            href={whatsappUrl(contactPhone, `Hola, tengo una duda sobre la solicitud #${number}.`)}
-            target="_blank"
-            rel="noopener noreferrer"
+          <WhatsAppLink
+            phone={contactPhone}
+            text={`Hola, tengo una duda sobre la solicitud #${number}.`}
             className="inline-flex items-center gap-1 text-blue-600 hover:underline"
           >
             <MessageCircle className="h-3.5 w-3.5" />
             WhatsApp
-          </a>
+          </WhatsAppLink>
         </p>
       )}
 
