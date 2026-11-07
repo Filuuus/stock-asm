@@ -61,6 +61,7 @@ interface Detail {
   mine: boolean;
   to_send: boolean;
   sent_at: string | null;
+  from_staff: boolean;
   stage: Stage;
   closed_as: ClosedAs | null;
   expired: boolean;
@@ -168,7 +169,12 @@ export default function RequestDetail({ id, onOpenRequest }: { id: string | numb
   const isOpen = req.status === "NEW" || req.status === "CONTACTED";
   const edited = req.items.some((i) => quantities[i.code] !== String(Number(i.quantity)) || (prices[i.code] ?? "") !== typed(i));
   const link = typeof window === "undefined" ? "" : `${process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin}/solicitud/${req.token}`;
-  const message = `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista. Ahí puedes revisarla y aprobarla: ${link}`;
+  // A client who asked gets their quote; one staff prepared is a first contact, so it says who we are and why.
+  const message = !req.from_staff
+    ? `Hola ${req.name}, tu cotización de Agropecuaria Santa María está lista. Ahí puedes revisarla y aprobarla: ${link}`
+    : req.items.some((i) => i.due)
+      ? `Hola ${req.name}, le saluda Agropecuaria Santa María. Revisando el historial de mantenimiento de su sala de ordeña, vimos que ya le toca el cambio de algunas piezas. Le preparamos una cotización sin compromiso; puede revisarla y, si está de acuerdo, aprobarla aquí: ${link}`
+      : `Hola ${req.name}, le saluda Agropecuaria Santa María. Le preparamos una cotización sin compromiso; puede revisarla y, si está de acuerdo, aprobarla aquí: ${link}`;
 
   // A row's quantity and price: inputs while open, text after (in their columns, or under the name on phones).
   const quantity = (i: QuoteItem) =>

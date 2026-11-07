@@ -314,11 +314,16 @@ function useSelection(initial: ParlorPartRow[] = []) {
 }
 type Selection = ReturnType<typeof useSelection>;
 
+// Overdue or due within SOON_DAYS (the quote picker's "Próximas").
+const dueSoon = (rows: ParlorPartRow[], today: Date) =>
+  rows.filter((r) => isDated(r) && isoToDate(r.due!).getTime() <= today.getTime() + SOON_DAYS * DAY_MS);
+
 function SelectBox({ rows, selection, label }: { rows: ParlorPartRow[]; selection: Selection; label: string }) {
   const on = rows.filter(selection.has).length;
   return (
     <Checkbox
       aria-label={label}
+      disabled={rows.length === 0}
       checked={on === 0 ? false : on === rows.length ? true : "indeterminate"}
       onCheckedChange={(v) => selection.set(rows, v === true)}
       onClick={(e) => e.stopPropagation()} // inside a category's summary: don't fold it
@@ -413,7 +418,8 @@ function ClientDetail({
       <details key={c.name} className="group/cat border-b border-gray-100 last:border-b-0">
         <summary className="grid cursor-pointer list-none grid-cols-[1rem_1rem_minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 hover:bg-gray-50 sm:grid-cols-[1rem_1rem_minmax(0,1fr)_8rem_9rem]">
           <ChevronRight className="h-4 w-4 text-gray-400 transition-transform group-open/cat:rotate-90" />
-          <SelectBox rows={c.parts} selection={selection} label={`Seleccionar ${c.name}`} />
+          {/* Only what's overdue or coming, so a quote doesn't carry parts nowhere near due (pick those one by one). */}
+          <SelectBox rows={dueSoon(c.parts, today)} selection={selection} label={`Seleccionar ${c.name}`} />
           <span className="font-medium text-gray-900">{c.name}</span>
           <DueDate due={c.first} today={today} />
           <span className="hidden text-right text-sm text-gray-500 sm:block">
