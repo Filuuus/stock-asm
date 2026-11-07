@@ -237,6 +237,10 @@ NOTION_TOKEN = os.getenv('NOTION_TOKEN', '')
 NOTION_FLEET_LOG_DB = os.getenv('NOTION_FLEET_LOG_DB', '')
 # Client directory (clients/services.py): active ERP clients -> this Notion database, same token.
 NOTION_CLIENTS_DB = os.getenv('NOTION_CLIENTS_DB', '')
+# The crew's calendar (Tareas): approved Servicios quotes become tasks there (maintenance/notion_tasks.py).
+NOTION_SERVICE_TASKS_DB = os.getenv('NOTION_SERVICE_TASKS_DB', '')
+# The public site, for the client's quote link in those tasks (opens anywhere, unlike the office site).
+PUBLIC_SITE_URL = os.getenv('PUBLIC_SITE_URL', 'https://agrostma.com')
 
 # Rentabilidad: the accounting share holding the accountant's "Reportes Mensuales <year>.xlsx"
 # (one folder per year), read by import_vehicle_reports. Empty = not configured.

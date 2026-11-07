@@ -5,7 +5,8 @@ the ERP is only read).
 
     manage.py sync_parlors [--apply]
 
-With --apply it also closes, as sold, the Servicios quotes whose parts were invoiced since they were quoted.
+With --apply it also closes, as sold, the Servicios quotes whose parts were invoiced since they were quoted, and
+creates the Notion calendar task of any approved quote that doesn't have one yet (maintenance.notion_tasks).
 
 Nothing is taken out: parts staff removed ("No aplica") stay out, a deactivated parlor is left alone, and a
 client with two parlors only gets its stall count checked by hand.
@@ -20,6 +21,7 @@ from django.utils import timezone
 from api.services import _gea_products
 from clients.services import WALK_IN_CLIENT
 from catalog.quotes import close_invoiced
+from maintenance.notion_tasks import sync_tasks
 from maintenance.models import Parlor, ParlorPart
 from maintenance.services import (HISTORY_DAYS, build_plan, LINERS_PER_STALL, base_code, fetch_all_names, fetch_clients,
                                   fetch_invoice_lines, fetch_labor_days, infer_parlors, merge_purchases, part_family,
@@ -87,6 +89,7 @@ class Command(BaseCommand):
             invoiced = build_plan(today)['invoiced_quotes']
             close_invoiced(invoiced)
             self.stdout.write(f'{len(invoiced)} service quotes closed as sold (invoiced)')
+            sync_tasks(self.stdout.write)  # approved quotes whose Notion task failed to be created
 
     @transaction.atomic
     def save(self, found, by_id, liners, group, sheet):

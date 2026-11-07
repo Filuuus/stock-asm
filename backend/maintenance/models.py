@@ -46,6 +46,7 @@ class ServiceQuote(models.Model):
     # {code: 'YYYY-MM-DD'}: when each part was due when it was quoted (its earliest place), shown on the quote to
     # staff and the client; kept as it was, so it doesn't move once the parts are invoiced.
     due = models.JSONField(default=dict)
+    notion_page = models.CharField(max_length=64, blank=True)  # its task in the crew's Notion calendar (notion_tasks)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
