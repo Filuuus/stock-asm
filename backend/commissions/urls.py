@@ -1,11 +1,12 @@
 from django.urls import path
 
 from .views import (
-    commissions_summary, invoice_search, line_rate_delete, line_rate_save, override_create, override_delete,
+    commissions_summary, export_now, invoice_search, line_rate_delete, line_rate_save, override_create, override_delete,
 )
 
 urlpatterns = [
     path('summary/', commissions_summary, name='commissions-summary'),
+    path('exportar/', export_now, name='commissions-export'),
     path('invoices/search/', invoice_search, name='commissions-invoice-search'),
     path('overrides/', override_create, name='commissions-override-create'),
     path('overrides/<int:invoice_id>/', override_delete, name='commissions-override-delete'),

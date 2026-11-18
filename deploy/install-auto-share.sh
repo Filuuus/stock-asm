@@ -1,7 +1,7 @@
 #!/bin/bash
 # One-time read-write mount of the Compartidos\Auto folder on the office file server at /mnt/auto, where
-# the app writes what it generates on its own: the Excel workbooks staff open directly (Corte de Caja now;
-# Comisiones later). Separate from the read-only Compartidos mount (install-share.sh) and with its own
+# the app writes what it generates on its own: the Excel workbooks staff open directly (Corte de Caja and
+# Comisiones). Separate from the read-only Compartidos mount (install-share.sh) and with its own
 # Windows account, which can write only in Auto; staff can only read there.
 # Needs in backend/.env: AUTO_SHARE (//192.168.1.134/Compartidos/Auto), AUTO_SHARE_USER and
 # AUTO_SHARE_PASSWORD; the login is moved to a root-only file.
@@ -32,9 +32,10 @@ echo "$share $MOUNT cifs $OPTS 0 0" >> /etc/fstab
 systemctl daemon-reload
 systemctl restart "$(systemd-escape -p --suffix=automount "$MOUNT")"
 
-EXPORT_DIR="$MOUNT/Corte de Caja"
-grep -q "^CORTE_DE_CAJA_EXPORT_DIR=" "$ENV" && sed -i "s|^CORTE_DE_CAJA_EXPORT_DIR=.*|CORTE_DE_CAJA_EXPORT_DIR=$EXPORT_DIR|" "$ENV" \
-    || echo "CORTE_DE_CAJA_EXPORT_DIR=$EXPORT_DIR" >> "$ENV"
+for pair in "CORTE_DE_CAJA_EXPORT_DIR=$MOUNT/Corte de Caja" "COMISIONES_EXPORT_DIR=$MOUNT/Comisiones"; do
+    key=${pair%%=*}
+    grep -q "^$key=" "$ENV" && sed -i "s|^$key=.*|$pair|" "$ENV" || echo "$pair" >> "$ENV"
+done
 systemctl restart agrostma-django   # the page's button writes from the web process
 
 sudo -u agrostma touch "$MOUNT/.write-test" && rm "$MOUNT/.write-test" && echo "Write OK in $MOUNT"
