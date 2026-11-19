@@ -14,12 +14,10 @@ from pathlib import Path
 
 from django.conf import settings
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from commissions.services import PUNTOVENTA_RATE_CODE, ZONE_SCOPE, calculate_commissions
-from corte_de_caja.exports import (
-    MONEY_FORMAT, ExportFileInUse, _month_bounds, _zone_labels, save_report,
-)
+from corte_de_caja.exports import ExportFileInUse, _month_bounds, _zone_labels, save_report
 
 # September 2026 is the first month validated to the cent against management's sheets.
 EARLIEST_EXPORT_MONTH = date(2026, 9, 1)
@@ -27,17 +25,24 @@ SPANISH_MONTHS = [
     'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE',
     'NOVIEMBRE', 'DICIEMBRE',
 ]
-HEADERS = ['Fecha', 'Nombre', 'Folio', 'Fecha Emisión', 'Fecha Vencimiento', 'Importe', '% Comisión', 'Total',
-           'Categoría', 'Nota']
-WIDTHS = [11, 40, 10, 12, 12, 13, 10, 12, 10, 30]
-DATE_FORMAT = 'dd/mm/yyyy'
+# Styles copied from management's sheet: no borders, Arial 8 rows under an Arial 9 title on a light gray band,
+# white-on-gray headers over A-H only (I and J, category and note, have none), default column widths but Nombre.
+HEADERS = ['Fecha', 'Nombre', 'Folio', 'Fecha Emisión', 'Fecha Vencimiento', 'Importe', '% Comisión', 'Total']
+NAME_WIDTH = 40
+DATE_FORMAT = 'd-mmm-yy'
 PERCENT_FORMAT = '0.00%'
+MONEY_FORMAT = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-'
 HEADER_ROW = 6
+CENTERED_COLUMNS = (3, 4, 5, 6, 7, 9)
 
-FONT = Font(name='Arial', size=9)
-FONT_BOLD = Font(name='Arial', size=9, bold=True)
-FONT_TITLE = Font(name='Arial', size=11, bold=True)
-BORDER = Border(**{side: Side(style='thin') for side in ('left', 'right', 'top', 'bottom')})
+FONT = Font(name='Arial', size=8)
+FONT_BOLD = Font(name='Arial', size=8, bold=True)
+FONT_TITLE = Font(name='Arial', size=9, bold=True)
+FONT_HEADER = Font(name='Arial', size=8, bold=True, color='FFFFFF')
+TITLE_FILL = PatternFill('solid', fgColor='D9D9D9')
+HEADER_FILL = PatternFill('solid', fgColor='808080')
+TOTAL_BORDER = Border(bottom=Side(style='double'))
+CENTER = Alignment(horizontal='center')
 
 
 def _note(line):
@@ -63,17 +68,20 @@ def _naive(value):
 
 def _write_zone_sheet(wb, zone, label, lines, period):
     ws = wb.create_sheet(zone[:31])
-    ws.merge_cells('A1:J1')
+    ws.sheet_format.baseColWidth = 10
     ws['A1'] = 'RELACION DE COMISIONES POR COBRANZA'
-    ws['A1'].font = FONT_TITLE
-    ws['A1'].alignment = Alignment(horizontal='center')
+    for col in range(1, 10):
+        ws.cell(1, col).fill = TITLE_FILL
+    ws.merge_cells('A1:I1')
+    ws['A1'].font, ws['A1'].alignment = FONT_TITLE, CENTER
     ws['B3'] = period
     ws['B4'] = label
-    ws['B3'].font = ws['B4'].font = FONT_BOLD
+    ws['B3'].font = ws['B4'].font = FONT_TITLE
+    ws.row_dimensions[HEADER_ROW].height = 22.5
     for col, header in enumerate(HEADERS, 1):
         cell = ws.cell(HEADER_ROW, col, header)
-        cell.font, cell.border = FONT_BOLD, BORDER
-        cell.alignment = Alignment(horizontal='center', wrap_text=True)
+        cell.font, cell.fill = FONT_HEADER, HEADER_FILL
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
     row = HEADER_ROW
     last_day = None
@@ -93,28 +101,30 @@ def _write_zone_sheet(wb, zone, label, lines, period):
         last_day = day
         for col, value in enumerate(values, 1):
             cell = ws.cell(row, col, value)
-            cell.font, cell.border = FONT, BORDER
+            cell.font = FONT_BOLD if col == 1 else FONT
+            if col in CENTERED_COLUMNS:
+                cell.alignment = CENTER
         for col in (1, 4, 5):
             ws.cell(row, col).number_format = DATE_FORMAT
         ws.cell(row, 6).number_format = ws.cell(row, 8).number_format = MONEY_FORMAT
         ws.cell(row, 7).number_format = PERCENT_FORMAT
 
     total_row = row + 2
-    ws.cell(total_row, 5, 'TOTALES').font = FONT_BOLD
+    cell = ws.cell(total_row, 5, 'TOTALES')
+    cell.font, cell.alignment = FONT_BOLD, CENTER
     for col, letter in ((6, 'F'), (8, 'H')):
         cell = ws.cell(total_row, col, f'=SUM({letter}{HEADER_ROW + 1}:{letter}{row})' if row > HEADER_ROW else 0)
-        cell.font, cell.number_format = FONT_BOLD, MONEY_FORMAT
+        cell.font, cell.number_format, cell.alignment, cell.border = FONT_BOLD, MONEY_FORMAT, CENTER, TOTAL_BORDER
 
-    ws.cell(total_row + 3, 1, 'REVISA Y AUTORIZA').font = FONT_BOLD
-    ws.cell(total_row + 3, 5, 'RECIBE DE CONFORMIDAD').font = FONT_BOLD
-    ws.cell(total_row + 7, 1, settings.COMISIONES_REVIEWER).font = FONT
-    ws.cell(total_row + 7, 5, label).font = FONT
+    for offset, left, right in ((3, 'REVISA Y AUTORIZA', 'RECIBE DE CONFORMIDAD'),
+                                (7, settings.COMISIONES_REVIEWER, label)):
+        ws.cell(total_row + offset, 1, left).font = FONT_BOLD
+        cell = ws.cell(total_row + offset, 5, right)
+        cell.font, cell.alignment = FONT_BOLD, CENTER
 
-    for col, width in enumerate(WIDTHS, 1):
-        ws.column_dimensions[chr(64 + col)].width = width
+    ws.column_dimensions['B'].width = NAME_WIDTH
     ws.freeze_panes = f'A{HEADER_ROW + 1}'
     ws.print_title_rows = f'{HEADER_ROW}:{HEADER_ROW}'
-    ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return f"='{ws.title}'!H{total_row}"
@@ -138,11 +148,14 @@ def build_month_workbook(year, month):
     summary = wb.active
     summary.title = 'Resumen'
     summary['A1'] = 'RELACION DE COMISIONES POR COBRANZA'
-    summary['A1'].font = FONT_TITLE
+    summary['A1'].fill = summary['B1'].fill = TITLE_FILL
+    summary.merge_cells('A1:B1')
+    summary['A1'].font, summary['A1'].alignment = FONT_TITLE, CENTER
     summary['A2'] = period
-    summary['A2'].font = FONT_BOLD
+    summary['A2'].font = FONT_TITLE
     summary['A4'], summary['B4'] = 'Zona', 'Total'
-    summary['A4'].font = summary['B4'].font = FONT_BOLD
+    for cell in (summary['A4'], summary['B4']):
+        cell.font, cell.fill, cell.alignment = FONT_HEADER, HEADER_FILL, CENTER
     row = 4
     for zone in zones:
         row += 1
@@ -151,7 +164,7 @@ def build_month_workbook(year, month):
         cell.font, cell.number_format = FONT, MONEY_FORMAT
     summary.cell(row + 1, 1, 'TOTAL').font = FONT_BOLD
     cell = summary.cell(row + 1, 2, f'=SUM(B5:B{row})')
-    cell.font, cell.number_format = FONT_BOLD, MONEY_FORMAT
+    cell.font, cell.number_format, cell.border = FONT_BOLD, MONEY_FORMAT, TOTAL_BORDER
 
     pending = result['unresolved_payment_date']
     if pending['count']:
