@@ -14,8 +14,9 @@ class VehicleDayKm(models.Model):
 
 
 class VehicleStop(models.Model):
-    """Where a GPS unit stopped: the end of each Zeek trip, until the next trip starts (leave is empty
-    for the day's last stop). Kept for matching stops to clients; Zeek drops trips after about six days."""
+    """Where a GPS unit stopped, until it moved again (leave is empty for the day's last stop): the end of
+    each Zeek trip (engine off), or a stop inside a trip with the engine left running (engine_on; see
+    timeline.py). Kept for matching stops to clients; Zeek drops trips after about six days."""
     imei = models.CharField(max_length=32)
     day = models.DateField()
     arrive = models.DateTimeField()
@@ -23,4 +24,5 @@ class VehicleStop(models.Model):
     lat = models.FloatField()
     lng = models.FloatField()
     source = models.CharField(max_length=10)  # 'zeek', or 'notion' for days rescued from the fleet log pages
+    engine_on = models.BooleanField(default=False)
     # No unique key: a unit's stops are replaced a whole day at a time (save_stops).
