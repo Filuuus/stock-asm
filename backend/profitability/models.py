@@ -137,6 +137,11 @@ class SavedPlace(models.Model):
     # 'auto' (name match), 'manual', or 'route' (a salesperson's route log: a GPS stop, or the client's town)
     matched_by = models.CharField(max_length=10, blank=True)
     approximate = models.BooleanField(default=False)  # only the town, not the farm: no use for matching GPS stops
+    # '' for a Maps or route place; 'spot' for a GPS stop someone identified (a store, a restaurant; name ''
+    # = looked at and left unnamed); 'base' for the company's own sites. Stops are named from client places,
+    # spots and bases only (fleet/matching.py), never from bookmarks nobody checked.
+    kind = models.CharField(max_length=10, blank=True, default='')
+    personal = models.BooleanField(default=False)  # a home or the like: the Notion log says only "Parada personal"
 
     def __str__(self):
         return self.name
