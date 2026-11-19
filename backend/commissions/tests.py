@@ -266,3 +266,36 @@ class CommissionsSummaryAccessTests(TestCase):
         response = self._get(Profile.ROLE_SALESPERSON)
         self.assertEqual(response.status_code, 403)
         self.assertNotIn('lines', response.json())
+
+
+class ExportWorkbookTests(SimpleTestCase):
+    def test_zone_sheets_carry_the_pages_numbers(self):
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from commissions.exports import build_month_workbook
+
+        paid = datetime(2026, 10, 3)
+        base = {'cliente': 'Cliente', 'folio_display': 'F 1', 'invoice_date': paid, 'due_date': paid,
+                'paid_date': paid, 'category': 'R', 'rate_code': 'R'}
+        result = {
+            'lines': [
+                {**base, 'zone': 'ZONA1', 'net_amount': Decimal('1000'), 'cash_share': Decimal('0.5'),
+                 'rate': Decimal('0.06'), 'commission': Decimal('30')},
+                {**base, 'zone': 'ZONA2', 'net_amount': Decimal('75'), 'rate': None, 'commission': Decimal('75'),
+                 'manual': True, 'producto_nombre': 'Ajuste'},
+            ],
+            'unresolved_payment_date': {'count': 0, 'total_amount': Decimal('0')},
+        }
+        with patch('commissions.exports.calculate_commissions', return_value=result), \
+                patch('commissions.exports._zone_labels', return_value={}):
+            wb = build_month_workbook(2026, 10)
+
+        self.assertEqual(wb.sheetnames, ['Resumen', 'ZONA1', 'ZONA2', 'OFICINA', 'SERVICIOS'])
+        z1, z2 = wb['ZONA1'], wb['ZONA2']
+        self.assertEqual((z1['F7'].value, z1['G7'].value, z1['H7'].value), (500.0, 0.06, '=F7*G7'))
+        self.assertIn('Pagada 50% en dinero', z1['J7'].value)
+        self.assertEqual((z2['G7'].value, z2['H7'].value), (None, 75.0))
+        self.assertEqual(z1['H9'].value, '=SUM(H7:H7)')
+        self.assertEqual(wb['Resumen']['B5'].value, "='ZONA1'!H9")
+        self.assertEqual(wb['OFICINA']['H8'].value, 0)

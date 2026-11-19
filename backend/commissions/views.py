@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsManagement, IsWorker, is_accounting, is_management
 
+from .exports import export_recent_months
 from .models import InvoiceCommissionOverride, LineRateOverride
 from .services import CommissionRepository, calculate_commissions, scope_to_zone
 
@@ -136,3 +137,13 @@ def line_rate_save(request):
 def line_rate_delete(request, movimiento_id):
     LineRateOverride.objects.filter(movimiento_id=movimiento_id).delete()
     return Response(status=204)
+
+
+@api_view(['POST'])
+@permission_classes([IsManagement])
+def export_now(request):
+    """The page's "Actualizar Excel" button: the same regeneration the Corte timer runs every 15 minutes."""
+    try:
+        return Response({'months': export_recent_months()})
+    except OSError:
+        return Response({'error': 'No se pudo escribir en la carpeta Auto del servidor de archivos.'}, status=503)

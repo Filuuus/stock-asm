@@ -707,6 +707,7 @@ def _manual_line(base, override):
         'rate': None,
         'days_late': base.get('days_late', 0),
         'paid_date': base.get('paid_date'),
+        'invoice_date': base.get('invoice_date'),
         'due_date': base.get('due_date'),
         'commission': override.override_amount,
         'manual': True,
@@ -772,6 +773,7 @@ def _apply_overrides(lines, zone_totals, overrides):
                 'cliente': factura['CRAZONSOCIAL'],
                 'zone': override.zone,
                 'paid_date': factura['CFECHA'],
+                'invoice_date': factura['CFECHA'],
                 'due_date': None,
                 'days_late': 0,
             }, override))
@@ -971,6 +973,7 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
             'rate': rate,
             'days_late': days_late,
             'paid_date': paid_date,
+            'invoice_date': factura['CFECHA'],
             'due_date': due_date,
             'commission': commission,
             'cash_share': cash_share if cash_share < 1 else None,

@@ -220,6 +220,12 @@ CORTE_DE_CAJA_ZONE_LABELS = dict(
     if code.strip() and label.strip()
 )
 
+# Comisiones workbook (commissions/exports.py): same shared Auto folder, its own subfolder. The zone sheets
+# reuse CORTE_DE_CAJA_ZONE_LABELS for the salesperson's name; COMISIONES_REVIEWER is who signs "Revisa y
+# autoriza". Names stay in .env, never in the repo.
+COMISIONES_EXPORT_DIR = os.getenv('COMISIONES_EXPORT_DIR', str(BASE_DIR / 'exports' / 'comisiones'))
+COMISIONES_REVIEWER = os.getenv('COMISIONES_REVIEWER', '')
+
 
 
 # Fleet GPS log (fleet/services.py): Zeek GPS trips -> Notion. All secrets, so .env only.

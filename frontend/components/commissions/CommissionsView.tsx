@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Loader2,
   Plus,
+  RefreshCw,
   RotateCcw,
   X,
 } from "lucide-react";
@@ -196,6 +197,27 @@ export default function CommissionsView() {
   const [rateNote, setRateNote] = useState("");
   const [rateSaving, setRateSaving] = useState(false);
   const [rateError, setRateError] = useState<string | null>(null);
+
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ month: string; path?: string; error?: string }[] | null>(null);
+  // Its own error: the page's `error` hides the commissions table.
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExportNow = async () => {
+    setExporting(true);
+    setExportResult(null);
+    setExportError(null);
+    try {
+      const res = await apiFetch("/api/commissions/exportar/", { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar el Excel.");
+      setExportResult(json.months);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "No se pudo actualizar el Excel.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const requestIdRef = useRef(0);
 
@@ -452,9 +474,30 @@ export default function CommissionsView() {
         {(loading || authLoading) && (
           <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
         )}
+        {isManagement && (
+          <Button
+            variant="outline"
+            className="ml-auto"
+            onClick={handleExportNow}
+            disabled={exporting}
+            title="El Excel de la carpeta compartida se actualiza solo cada 15 minutos"
+          >
+            <RefreshCw className={cn("w-4 h-4", exporting && "animate-spin")} />
+            Actualizar Excel
+          </Button>
+        )}
       </div>
 
       {error && <Notice tone="error" summary={error} />}
+      {exportError && <Notice tone="error" summary={exportError} />}
+      {exportResult &&
+        exportResult.map((r) =>
+          r.error ? (
+            <Notice key={r.month} tone="warning" summary={`Excel ${r.month}: ${r.error}`} />
+          ) : (
+            <Notice key={r.month} tone="ok" summary={`Excel ${r.month} actualizado.`} />
+          ),
+        )}
 
       {/* Old results stay visible, faded, while the next ones load. */}
       {data && !error && (
@@ -791,7 +834,7 @@ export default function CommissionsView() {
                   <Input
                     id="line-rate"
                     type="number"
-                    step="0.25"
+                    step="0.5"
                     min="0"
                     max="20"
                     value={ratePercent}
