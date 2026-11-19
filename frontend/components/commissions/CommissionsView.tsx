@@ -200,17 +200,20 @@ export default function CommissionsView() {
 
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{ month: string; path?: string; error?: string }[] | null>(null);
+  // Its own error: the page's `error` hides the commissions table.
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const handleExportNow = async () => {
     setExporting(true);
     setExportResult(null);
+    setExportError(null);
     try {
       const res = await apiFetch("/api/commissions/exportar/", { method: "POST" });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar el Excel.");
       setExportResult(json.months);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo actualizar el Excel.");
+      setExportError(err instanceof Error ? err.message : "No se pudo actualizar el Excel.");
     } finally {
       setExporting(false);
     }
@@ -486,6 +489,7 @@ export default function CommissionsView() {
       </div>
 
       {error && <Notice tone="error" summary={error} />}
+      {exportError && <Notice tone="error" summary={exportError} />}
       {exportResult &&
         exportResult.map((r) =>
           r.error ? (
