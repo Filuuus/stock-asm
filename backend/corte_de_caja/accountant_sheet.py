@@ -17,10 +17,11 @@ Rules, agreed with the user 2026-11-20:
   two files have the same day, the most recently saved one wins.
 - A sheet row matches a payment on the page by folio number and amount
   (within $1), on the nearest date up to MATCH_DAYS away (the sheet is dated
-  when the money came in, Contabilidad often a day or two later), preferring
-  the same series. In Oct 1 - Nov 20 2026: 674 of 694 rows matched; the rest
-  were that day's payments without a póliza yet, split amounts, and one
-  cheque covering two invoices.
+  when the money came in, Contabilidad often a day or two later, sometimes
+  three weeks: Oct 9-12 payments posted Nov 1), preferring the same series.
+  In Oct 1 - Nov 20 2026: 678 of 694 rows matched with 31 days (675 with 15);
+  the rest were payments without a póliza yet, split amounts, rows she wrote
+  twice, a reissued invoice and a $200 difference.
 - A method set on the page always wins: the import only creates rows and
   updates the ones it created (from_sheet), and a page edit clears the flag.
 - The workbook is only read, never written.
@@ -41,7 +42,7 @@ from commissions.services import LEDGER_FULL_PAYMENT_TOLERANCE
 from .models import CorteDeCajaAdjustment
 from .services import calculate_corte_de_caja
 
-MATCH_DAYS = 15
+MATCH_DAYS = 31
 FOLIO = re.compile(r'^([A-Z])\s*-?\s*(\d+)$')  # 'B 20517', 'F-20908'
 
 # OBSERVACIONES prefixes, from every note in the 2026 workbook (4,516 rows).

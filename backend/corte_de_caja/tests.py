@@ -294,6 +294,12 @@ class AccountantSheetTests(SimpleTestCase):
         sheet.append((date(2026, 11, 18), 'F', 21230, Decimal('500'), ''))  # more than MATCH_DAYS away
         self.assertEqual(match_payments(sheet, [row, far]), [(row, 'TRANSFERENCIA BBVA')])
 
+    def test_matches_a_payment_contabilidad_posted_weeks_later(self):
+        # Oct 9 transfer, posted on Nov 1.
+        row = self.corte_row('B 20335', date(2026, 11, 1), '2086')
+        pairs = match_payments([(date(2026, 10, 9), 'B', 20335, Decimal('2086'), 'TRANSFERENCIA')], [row])
+        self.assertEqual(pairs, [(row, 'TRANSFERENCIA')])
+
 
 class ExportRecentMonthsTests(SimpleTestCase):
     def test_exports_last_month_and_this_month_across_new_year(self):
