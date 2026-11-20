@@ -20,13 +20,11 @@ class CorteDeCajaAdjustment(models.Model):
     MANAGEMENT (this is their shared daily workflow, like the rest of this
     app - not management-only like commissions' override):
     - payment_method: how the money physically came in (efectivo/terminal/
-      cheque/transferencia). NOT derivable from the ERP - checked live
-      against real payment documents and the field that might have hinted
-      at it (CCONDIPAGO) is blank on every row, and the document type that
-      exists for this ("Cheque recibido") isn't actually used in practice.
-      This has to be a human call, same category of gap as commissions'
-      EQ-equipment detection (no signal exists, accepted as a manual input
-      rather than guessed at). Once tagged, the EFECTIVO/TERMINAL/CHEQUE/
+      cheque/transferencia), set on the page or imported from the
+      accountant's own "Corte de caja <year>.xlsx" (from_sheet, see
+      accountant_sheet.py). Without a tag, Comercial's forma de pago
+      (CMETODOPAG) or a suggestion fills it in - see the order in
+      services.py, CORRECTION #3. Once tagged, the EFECTIVO/TERMINAL/CHEQUE/
       TOTAL CORTE cash-drawer totals compute themselves from these tags
       instead of being hand-typed arithmetic like the original sheet.
     - reviewed / note: mark a row checked, leave an observación - the
@@ -67,6 +65,10 @@ class CorteDeCajaAdjustment(models.Model):
     # ERP (ids only - same PII rule as invoice_id, never the client's name).
     client_id = models.IntegerField(null=True, blank=True)
     bank_code = models.CharField(max_length=10, blank=True)
+    # Created by the accountant's-sheet import, which keeps payment_method and
+    # note in sync with her sheet until someone edits the row on the page
+    # (that clears it: the page wins).
+    from_sheet = models.BooleanField(default=False)
     reviewed = models.BooleanField(default=False)
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,

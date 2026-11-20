@@ -217,7 +217,7 @@ def calculate_date_differences(date_from, date_to):
         )
 
     comercial_by_invoice = {}
-    for invoice_id, _, payment_date, applied_date, amount, serie, folio in (
+    for invoice_id, _, payment_date, applied_date, amount, serie, folio, _ in (
         CommissionRepository.fetch_comercial_applications(floor_date)
     ):
         if invoice_id not in facturas_by_id or abs(amount or 0) < LEDGER_FULL_PAYMENT_TOLERANCE:

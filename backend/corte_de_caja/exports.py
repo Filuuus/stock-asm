@@ -26,7 +26,9 @@ BBVA, TERMINAL, the cheque note; blank means cash), with "(SUG.)" on
 payment methods that are only the automatic suggestion.
 
 Like the web dashboard, this only ever reads from the ERP + this app's own
-CorteDeCajaAdjustment table - the old spreadsheet is never read as an input.
+CorteDeCajaAdjustment table. The accountant's own spreadsheet, which she
+still keeps by hand, feeds only payment methods into that table
+(accountant_sheet.py, run right before each refresh).
 """
 
 import calendar

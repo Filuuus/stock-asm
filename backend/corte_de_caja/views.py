@@ -99,6 +99,8 @@ def adjustment_upsert(request):
         )
     if 'note' in data:
         defaults['note'] = data['note'] or ''
+    if 'payment_method' in defaults or 'note' in defaults:
+        defaults['from_sheet'] = False  # edited on the page: the accountant's-sheet import leaves it alone now
     if 'reviewed' in data:
         reviewed = bool(data['reviewed'])
         defaults['reviewed'] = reviewed
@@ -169,7 +171,8 @@ def confirm_suggestions(request):
 @permission_classes([IsAccountingOrManagement])
 def export_now(request):
     """The page's "Actualizar Excel" button: the same regeneration the timer runs every 15 minutes,
-    for a change that can't wait."""
+    for a change that can't wait - minus the accountant's-sheet import (about 20 s, see
+    accountant_sheet.py), which only the timer runs."""
     try:
         return Response({'months': export_recent_months()})
     except OSError:

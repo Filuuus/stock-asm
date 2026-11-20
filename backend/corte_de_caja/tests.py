@@ -19,7 +19,18 @@ from .date_differences import (
     _match_wrong_folios,
     pair_payments,
 )
-from .services import PAYMENT_METHOD_TRANSFERENCIA, _payments_without_poliza, _resolve_ledger_events
+from .accountant_sheet import match_payments, note_method, read_day_sheet
+from .models import CorteDeCajaAdjustment
+from .services import (
+    PAYMENT_METHOD_TRANSFERENCIA,
+    _comercial_method,
+    _payments_without_poliza,
+    _resolve_ledger_events,
+)
+
+EFECTIVO = CorteDeCajaAdjustment.PAYMENT_METHOD_EFECTIVO
+CHEQUE = CorteDeCajaAdjustment.PAYMENT_METHOD_CHEQUE
+TERMINAL = CorteDeCajaAdjustment.PAYMENT_METHOD_TERMINAL
 
 
 def item(day, amount):
@@ -175,9 +186,9 @@ class PaymentsWithoutPolizaTests(SimpleTestCase):
 
     @staticmethod
     def application(invoice_id, day, amount, serie='BBV', folio=19686.0):
-        """(invoice, payment, payment date, applied date, amount, serie, folio)"""
+        """(invoice, payment, payment date, applied date, amount, serie, folio, forma de pago)"""
         when = datetime(day.year, day.month, day.day)
-        return (invoice_id, 77, when, when, amount, serie, folio)
+        return (invoice_id, 77, when, when, amount, serie, folio, '03')
 
     def test_each_row_is_the_amount_applied_to_that_invoice(self):
         # BBV 19686: one $6,666 payment applied to two re-issued invoices.
@@ -199,6 +210,89 @@ class PaymentsWithoutPolizaTests(SimpleTestCase):
         for name, (application, covered) in cases.items():
             with self.subTest(name):
                 self.assertEqual(_payments_without_poliza(self.facturas, [application], covered, *self.period), [])
+
+
+class ComercialMethodTests(SimpleTestCase):
+    event = {'event_date': date(2026, 11, 18), 'amount': Decimal('1753')}
+
+    def test_payment_of_the_same_amount_nearest_in_date(self):
+        payments = [(date(2026, 10, 18), 1753.0, '02'), (date(2026, 11, 17), 1753.0, '01'), (date(2026, 11, 17), 500.0, '03')]
+        self.assertEqual(_comercial_method(self.event, payments), EFECTIVO)
+
+    def test_without_an_amount_match_only_one_shared_method_counts(self):
+        cases = {
+            'every payment by card': ([(date(2026, 11, 17), 900.0, '04'), (date(2026, 11, 17), 853.0, '28')], TERMINAL),
+            'cash and cheque': ([(date(2026, 11, 17), 900.0, '01'), (date(2026, 11, 17), 853.0, '02')], None),
+            'unknown code': ([(date(2026, 11, 17), 1753.0, '99')], None),
+            'no payments': ([], None),
+        }
+        for name, (payments, method) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(_comercial_method(self.event, payments), method)
+
+
+class AccountantSheetTests(SimpleTestCase):
+    def test_notes_as_she_writes_them(self):
+        cases = {
+            '': EFECTIVO, None: EFECTIVO, 'EFECTIVO BBVA': EFECTIVO,
+            'TRANSFERENCIA BBVA': PAYMENT_METHOD_TRANSFERENCIA, 'TRANSFERERENCIA HSBC': PAYMENT_METHOD_TRANSFERENCIA,
+            'trasferencia': PAYMENT_METHOD_TRANSFERENCIA,
+            'TERMINAL D': TERMINAL, 'TERMINAR CR': TERMINAL,
+            'CH-1012 ST': CHEQUE, 'CH-1163 BBVA POSTF 12 ENE 26': CHEQUE,
+            'SALVO BUEN COBRO': None,
+        }
+        for note, method in cases.items():
+            with self.subTest(note):
+                self.assertEqual(note_method(note), method)
+
+    def test_reads_every_payment_row_including_a_second_page_under_the_totals(self):
+        blank = (None,) * 11
+        rows = [
+            ('CORTE DE CAJA COBRANZA GENERAL',) + (None,) * 10,
+            (None, None, datetime(2026, 11, 18)) + (None,) * 8,
+            ('CAPTURA CONTPAQ COMERCIAL',) + (None,) * 10,
+            blank,
+            ('CUENTA', 'NOMBRE DEL CLIENTE', 'No. FACTURA', 'DEBE', 'HABER', 'ENTREGA', 'RECIBE', 'VENCIMIENTO',
+             'COMISION', 'EQ-R-S', 'OBSERVACIONES'),
+            (None, 'ZONA UNO', None, None, None, None, None, None, None, None, None),  # block header
+            ('103-100-001', 'RANCHO EL NOGAL SA', 'B 20517', None, 1732, None, None, None, 'Z-1', 'B'),  # short row
+            ('103-100-002', 'GRANJA LA LOMA', 'F-21230', 'A', 2235.97, None, None, None, 'Z-1', 'R', 'CH-2304 BBVA'),
+            ('103-100-003', 'GRANJA LA LOMA', 'DEV', None, 300, None, None, None, 'Z-1', 'R', None),  # no folio
+            (None, None, None, None, 3967.97, None, None, None, None, None, None),  # block subtotal
+            (None, 'TOTAL EFECTIVO', None, 1732, None, None, None, None, None, None, None),
+            ('CORTE DE CAJA COBRANZA GENERAL',) + (None,) * 10,  # second page on a busy day
+            (None, None, datetime(2026, 11, 18)) + (None,) * 8,
+            ('103-100-004', 'RANCHO EL NOGAL SA', 'B 20999', None, 99, None, None, None, 'Z-1', 'B', 'TRANSFERENCIA BTE'),
+        ]
+        day, payments = read_day_sheet(rows)
+        self.assertEqual(day, date(2026, 11, 18))
+        self.assertEqual(payments, [
+            ('B', 20517, Decimal('1732'), ''), ('F', 21230, Decimal('2235.97'), 'CH-2304 BBVA'),
+            ('B', 20999, Decimal('99'), 'TRANSFERENCIA BTE'),
+        ])
+
+    @staticmethod
+    def corte_row(folio_display, event_date, amount):
+        return {'folio': float(folio_display.split()[1]), 'folio_display': folio_display,
+                'event_date': event_date, 'amount': Decimal(amount)}
+
+    def test_matches_folio_and_amount_on_the_nearest_date(self):
+        # The sheet is dated when the money came in; Contabilidad a day or two later.
+        early, late = self.corte_row('B 20517', date(2026, 11, 19), '1732'), self.corte_row('B 20517', date(2026, 12, 19), '1732')
+        other_series = self.corte_row('F 20517', date(2026, 11, 18), '1732')
+        pairs = match_payments([(date(2026, 11, 18), 'B', 20517, Decimal('1732.40'), '')], [late, other_series, early])
+        self.assertEqual(pairs, [(early, '')])
+
+    def test_each_payment_is_matched_once_and_far_or_different_ones_not_at_all(self):
+        row = self.corte_row('B 20517', date(2026, 11, 19), '1732')
+        sheet = [
+            (date(2026, 11, 18), 'B', 20517, Decimal('1732'), 'TRANSFERENCIA BBVA'),
+            (date(2026, 11, 18), 'B', 20517, Decimal('1732'), ''),  # a second payment of the same amount
+            (date(2026, 11, 18), 'B', 20517, Decimal('1700'), ''),  # different amount
+        ]
+        far = self.corte_row('F 21230', date(2026, 12, 20), '500')
+        sheet.append((date(2026, 11, 18), 'F', 21230, Decimal('500'), ''))  # more than MATCH_DAYS away
+        self.assertEqual(match_payments(sheet, [row, far]), [(row, 'TRANSFERENCIA BBVA')])
 
 
 class ExportRecentMonthsTests(SimpleTestCase):

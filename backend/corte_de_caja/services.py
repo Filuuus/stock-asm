@@ -23,6 +23,7 @@ live against the ERP and confirmed not derivable:
   document: same generic "Pago del cliente" type as every other payment,
   CCONDIPAGO blank on every row, admFormasPago never configured (only the
   default placeholder row), the CFDI payment-complement tables unused.
+  WRONG, see CORRECTION #3: the field is CMETODOPAG, not CCONDIPAGO.
 
 CORRECTION #2 (2026-09-24, same day): the Contabilidad ledger DOES carry a
 real, useful signal here after all - each "PAGO DEL CLIENTE" Poliza has a
@@ -40,6 +41,18 @@ stays False until a human accepts or corrects it, and it still counts
 toward the totals (per the user: populate as many fields as possible,
 minimize manual input, an occasional wrong guess is an acceptable trade for
 not making the accountant tag hundreds of rows by hand).
+
+CORRECTION #3 (2026-11-20): two real sources of the payment method exist.
+- The accountant still writes it by hand in her own workbook, the original
+  "Corte de caja <year>.xlsx" in the Contabilidad folder of the office file
+  server (Compartidos), in OBSERVACIONES. accountant_sheet.py reads it every
+  time the Excel export refreshes and stores it as CorteDeCajaAdjustment rows.
+- Contpaqi Comercial records the SAT "forma de pago" on every customer payment
+  (admDocumentos.CMETODOPAG, see SAT_PAYMENT_FORMS). Checked against 3,688
+  payments tagged from the accountant's sheet: it agrees on 99.3%.
+Order, decided with the user: a method set on the page, then the accountant's
+sheet, then Comercial's forma de pago (all three count as confirmed), then
+the client-history and bank suggestions below (unconfirmed).
 
 Reuses commissions.services directly for everything that IS derivable and
 already verified there: the real-sale/zone-scope filter, the Contabilidad-
@@ -86,9 +99,37 @@ BANK_ACCOUNT_CODE_PREFIX = '100102'
 PAYMENT_METHOD_EFECTIVO = CorteDeCajaAdjustment.PAYMENT_METHOD_EFECTIVO
 PAYMENT_METHOD_TRANSFERENCIA = CorteDeCajaAdjustment.PAYMENT_METHOD_TRANSFERENCIA
 
+# SAT "forma de pago" codes Comercial stores on each customer payment
+# (CMETODOPAG). These five are the only ones used on payments (checked
+# Oct 2025 - Nov 2026); any other code, or a blank one, falls through to the
+# suggestions. Both card codes are "Terminal" on the accountant's sheet.
+SAT_PAYMENT_FORMS = {
+    '01': PAYMENT_METHOD_EFECTIVO,
+    '02': CorteDeCajaAdjustment.PAYMENT_METHOD_CHEQUE,
+    '03': PAYMENT_METHOD_TRANSFERENCIA,
+    '04': CorteDeCajaAdjustment.PAYMENT_METHOD_TERMINAL,  # tarjeta de crédito
+    '28': CorteDeCajaAdjustment.PAYMENT_METHOD_TERMINAL,  # tarjeta de débito
+}
+
 
 def _as_decimal(value):
     return Decimal(str(round(value, 2))) if value is not None else Decimal('0')
+
+
+def _comercial_method(event, payments):
+    """The payment method Comercial recorded for a ledger event, from the
+    Comercial payments applied to its invoice ([(date, amount, form code)]):
+    the payment of the same amount nearest in date (the two systems' dates
+    are often a day or two apart), else the one method all of that invoice's
+    payments share, else None. Checked on Jan - Nov 2026: all but 18 of 4,554
+    events get a method; those are invoices paid in several methods with no
+    amount match.
+    """
+    same_amount = [p for p in payments if abs(p[1] - float(event['amount'])) < LEDGER_FULL_PAYMENT_TOLERANCE]
+    if same_amount:
+        return SAT_PAYMENT_FORMS.get(min(same_amount, key=lambda p: abs((p[0] - event['event_date']).days))[2])
+    methods = {SAT_PAYMENT_FORMS.get(code) for _, _, code in payments}
+    return methods.pop() if len(methods) == 1 else None
 
 
 def _poliza_bank_accounts(ledger_lines, bank_accounts):
@@ -246,7 +287,7 @@ def _payments_without_poliza(facturas, applications, ledger_covered_ids, date_fr
     """
     uncovered = {f['CIDDOCUMENTO']: f for f in facturas if f['CIDDOCUMENTO'] not in ledger_covered_ids}
     payments = []
-    for invoice_id, _payment_id, payment_date, _applied_date, amount, serie, folio in applications:
+    for invoice_id, _payment_id, payment_date, _applied_date, amount, serie, folio, _form in applications:
         comercial_date = payment_date.date()
         f = uncovered.get(invoice_id)
         # Cents-sized amounts are rounding leftovers, not collections
@@ -390,6 +431,10 @@ def calculate_corte_de_caja(date_from, date_to):
 
     applications = CommissionRepository.fetch_comercial_applications(floor_date)
     without_poliza = _payments_without_poliza(facturas, applications, ledger_covered_ids, date_from, date_to)
+    payment_forms = defaultdict(list)  # invoice -> its Comercial payments with their SAT forma de pago
+    for invoice_id, _, payment_date, _, amount, _, _, form in applications:
+        if abs(amount or 0) >= LEDGER_FULL_PAYMENT_TOLERANCE:
+            payment_forms[invoice_id].append((payment_date.date(), amount, form))
 
     all_events = ledger_events
 
@@ -420,16 +465,24 @@ def calculate_corte_de_caja(date_from, date_to):
         adjustment = adjustments.get((event['invoice_id'], event['event_date']))
         excluded = bool(adjustment and adjustment.excluded)
         manual_method = adjustment.payment_method if adjustment else ''
-        # A human-confirmed tag always wins. Otherwise: the client's own
-        # confirmed history when there's enough of it (see the engine above),
-        # then the bank-derived suggestion (see _resolve_ledger_events) as a
-        # low-confidence default - always unconfirmed, but populated, so the
-        # day's totals are usable while the accountant works through the rest.
-        confirmed = bool(manual_method)
+        comercial_method = None if manual_method else _comercial_method(event, payment_forms[event['invoice_id']])
+        # A tag set on the page or imported from the accountant's sheet wins,
+        # then Comercial's forma de pago - all confirmed (see CORRECTION #3).
+        # Otherwise: the client's own confirmed history when there's enough of
+        # it (see the engine above), then the bank-derived suggestion (see
+        # _resolve_ledger_events) as a low-confidence default - always
+        # unconfirmed, but populated, so the day's totals are usable while the
+        # accountant works through the rest.
+        confirmed = bool(manual_method or comercial_method)
         suggestion_confidence = None
-        suggestion_reason = ''
+        suggestion_reason = ''  # also says where an automatic confirmed method came from (page tooltip)
         if manual_method:
             payment_method = manual_method
+            if adjustment.from_sheet:
+                suggestion_reason = 'Tomada de la hoja "Corte de caja" de Contabilidad.'
+        elif comercial_method:
+            payment_method = comercial_method
+            suggestion_reason = 'Forma de pago registrada en Contpaqi Comercial.'
         else:
             prediction = _predict_method(
                 factura['CIDCLIENTEPROVEEDOR'], _bank_code(event['bank']), factura['CRAZONSOCIAL'], history,
