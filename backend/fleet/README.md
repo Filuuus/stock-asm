@@ -24,6 +24,14 @@ Both commands are safe to re-run:
 
 Nothing is lost when a month is closed: before archiving, `close_fleet_month` copies every daily page's km and stops into the local database (as `store_fleet_km --from-notion` does), and it archives a page only if that vehicle's day is stored locally. Pages it can't match (a vehicle name with no card) stay in Notion, and the log says so.
 
+**`build_route_sheets`** (nightly, after `store_fleet_km`) writes the month's route sheets to `ROUTE_SHEETS_EXPORT_DIR/<year>/Hojas de ruta YYYY-MM.xlsx` (the shared Auto folder on the server), up to yesterday, and rebuilds the whole month each night so the day before picks up the invoices entered that morning (`route_sheets.py`):
+
+- **ZONA 1 / ZONA 2**: each salesman's day, from the truck whose stops that zone invoiced (one truck per salesman per day). Every stop with its client (only the clients of a shared place who were invoiced from the day before to two days after, all of them when none were), sale and folios, or what the place is; unknown stops under 3 minutes are left out as driving pauses, longer ones suggest clients invoiced around that day whose town is within 6 km.
+- **SERVICIOS**: the service crew's day (`FLEET_SERVICE_IMEI`, or another truck on a day the crew's truck visited none of its calendar's clients and that one did), with each stop's activity from the crew's Notion calendar (`NOTION_SERVICE_TASKS_DB`) and its service invoice (product `0000 SERVICIO` / `0004 SERVICIO DE EMERGENCIA` from the SERVICIOS agent, or with no part description, since `0000` is also a generic code for parts). Calendar tasks with no stop are listed under the day.
+- **OTRAS UNIDADES**: every other truck's day. **PENDIENTES**: the stops nobody has identified yet; the answers are saved as places (`kind='spot'`) and show up from the next run.
+
+Names come live from the ERP and the saved places. The paper route sheets, when scanned, are still compared by hand (`reportes/`).
+
 ## Notion setup
 
 1. Create an integration at [Notion Developers](https://www.notion.so/my-integrations) with read and write access.
@@ -52,6 +60,9 @@ ZEEK_LICENSE=
 ZEEK_FLEET="IMEI=notion_vehicle_card_id;IMEI=notion_vehicle_card_id"
 NOTION_TOKEN=
 NOTION_FLEET_LOG_DB=
+NOTION_SERVICE_TASKS_DB=      # the service crew's calendar (Tareas)
+FLEET_SERVICE_IMEI=           # the service crew's GPS unit
+ROUTE_SHEETS_EXPORT_DIR=      # where build_route_sheets writes (the shared Auto folder)
 ```
 
 `ZEEK_FLEET` lists each vehicle's GPS unit IMEI (the Zeek unit id) and its Notion card's page id, separated by `;`. To add a vehicle, create its card in Notion, invite the integration to it, and add an `IMEI=page_id` pair.
@@ -72,11 +83,12 @@ venv/bin/python manage.py close_fleet_month --year 2026 --month 9
 venv/bin/python manage.py store_fleet_km                       # yesterday's km per unit into the local DB
 venv/bin/python manage.py store_fleet_km --from 2026-10-02 --to 2026-10-09
 venv/bin/python manage.py store_fleet_km --from-notion         # rescue stops of days Zeek no longer has
+venv/bin/python manage.py build_route_sheets                   # this month's route sheets (--year/--month for another)
 ```
 
 `store_fleet_km` reads Zeek directly (not Notion) and saves each unit's km per day in `VehicleDayKm`, 0 when it didn't move, and its stops (where each leg ended, until it moved on; `engine_on` for the stops inside a trip) in `VehicleStop`; a unit Zeek fails to answer for gets no row, so gaps show. Re-running replaces a stored day only with at least as many km: Zeek sometimes answers with no trips, or only part of the day, for a unit that did move (a late upload, or a day already trimming out of its window), and that must not erase what's stored. **Zeek keeps only about the last six days**, so these tables are the only long-term record: run it at least every few days. For days Zeek has already dropped, `--from-notion` reads the stops from the daily log pages instead (only until `close_fleet_month` archives them), leaving days already stored from Zeek alone.
 
-On the office server these run from systemd timers in `deploy/` (installed by `deploy/install-services.sh`): `store_fleet_km` then `sync_fleet_log` every night at 00:10 for the day that just ended, re-checking the day before for trips Zeek reported late, and `close_fleet_month` on the 1st at 01:00, after the daily job has logged the month's last day. A trip still under way at that hour (a late emergency call) isn't finished when the day is logged. The next night's re-check adds a vehicle Zeek hadn't reported at all and updates the local km to the fuller number, but a vehicle already logged in Notion for that day isn't rewritten there. A run missed while the server was off happens when it's back. Logs: `journalctl -u agrostma-fleet-daily` (or `-monthly`).
+On the office server these run from systemd timers in `deploy/` (installed by `deploy/install-services.sh`): `store_fleet_km`, `build_route_sheets` and `sync_fleet_log` every night at 00:10 for the day that just ended, re-checking the day before for trips Zeek reported late, and `close_fleet_month` on the 1st at 01:00, after the daily job has logged the month's last day. A trip still under way at that hour (a late emergency call) isn't finished when the day is logged. The next night's re-check adds a vehicle Zeek hadn't reported at all and updates the local km to the fuller number, but a vehicle already logged in Notion for that day isn't rewritten there. A run missed while the server was off happens when it's back. Logs: `journalctl -u agrostma-fleet-daily` (or `-monthly`).
 
 Only one copy may write the Notion log: `sync_fleet_log` skips vehicles already logged that day, but another script that doesn't check would add the same day twice and double the odometer.
 
@@ -88,6 +100,7 @@ Days are calendar days in Mexico's fixed UTC-6. Mexico has had no daylight savin
 - `timeline.py`: a day's trips as legs and stops, including the engine-on ones.
 - `matching.py`: what a stop was, from `profitability.SavedPlace`: client places, company sites (`kind='base'`) and identified spots (`kind='spot'`, `personal` for homes). Bookmarks nobody checked and town-level pins never name a stop. The route-sheet reviews use the same matcher.
 - `notion.py`: the Notion API, the daily page's callouts, and reading them back into stops (old pages without 🟡 read the same way).
+- `route_sheets.py`: the monthly route sheets (ZONA 1, ZONA 2, SERVICIOS, OTRAS UNIDADES, PENDIENTES).
 - `services.py`: the jobs (local km and stops, the daily Notion log and its rewrite and re-naming, the monthly close).
 - `management/commands/`: the three commands.
 - `tests.py`: covers coordinate and time parsing, legs and engine-on stops, naming, writing and reading back callouts, and the monthly close's archive order. It uses made-up data and never calls Zeek, Notion or the ERP.

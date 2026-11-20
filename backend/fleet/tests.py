@@ -1,6 +1,6 @@
 """Tests for the fleet GPS log's pure functions, on made-up Zeek/Notion data."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -10,6 +10,7 @@ from profitability.models import SavedPlace
 
 from .matching import StopMatcher
 from .notion import day_blocks, notion_stops, renamed, stop_name
+from .route_sheets import Month, build_workbook, service_invoices, town
 from .services import close_month, store_km, summarize_month
 from .timeline import legs, stops
 from .zeek import LOCAL_TZ, parse_zeek_trips, zeek_coord, zeek_time
@@ -238,3 +239,80 @@ class NotionStopsTests(SimpleTestCase):
         read = notion_stops(date(2025, 10, 1), blocks)
         self.assertEqual([(s['arrive'], s['engine_on']) for s in read], [(s['arrive'], s['engine_on']) for s in stops(day)])
         self.assertEqual(read[0]['leave'], day[0]['leave'])
+
+
+class FakeErp:
+    def __init__(self, invoices=(), zone_of=None):
+        self.clients = {7: ('C-7', 'ANA'), 8: ('C-8', 'BETO'), 9: ('C-9', 'CRUZ')}
+        self.towns, self.zone_of = {}, zone_of or {7: 1, 8: 1, 9: 1}
+        self.invoices, self.service_invoices = list(invoices), []
+
+    def sold(self, cid, day, before=1, after=2):
+        return [x for x in self.invoices if x[0] == cid and (day - x[1]).days <= before and (x[1] - day).days <= after]
+
+    def name(self, cid):
+        return self.clients[cid][1]
+
+
+def stop(imei, hour, minute, minutes, lat, lng=-102.0, day=date(2026, 11, 3), engine_on=False):
+    arrive = datetime(day.year, day.month, day.day, hour, minute, tzinfo=LOCAL_TZ)
+    return VehicleStop(imei=imei, day=day, arrive=arrive, leave=arrive + timedelta(minutes=minutes), lat=lat, lng=lng,
+                       engine_on=engine_on, source='zeek')
+
+
+@override_settings(FLEET_SERVICE_IMEI='crew')
+class RouteSheetTests(SimpleTestCase):
+    places = [place('Oficina', 20.0, -102.0, kind='base'), place('Rancho', 20.1, -102.0, [7, 8]),
+              place('Lejos', 20.3, -102.0, [9])]
+    day = date(2026, 11, 3)
+
+    def month(self, stops, invoices=(), tasks=()):
+        return Month(self.day, self.day, {}, erp=FakeErp(invoices), tasks=list(tasks), places=self.places, stops=stops, km={})
+
+    def test_rows_skip_sites_and_pauses_name_invoiced_clients_and_join_split_visits(self):
+        m = self.month([stop('t1', 8, 0, 30, 20.0), stop('t1', 9, 0, 1, 20.2), stop('t1', 10, 0, 20, 20.1),
+                        stop('t1', 10, 22, 10, 20.1001), stop('t1', 11, 0, 30, 20.25)],
+                       invoices=[(8, self.day + timedelta(days=1), 500.0, 'B1', 1)])
+        rows = m.visit_rows(self.day, 't1')
+        self.assertEqual([(r['arrive'].hour, r['cids']) for r in rows], [(10, [8]), (11, [])])  # office, 1-min pause gone
+        self.assertEqual(rows[0]['leave'].minute, 32)   # the 10:22 stop at the same client is the same visit
+        self.assertEqual((rows[0]['sale'], rows[0]['folios']), (500.0, 'B1'))
+        self.assertIn('mismo lugar: 2 clientes', rows[0]['obs'])
+        self.assertIn('Sin cliente', rows[1]['obs'])
+
+    def test_salesman_truck_is_the_one_his_invoices_point_to(self):
+        m = self.month([stop('t1', 10, 0, 20, 20.1), stop('t2', 10, 0, 20, 20.3), stop('t2', 12, 0, 20, 20.1)],
+                       invoices=[(9, self.day, 100.0, 'B2', 1)])
+        forms, route = m.routes()
+        self.assertEqual(route, {('ZONA 1', self.day): 't2'})
+        self.assertEqual(set(forms), {(self.day, 't1'), (self.day, 't2')})
+
+    def test_crew_took_another_truck_when_its_own_visited_no_calendar_client(self):
+        task = {'start': self.day, 'end': self.day, 'title': 'Tapetes', 'cids': [9], 'state': 'Listo'}
+        m = self.month([stop('crew', 9, 0, 30, 20.0), stop('t2', 11, 0, 60, 20.3)], tasks=[task])
+        self.assertEqual(m.crew_units(self.day), {'crew', 't2'})
+        self.assertEqual(m.routes()[0], {})  # the crew's trucks are not sales routes
+        m = self.month([stop('crew', 11, 0, 60, 20.3), stop('t2', 11, 0, 60, 20.3)], tasks=[task])
+        self.assertEqual(m.crew_units(self.day), {'crew'})
+
+    def test_service_invoices_keep_labor_and_drop_parts_under_the_generic_code(self):
+        lines = [(1, 7, self.day, 900.0, 'B', 1, 5, '0000', 'BOMBA 2 HP'),   # the SERVICIOS agent: always a service
+                 (2, 8, self.day, 300.0, '', 2, 2, '0000', 'SOPORTE'),        # a zone selling a part: not a service
+                 (3, 8, self.day, 400.0, '', 3, 2, '0000', ''),               # no description: labor
+                 (4, 9, self.day, 999.0, '', 4, 1, '0004', '')]
+        found = service_invoices(lines)
+        self.assertEqual([(x['folio'], x['concept']) for x in found],
+                         [('B1', ['BOMBA 2 HP']), ('3', ['SERVICIO']), ('4', ['SERVICIO DE EMERGENCIA'])])
+
+    def test_workbook_has_every_sheet_and_lists_unknown_stops_as_pending(self):
+        m = self.month([stop('t1', 10, 0, 20, 20.1), stop('t1', 11, 0, 30, 20.25)],
+                       invoices=[(7, self.day, 100.0, 'B3', 1)])
+        wb = build_workbook(m)
+        self.assertEqual(wb.sheetnames, ['PENDIENTES', 'ZONA 1', 'ZONA 2', 'SERVICIOS', 'OTRAS UNIDADES'])
+        self.assertEqual(wb['PENDIENTES'].max_row, 3)  # title, header, the 11:00 stop
+        self.assertIn('ANA', [c.value for c in wb['ZONA 1'][4]])
+
+    def test_town_names_once_when_city_and_municipality_match(self):
+        self.assertEqual(town('Valle de Juarez', 'VALLE DE JUÁREZ'), 'VALLE DE JUAREZ')
+        self.assertEqual(town('Cerro Gordo', 'Tepatitlán de Morelos'), 'CERRO GORDO - TEPATITLÁN DE MORELOS')
+        self.assertEqual(town(None, ' '), '')
