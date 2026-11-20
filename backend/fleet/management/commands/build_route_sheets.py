@@ -14,7 +14,8 @@ class Command(BaseCommand):
         'Writes the monthly route sheets (ZONA 1, ZONA 2, SERVICIOS, OTRAS UNIDADES, PENDIENTES) from the GPS stops '
         'and the ERP to ROUTE_SHEETS_EXPORT_DIR/<year>/, up to yesterday. Defaults to yesterday\'s month, plus the '
         'month before during the first days of a month (its last days\' invoices are entered late). Run after '
-        'store_fleet_km; each run overwrites the file.'
+        'store_fleet_km. Before rewriting a month\'s file it saves what was typed in its PENDIENTES (¿QUÉ ES?) as places, '
+        'so those stops come out named.'
     )
 
     def add_arguments(self, parser):
@@ -33,6 +34,7 @@ class Command(BaseCommand):
         units = {imei: page_title(notion('GET', f'pages/{card}')) for imei, card in settings.ZEEK_FLEET.items()}
         for year, month in months:
             try:
-                self.stdout.write(f'Escrito {export_month(year, month, units)}')
+                path, learned = export_month(year, month, units)
+                self.stdout.write(f'Escrito {path}' + (f' ({learned} respuestas de PENDIENTES guardadas)' if learned else ''))
             except ExportFileInUse:
                 self.stderr.write(f'{year}-{month:02d}: el archivo está abierto en Excel; se actualizará en la siguiente corrida.')

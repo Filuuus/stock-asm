@@ -28,7 +28,7 @@ Nothing is lost when a month is closed: before archiving, `close_fleet_month` co
 
 - **ZONA 1 / ZONA 2**: each salesman's day, from the truck whose stops that zone invoiced (one truck per salesman per day). Every stop with its client (only the clients of a shared place who were invoiced from the day before to two days after, all of them when none were), sale and folios, or what the place is; unknown stops under 3 minutes are left out as driving pauses, longer ones suggest clients invoiced around that day whose town is within 6 km.
 - **SERVICIOS**: the service crew's day (`FLEET_SERVICE_IMEI`, or another truck on a day the crew's truck visited none of its calendar's clients and that one did), with each stop's activity from the crew's Notion calendar (`NOTION_SERVICE_TASKS_DB`) and its service invoice (product `0000 SERVICIO` / `0004 SERVICIO DE EMERGENCIA` from the SERVICIOS agent, or with no part description, since `0000` is also a generic code for parts). Calendar tasks with no stop are listed under the day.
-- **OTRAS UNIDADES**: every other truck's day. **PENDIENTES**: the stops nobody has identified yet; the answers are saved as places (`kind='spot'`) and show up from the next run.
+- **OTRAS UNIDADES**: every other truck's day. **PENDIENTES**: the stops nobody has identified yet, with a ¿QUÉ ES? column to type into (the workbook isn't locked). Before rewriting a month's file, each run saves those answers as places: an ERP client's code or exact name makes it a place of that client, anything else names the spot (`kind='spot'`; "Casa ..." is personal). The stop comes out named in that same run.
 
 Names come live from the ERP and the saved places. The paper route sheets, when scanned, are still compared by hand (`reportes/`).
 
