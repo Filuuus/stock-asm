@@ -360,13 +360,14 @@ def export_month(year, month, output_dir=None):
     return save_report(build_month_workbook(year, month), output_dir, f'Corte de Caja {year}-{month:02d}.xlsx')
 
 
-def save_report(wb, output_dir, filename):
-    """Saves a generated report into the shared folder: sheets protected, written to a temp file and then
-    swapped in, raising ExportFileInUse when someone has the old one open in Excel. Also used by Comisiones."""
+def save_report(wb, output_dir, filename, protect=True):
+    """Saves a generated report into the shared folder: sheets protected (unless `protect` is False, for a
+    workbook people type into, like the route sheets' PENDIENTES), written to a temp file and then swapped in,
+    raising ExportFileInUse when someone has the old one open in Excel. Also used by Comisiones and the route sheets."""
     # The workbook is a report, not a form: changes go through the website. Protection without a
     # password only stops accidental typing; the folder's Windows permissions are what make it read-only.
     for ws in wb.worksheets:
-        ws.protection.sheet = True
+        ws.protection.sheet = protect
     path = output_dir / filename
 
     # Write to a temp file then replace, so a run never leaves a half-written workbook in the folder.

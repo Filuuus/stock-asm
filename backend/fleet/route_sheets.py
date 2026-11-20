@@ -23,13 +23,13 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import connections
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from profitability.models import SavedPlace
 from profitability.places import territory
 
-from .matching import CLIENT_M, StopMatcher
+from .matching import CLIENT_M, SPOT_M, StopMatcher
 from .models import VehicleDayKm, VehicleStop
 from .notion import notion, notion_query, page_title
 from .timeline import meters
@@ -435,25 +435,95 @@ def _pending_row(sheet, month, day, rows, n, obs):
             maps(r['s'].lat, r['s'].lng)]
 
 
+ANSWER = '¿QUÉ ES?'
+PERSONAL = ('casa ', 'ludoteca')  # a home: the Notion log shows only "Parada personal"
+
+
 def _pending_sheet(ws, pending):
-    ws.append(['Paradas sin cliente ni nombre todavía. Se pueden identificar después; las respuestas se guardan por ubicación.'])
+    ws.append(['Paradas sin cliente ni nombre todavía. Escribe en ¿QUÉ ES? qué es (un nombre, o la clave o el nombre '
+               'del cliente en el sistema) y guarda: esa noche se aprende el lugar y la parada sale con su nombre.'])
     _header(ws, ['#', 'HOJA', 'FECHA', 'UNIDAD', 'LLEGADA', 'SALIDA', 'MIN', 'PARADA ANTERIOR', 'PARADA SIGUIENTE',
-                 'OBSERVACIONES', 'MAPA'])
+                 'OBSERVACIONES', 'MAPA', ANSWER])
     for i, (sheet, day, unit, arrive, leave, dwell, before, after, obs, link) in enumerate(
             sorted(pending, key=lambda x: (x[1], x[3])), 1):
-        ws.append([i, sheet, f'{day:%d/%m/%Y}', unit, arrive, leave, dwell, before, after, obs, 'Ver mapa'])
+        ws.append([i, sheet, f'{day:%d/%m/%Y}', unit, arrive, leave, dwell, before, after, obs, 'Ver mapa', None])
         ws.cell(ws.max_row, 11).hyperlink = link
-    for i, w in enumerate([5, 16, 11, 18, 8, 8, 6, 40, 40, 60, 10]):
+    for i, w in enumerate([5, 16, 11, 18, 8, 8, 6, 40, 40, 60, 10, 34]):
         ws.column_dimensions[chr(65 + i)].width = w
     ws.freeze_panes = 'A3'
 
 
+# --- answers typed into PENDIENTES ---------------------------------------------------------------------------------
+
+def read_answers(path):
+    """(lat, lng, text) for every ¿QUÉ ES? typed in a route-sheet workbook's PENDIENTES, located by its map link."""
+    try:
+        ws = load_workbook(path)['PENDIENTES']
+    except (OSError, KeyError, ValueError):  # missing, not a workbook, or no PENDIENTES sheet
+        return []
+    cols = {c.value: c.column for c in ws[2]}
+    if ANSWER not in cols or 'MAPA' not in cols:
+        return []
+    found = []
+    for row in ws.iter_rows(min_row=3):
+        text, link = row[cols[ANSWER] - 1].value, row[cols['MAPA'] - 1].hyperlink
+        if text is not None and str(text).strip() and link and 'q=' in (link.target or ''):
+            lat, lng = map(float, link.target.split('q=')[1].split(','))
+            found.append((lat, lng, str(text).strip()))
+    return found
+
+
+def _plain(text):
+    return ' '.join(unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode().upper().split())
+
+
+def save_answers(answers, clients):
+    """Learns each typed answer as a place at that stop. An ERP client, by code or by its exact name (accents and
+    case aside, only when one client has it), becomes a place of that client; anything else names the spot,
+    renaming one already saved within SPOT_M ("Casa ..." marked personal). Returns how many were saved."""
+    by_code = {code.strip().upper(): k for k, (code, _) in clients.items() if code}
+    by_name = defaultdict(list)
+    for k, (_, name) in clients.items():
+        if name:
+            by_name[_plain(name)].append(k)
+    spots = list(SavedPlace.objects.filter(kind='spot').exclude(lat=None))
+    saved = 0
+    for lat, lng, text in answers:
+        cid = by_code.get(text.upper()) or (by_name[_plain(text)][0] if len(by_name.get(_plain(text), [])) == 1 else None)
+        if cid:
+            if SavedPlace.objects.filter(url=f'hoja:{lat:.5f},{lng:.5f}', client_ids=[cid]).exists():
+                continue  # learned on an earlier night (the file still had the answer)
+            SavedPlace.objects.update_or_create(url=f'hoja:{lat:.5f},{lng:.5f}', defaults=dict(
+                name=clients[cid][1], list_name='Hojas de ruta', lat=lat, lng=lng, client_ids=[cid], matched_by='manual',
+                kind=''))
+            saved += 1
+            continue
+        personal = text.lower().startswith(PERSONAL)
+        near = min(((meters(lat, lng, p.lat, p.lng), p) for p in spots), key=lambda x: x[0], default=None)
+        if near and near[0] <= SPOT_M:
+            if (near[1].name, near[1].personal) != (text, personal):
+                near[1].name, near[1].personal = text, personal
+                near[1].save()
+                saved += 1
+        else:
+            spots.append(SavedPlace.objects.create(url=f'gps:{lat:.5f},{lng:.5f}', name=text, list_name='Hojas de ruta',
+                                                   lat=lat, lng=lng, client_ids=[], matched_by='manual', kind='spot',
+                                                   personal=personal))
+            saved += 1
+    return saved
+
+
 def export_month(year, month_number, unit_names, output_dir=None, today=None):
-    """Writes the month's route sheets, up to yesterday, to <ROUTE_SHEETS_EXPORT_DIR>/<year>/."""
+    """Learns what was typed into the month's PENDIENTES, then rewrites the month's route sheets, up to yesterday,
+    in <ROUTE_SHEETS_EXPORT_DIR>/<year>/. Returns (path, answers learned)."""
     from corte_de_caja.exports import save_report
     today = today or datetime.now(LOCAL_TZ).date()
     first = date(year, month_number, 1)
     last = min((first + timedelta(days=32)).replace(day=1) - timedelta(days=1), today - timedelta(days=1))
     output_dir = Path(output_dir or settings.ROUTE_SHEETS_EXPORT_DIR) / str(year)
     output_dir.mkdir(parents=True, exist_ok=True)
-    return save_report(build_workbook(Month(first, last, unit_names)), output_dir, f'Hojas de ruta {year}-{month_number:02d}.xlsx')
+    filename = f'Hojas de ruta {year}-{month_number:02d}.xlsx'
+    erp = Erp(first, last)
+    learned = save_answers(read_answers(output_dir / filename), erp.clients)
+    wb = build_workbook(Month(first, last, unit_names, erp=erp))
+    return save_report(wb, output_dir, filename, protect=False), learned

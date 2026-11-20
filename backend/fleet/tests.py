@@ -10,7 +10,7 @@ from profitability.models import SavedPlace
 
 from .matching import StopMatcher
 from .notion import day_blocks, notion_stops, renamed, stop_name
-from .route_sheets import Month, build_workbook, calendar_guesses, service_invoices, town
+from .route_sheets import Month, build_workbook, calendar_guesses, read_answers, save_answers, service_invoices, town
 from .services import close_month, store_km, summarize_month
 from .timeline import legs, stops
 from .zeek import LOCAL_TZ, parse_zeek_trips, zeek_coord, zeek_time
@@ -343,3 +343,34 @@ class RouteSheetTests(SimpleTestCase):
         rows = m.visit_rows(self.day, 't1')
         self.assertEqual([(r['sale'], r['folios']) for r in rows], [(100.0, 'B4'), (None, '')])
         self.assertIn('venta en la parada anterior', rows[1]['obs'])
+
+
+class PendingAnswersTests(TestCase):
+    clients = {7: ('900-000-001', 'ÁNGEL ÚRSULA MUÑOZ'), 8: ('900-000-002', 'JUAN PEREZ'), 9: ('900-000-003', 'JUAN PEREZ')}
+
+    def test_typed_answers_become_client_places_or_named_spots(self):
+        import tempfile
+        from pathlib import Path
+        from profitability.models import SavedPlace
+        SavedPlace.objects.create(url='gps:20.50000,-102.00000', name='', lat=20.5, lng=-102.0, kind='spot', list_name='x')
+        wb = build_workbook(RouteSheetTests.month(RouteSheetTests(), [stop('t1', 11, 0, 30, 20.25)]))
+        ws = wb['PENDIENTES']
+        self.assertEqual(ws.cell(2, 12).value, '¿QUÉ ES?')
+        ws.cell(3, 12).value = 'angel ursula munoz'                  # a client, by name (accents, case aside)
+        for lat, text in ((20.3, '900-000-002'), (20.5001, 'Casa de Fulano'), (20.7, 'JUAN PEREZ'), (20.8, '  ')):
+            ws.append([None] * 10 + ['Ver mapa', text])
+            ws.cell(ws.max_row, 11).hyperlink = f'https://maps.google.com/?q={lat:.5f},-102.00000'
+        with tempfile.TemporaryDirectory() as d:
+            wb.save(Path(d) / 'h.xlsx')
+            answers = read_answers(Path(d) / 'h.xlsx')
+        self.assertEqual(len(answers), 4)                            # the blank one is skipped
+        self.assertEqual(save_answers(answers, self.clients), 4)
+        places = {p.url: (p.kind, p.client_ids, p.name, p.personal) for p in SavedPlace.objects.all()}
+        self.assertEqual(places['hoja:20.25000,-102.00000'], ('', [7], 'ÁNGEL ÚRSULA MUÑOZ', False))
+        self.assertEqual(places['hoja:20.30000,-102.00000'][1], [8])                    # by code
+        self.assertEqual(places['gps:20.50000,-102.00000'], ('spot', [], 'Casa de Fulano', True))  # renamed, personal
+        self.assertEqual(places['gps:20.70000,-102.00000'][:3], ('spot', [], 'JUAN PEREZ'))  # two clients: just a name
+        self.assertEqual(save_answers(answers, self.clients), 0)    # the same file again: nothing new
+
+    def test_a_missing_or_foreign_file_has_no_answers(self):
+        self.assertEqual(read_answers('/nonexistent/h.xlsx'), [])
