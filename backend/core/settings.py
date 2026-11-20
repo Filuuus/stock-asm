@@ -258,3 +258,6 @@ PUBLIC_SITE_URL = os.getenv('PUBLIC_SITE_URL', 'https://agrostma.com')
 QUOTE_CONTACT_PHONE = os.getenv('QUOTE_CONTACT_PHONE', '')
 
 VEHICLE_REPORTS_DIR = os.getenv('VEHICLE_REPORTS_DIR', '')
+# Folder with the accountant's own "Corte de caja <year>.xlsx", where she still writes each payment's method
+# (corte_de_caja/accountant_sheet.py): her Contabilidad folder, the same as the vehicle reports'. Empty = skipped.
+CORTE_DE_CAJA_SHEET_DIR = os.getenv('CORTE_DE_CAJA_SHEET_DIR', VEHICLE_REPORTS_DIR)

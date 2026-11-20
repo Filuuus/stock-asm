@@ -349,7 +349,7 @@ export default function CorteDeCajaView() {
         title={
           row.payment_method && !row.payment_method_confirmed
             ? `Sin confirmar - ${row.suggestion_reason}`
-            : undefined
+            : row.suggestion_reason || undefined // where an automatic confirmed method came from (sheet, Comercial)
         }
       >
         <option value="">Sin clasificar</option>

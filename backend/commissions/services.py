@@ -278,13 +278,16 @@ class CommissionRepository:
         invoices is split per invoice. Only customer payments (Pago del
         cliente); credit notes and returns are applied here too but aren't
         cash. Rows: (invoice_id, payment_id, payment_date, applied_date,
-        amount, payment_series, payment_folio).
+        amount, payment_series, payment_folio, payment_form) - payment_form is
+        the payment's SAT "forma de pago" code (CMETODOPAG: '01' efectivo,
+        '02' cheque, '03' transferencia, '04'/'28' tarjeta), see
+        corte_de_caja.services.SAT_PAYMENT_FORMS.
         """
         with connections['erp'].cursor() as cursor:
             cursor.execute(
                 """
                 SELECT a.CIDDOCUMENTOCARGO, a.CIDDOCUMENTOABONO, ab.CFECHA, a.CFECHAABONOCARGO,
-                       a.CIMPORTEABONO, LTRIM(RTRIM(ab.CSERIEDOCUMENTO)), ab.CFOLIO
+                       a.CIMPORTEABONO, LTRIM(RTRIM(ab.CSERIEDOCUMENTO)), ab.CFOLIO, LTRIM(RTRIM(ab.CMETODOPAG))
                 FROM admAsocCargosAbonos a
                 JOIN admDocumentos ab ON ab.CIDDOCUMENTO = a.CIDDOCUMENTOABONO
                 WHERE ab.CIDDOCUMENTODE = %s AND ab.CCANCELADO = 0 AND ab.CFECHA >= %s
@@ -886,7 +889,7 @@ def calculate_commissions(date_from, date_to, lookback_days=DEFAULT_LOOKBACK_DAY
     # them long past the point of earning anything); older ones are in the
     # Corte de Caja's Discrepancias tab.
     last_comercial_payment = {}
-    for invoice_id, _, payment_date, _, amount, _, _ in CommissionRepository.fetch_comercial_applications(floor_date):
+    for invoice_id, _, payment_date, _, amount, _, _, _ in CommissionRepository.fetch_comercial_applications(floor_date):
         if abs(amount or 0) >= LEDGER_FULL_PAYMENT_TOLERANCE:
             day = payment_date.date()
             last_comercial_payment[invoice_id] = max(last_comercial_payment.get(invoice_id, day), day)
