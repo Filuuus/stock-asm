@@ -1,5 +1,5 @@
 [Unit]
-Description=stock-asm fleet GPS: yesterday's km and stops to the local database, and the Notion daily log
+Description=stock-asm fleet GPS: yesterday's km and stops to the local database, the route sheets, and the Notion daily log
 After=network-online.target
 Wants=network-online.target
 
@@ -11,4 +11,7 @@ UMask=0002
 WorkingDirectory=/srv/agrostma/app/backend
 # Local km first (Zeek keeps only ~6 days); "-" so a failure there still lets the Notion log run.
 ExecStart=-/srv/agrostma/app/backend/venv/bin/python manage.py store_fleet_km
+# Route sheets from the stops just stored, to the shared Auto folder; "-" so a locked file or an ERP hiccup
+# doesn't stop the Notion log.
+ExecStart=-/srv/agrostma/app/backend/venv/bin/python manage.py build_route_sheets
 ExecStart=/srv/agrostma/app/backend/venv/bin/python manage.py sync_fleet_log

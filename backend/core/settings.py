@@ -245,6 +245,9 @@ NOTION_FLEET_LOG_DB = os.getenv('NOTION_FLEET_LOG_DB', '')
 NOTION_CLIENTS_DB = os.getenv('NOTION_CLIENTS_DB', '')
 # The crew's calendar (Tareas): approved Servicios quotes become tasks there (maintenance/notion_tasks.py).
 NOTION_SERVICE_TASKS_DB = os.getenv('NOTION_SERVICE_TASKS_DB', '')
+# The service crew's truck (its GPS unit's IMEI) and where the monthly route sheets go (fleet/route_sheets.py).
+FLEET_SERVICE_IMEI = os.getenv('FLEET_SERVICE_IMEI', '')
+ROUTE_SHEETS_EXPORT_DIR = os.getenv('ROUTE_SHEETS_EXPORT_DIR', str(BASE_DIR / 'exports' / 'hojas_de_ruta'))
 # The public site, for the client's quote link in those tasks (opens anywhere, unlike the office site).
 PUBLIC_SITE_URL = os.getenv('PUBLIC_SITE_URL', 'https://agrostma.com')
 
