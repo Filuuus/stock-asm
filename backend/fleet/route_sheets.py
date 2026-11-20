@@ -223,6 +223,9 @@ class Month:
             if prev and row['cids'] and prev['cids'] == row['cids'] and prev['leave'] and s.arrive - prev['leave'] <= SAME_VISIT:
                 prev['leave'] = s.leave
                 continue
+            if row['folios'] and any(r['folios'] == row['folios'] for r in rows):
+                # the same client again that day (delivering at one stop, collecting at another): the sale once
+                row.update(sale=None, folios='', obs=row['obs'] + '; venta en la parada anterior')
             rows.append(row)
         return rows
 
@@ -356,22 +359,30 @@ def _service_block(ws, month, day, pending):
     for c in ws[ws.max_row - 1] + ws[ws.max_row]:
         c.font = BOLD
     _header(ws, SERVICE_COLS)
-    today, done = month.on(day), set()
+    today = month.on(day)
+    invoiced = lambda r: [x for x in month.erp.service_invoices if x['cid'] in r['cids']
+                          and day <= x['day'] <= day + timedelta(days=SERVICE_INVOICE_DAYS)]
+    done = {id(t) for r in rows for t in today if set(t['cids']) & set(r['cids'])}
+    any_invoice = lambda r: [x for c in r['cids'] for x in month.erp.sold(c, day, 1, SERVICE_INVOICE_DAYS)]
+    guesses = calendar_guesses([t for t in today if id(t) not in done], rows, today, any_invoice)
     for n, r in enumerate(rows, 1):
         s, f = r['s'], r['found']
         task = [t for t in today if set(t['cids']) & set(r['cids'])]
-        done.update(id(t) for t in task)
-        inv = [x for x in month.erp.service_invoices if x['cid'] in r['cids']
-               and day <= x['day'] <= day + timedelta(days=SERVICE_INVOICE_DAYS)]
+        inv = invoiced(r)
         obs = (f"{'Cliente' if r['cids'] else 'Lugar'} a {f['meters']} m" if f else
                f"Sin cliente (lugar conocido más cercano a "
                f"{min((meters(s.lat, s.lng, p.lat, p.lng) for p in month.matcher.clients), default=0) / 1000:.1f} km)")
         if r['engine_on']:
             obs += '; con motor encendido'
+        guess = guesses.get(id(r))
+        if guess:
+            done.add(id(guess))
+            obs += f"; según el calendario sería {' / '.join(month.erp.name(c) for c in guess['cids'])} (sin confirmar)"
         ws.append([n, month.unit(s.imei), month.what(r), ' / '.join(dict.fromkeys(month.erp.towns[c] for c in r['cids']
                                                                                 if month.erp.towns.get(c))),
                    hm(r['arrive']), hm(r['leave']), round((r['leave'] - r['arrive']).total_seconds() / 60) if r['leave'] else None,
-                   '; '.join(t['title'] for t in task) or None, ', '.join(x['folio'] for x in inv) or None,
+                   '; '.join(t['title'] for t in task) or (guess and f"¿{guess['title']}?") or None,
+                   ', '.join(x['folio'] for x in inv) or None,
                    round(sum(x['total'] for x in inv), 2) or None,
                    '; '.join(dict.fromkeys(c for x in inv for c in x['concept'])) or None, obs, 'Ver mapa'])
         ws.cell(ws.max_row, 13).hyperlink = maps(s.lat, s.lng)
@@ -380,12 +391,39 @@ def _service_block(ws, month, day, pending):
             pending.append(_pending_row('SERVICIOS', month, day, rows, n, obs))
     for t in today:
         if id(t) not in done and day in (t['start'], t['end']):
-            why = 'sin parada GPS ese día' if any(month.places_of.get(c) for c in t['cids']) else 'cliente sin lugar guardado'
+            others = [x for x in month.by_day[day] if x.imei not in units and any(month.at_client(x, c) for c in t['cids'])]
+            if others:  # the crew split up, or someone else took care of it
+                why = 'pasó otra unidad: ' + ', '.join(f'{month.unit(x.imei)} {hm(x.arrive)}' for x in others)
+            elif any(month.places_of.get(c) for c in t['cids']):
+                why = 'ninguna unidad paró en su lugar ese día'
+            else:
+                why = 'cliente sin lugar guardado'
             ws.append([None, None, ' / '.join(month.erp.name(c) for c in t['cids']), None, None, None, None, t['title'],
                        None, None, None, f"En el calendario, {why} ({t['state']})"])
             for c in ws[ws.max_row]:
                 c.font = GRAY
     ws.append([])
+
+
+def calendar_guesses(missed, rows, today, invoiced, min_minutes=10):
+    """{id(row): task} for calendar jobs with no stop at their client: each takes the longest crew stop of the day
+    nothing else explains (10+ minutes), an unknown or unnamed spot first, else a client's place where that client
+    had no job and no invoice of any kind around that day (a shared farm). A guess for someone to confirm, never saved on its own."""
+    def free(r):
+        f, long_enough = r['found'], r['leave'] and (r['leave'] - r['arrive']).total_seconds() >= min_minutes * 60
+        if not long_enough or (f and f['kind'] == 'base') or (f and f['kind'] == 'spot' and f['place'].name):
+            return None
+        if f and f['kind'] == 'client':
+            if any(set(t['cids']) & set(r['cids']) for t in today) or invoiced(r):
+                return None
+            return 1
+        return 0
+    open_rows = sorted((key, -(r['leave'] - r['arrive']).total_seconds(), n) for n, r in enumerate(rows)
+                       if (key := free(r)) is not None)
+    guesses = {}
+    for t, (_, _, n) in zip(sorted(missed, key=lambda t: t['title']), open_rows):
+        guesses[id(rows[n])] = t
+    return guesses
 
 
 def _pending_row(sheet, month, day, rows, n, obs):

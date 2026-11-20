@@ -10,7 +10,7 @@ from profitability.models import SavedPlace
 
 from .matching import StopMatcher
 from .notion import day_blocks, notion_stops, renamed, stop_name
-from .route_sheets import Month, build_workbook, service_invoices, town
+from .route_sheets import Month, build_workbook, calendar_guesses, service_invoices, town
 from .services import close_month, store_km, summarize_month
 from .timeline import legs, stops
 from .zeek import LOCAL_TZ, parse_zeek_trips, zeek_coord, zeek_time
@@ -316,3 +316,30 @@ class RouteSheetTests(SimpleTestCase):
         self.assertEqual(town('Valle de Juarez', 'VALLE DE JUÁREZ'), 'VALLE DE JUAREZ')
         self.assertEqual(town('Cerro Gordo', 'Tepatitlán de Morelos'), 'CERRO GORDO - TEPATITLÁN DE MORELOS')
         self.assertEqual(town(None, ' '), '')
+
+    def test_calendar_job_without_a_stop_is_guessed_on_the_stop_nothing_else_explains(self):
+        def row(minutes, found=None, cids=()):
+            arrive = datetime(2026, 11, 14, 10, tzinfo=LOCAL_TZ)
+            return {'found': found, 'cids': list(cids), 'arrive': arrive, 'leave': arrive + timedelta(minutes=minutes)}
+        farm = {'kind': 'client', 'place': place('Rancho', 0, 0, [8]), 'meters': 5}
+        rows = [row(90, farm, [8]), row(64), row(5)]
+        job = {'title': 'Calibrar ventilador', 'cids': [9]}
+        guesses = calendar_guesses([job], rows, [job], invoiced=lambda r: [])
+        self.assertEqual(guesses, {id(rows[1]): job})       # the unknown stop beats a client's place; 5 min is too short
+        self.assertEqual(calendar_guesses([job], rows[:1], [job], invoiced=lambda r: []), {id(rows[0]): job})
+        self.assertEqual(calendar_guesses([job], rows[:1], [job], invoiced=lambda r: ['factura']), {})
+
+    def test_calendar_job_done_by_another_truck_says_which(self):
+        task = {'start': self.day, 'end': self.day, 'title': 'Tapetes', 'cids': [9], 'state': 'Listo'}
+        other = {'start': self.day, 'end': self.day, 'title': 'Bomba', 'cids': [7], 'state': 'Listo'}
+        m = self.month([stop('crew', 9, 0, 60, 20.1), stop('t2', 11, 0, 30, 20.3)], tasks=[task, other])
+        wb = build_workbook(m)
+        notes = [r[11] for r in wb['SERVICIOS'].iter_rows(values_only=True) if r[0] is None and r[7] == 'Tapetes']
+        self.assertEqual(notes, ['En el calendario, pasó otra unidad: t2 11:00 (Listo)'])
+
+    def test_same_client_twice_in_a_day_shows_the_sale_once(self):
+        m = self.month([stop('t1', 10, 0, 10, 20.1), stop('t1', 10, 40, 30, 20.1001)],
+                       invoices=[(7, self.day, 100.0, 'B4', 1)])
+        rows = m.visit_rows(self.day, 't1')
+        self.assertEqual([(r['sale'], r['folios']) for r in rows], [(100.0, 'B4'), (None, '')])
+        self.assertIn('venta en la parada anterior', rows[1]['obs'])
